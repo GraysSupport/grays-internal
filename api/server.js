@@ -10,8 +10,14 @@ const pool = new Pool({
 });
 
 app.get('/api/users', async (req, res) => {
-  const result = await pool.query('SELECT * FROM users');
-  res.json(result.rows);
+  try {
+    const result = await pool.query('SELECT * FROM users');
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Backend error:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
+
 
 app.listen(port, () => console.log(`Server running on port ${port}`));
