@@ -2,13 +2,31 @@ import React, { useEffect, useState } from 'react';
 
 function App() {
   const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true); // <-- loading flag
 
   useEffect(() => {
-    fetch('/api/users')
-      .then((res) => res.json())
-      .then((data) => setUsers(data))
-      .catch((err) => console.error('Error fetching users:', err));
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('/api/users');
+        const data = await res.json();
+        setUsers(data);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+      } finally {
+        setLoading(false); // loading complete
+      }
+    };
+
+    fetchUsers();
   }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-100">
+        <div className="text-lg font-medium text-gray-600">Loading users...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-gray-100">
