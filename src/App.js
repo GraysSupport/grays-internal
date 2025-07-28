@@ -29,7 +29,7 @@ function App() {
 
         <main className="flex-1 p-6 overflow-auto">
           <div className="bg-white p-6 rounded shadow-md">
-            <h2 className="text-xl font-bold mb-4">User List</h2>
+            <h2 className="text-xl font-bold mb-4">Users List</h2>
 
             {users.length === 0 ? (
               <p className="text-gray-600">No users found.</p>
