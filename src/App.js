@@ -8,12 +8,23 @@ function App() {
     const fetchUsers = async () => {
       try {
         const res = await fetch('/api/users');
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text}`);
+        }
+
         const data = await res.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error('Expected an array of users');
+        }
+
         setUsers(data);
       } catch (error) {
         console.error('Error fetching users:', error);
       } finally {
-        setLoading(false); // loading complete
+        setLoading(false);
       }
     };
 
