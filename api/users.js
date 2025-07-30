@@ -5,8 +5,6 @@ let pool;
 export default async function handler(req, res) {
   if (!pool) {
     try {
-        console.log("DATABASE_URL:", process.env.DATABASE_URL);
-        console.log("Connecting to DB...");
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
             ssl: { rejectUnauthorized: false },
@@ -18,7 +16,6 @@ export default async function handler(req, res) {
     }
 
     try {
-        console.log("Querying users...");
         const result = await pool.query('SELECT * FROM users');
         res.status(200).json(result.rows);
     } catch (err) {
