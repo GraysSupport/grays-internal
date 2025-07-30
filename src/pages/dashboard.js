@@ -1,16 +1,21 @@
 import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      const parsed = JSON.parse(storedUser);
-      setUser(parsed);
+    if (!storedUser) {
+      navigate('/');
+      return;
     }
+
+    const parsed = JSON.parse(storedUser);
+    setUser(parsed);
 
     const fetchUsers = async () => {
       try {
@@ -34,7 +39,7 @@ export default function Dashboard() {
     };
 
     fetchUsers();
-  }, []);
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -50,8 +55,18 @@ export default function Dashboard() {
       <aside className="w-64 bg-white shadow-md hidden md:block">
         <div className="p-6 font-bold text-xl border-b">Grays Admin</div>
         <nav className="mt-4 flex flex-col space-y-2 px-4">
-          <a href="#" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Dashboard</a>
-          <a href="#" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Users</a>
+          <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Dashboard</Link>
+          <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Account Settings</Link>
+          <button
+            onClick={() => {
+              localStorage.removeItem('user');
+              localStorage.removeItem('token');
+              navigate('/login');
+            }}
+            className="text-gray-700 hover:bg-gray-200 p-2 rounded text-left"
+          >
+            Logout
+          </button>
         </nav>
       </aside>
 
