@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import BackButton from '../components/backbutton';
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -33,36 +34,40 @@ export default function Register() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <form
-        className="bg-white p-6 rounded shadow-md w-full max-w-md"
-        onSubmit={handleSubmit}
-      >
-        <h2 className="text-2xl font-bold mb-4 text-center">Register</h2>
-        {['id', 'name', 'email', 'password', 'confirmPassword'].map((field) => (
-          <input
-            key={field}
-            type={field.toLowerCase().includes('password') ? 'password' : 'text'}
-            name={field}
-            placeholder={
-              field === 'confirmPassword'
-                ? 'Confirm Password'
-                : field.charAt(0).toUpperCase() + field.slice(1)
-            }
-            value={form[field]}
-            onChange={handleChange}
-            className="w-full mb-4 px-4 py-2 border rounded"
-            required
-          />
-        ))}
-        <button
-          type="submit"
-          className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
+    <>
+      <BackButton />
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <form
+          className="bg-white p-6 rounded shadow-md w-full max-w-md"
+          onSubmit={handleSubmit}
         >
-          Register
-        </button>
-        <p className="mt-4 text-center text-sm text-red-500">{message}</p>
-      </form>
-    </div>
+          <h2 className="text-2xl font-bold mb-4 text-center">Register</h2>
+          {['id', 'name', 'email', 'password', 'confirmPassword'].map((field) => (
+            <input
+              key={field}
+              type={field.toLowerCase().includes('password') ? 'password' : 'text'}
+              name={field}
+              placeholder={
+                field === 'confirmPassword'
+                  ? 'Confirm Password'
+                  : field.charAt(0).toUpperCase() + field.slice(1)
+              }
+              value={form[field]}
+              onChange={handleChange}
+              className="w-full mb-4 px-4 py-2 border rounded"
+              required
+            />
+          ))}
+          <button
+            type="submit"
+            className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
+          >
+            Register
+          </button>
+          <p className="mt-4 text-center text-sm text-red-500">{message}</p>
+        </form>
+      </div>
+    </>
+    
   );
 }
