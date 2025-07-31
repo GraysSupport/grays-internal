@@ -12,6 +12,7 @@
     "bcryptjs": "^3.0.2",
     "dotenv": "^17.2.1",
     "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.534.0",
     "pg": "^8.16.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
