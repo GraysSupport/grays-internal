@@ -58,7 +58,7 @@ export default function Settings() {
               key={i}
               type="password"
               name={field}
-              placeholder={field.replace(/([A-Z])/g, ' $1').trim()}
+              placeholder={field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
               value={form[field]}
               onChange={handleChange}
               className="w-full mb-4 px-4 py-2 border rounded"

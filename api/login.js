@@ -30,6 +30,7 @@ export default async function handler(req, res) {
       id: user.id,
       name: user.name,
       email: user.email,
+      access: user.access
     });
   } catch (error) {
     console.error(error);
