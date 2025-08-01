@@ -79,11 +79,16 @@ export default function Dashboard() {
         <nav className="mt-4 flex flex-col space-y-2 px-4">
           <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Dashboard</Link>
           <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Account Settings</Link>
+          {user?.access === 'superadmin' && (
+            <Link to="/register" className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold">
+              Register New User
+            </Link>
+          )}
           <button
             onClick={() => {
               localStorage.removeItem('user');
               localStorage.removeItem('token');
-              navigate('/login');
+              navigate('/');
             }}
             className="text-gray-700 hover:bg-gray-200 p-2 rounded text-left"
           >
