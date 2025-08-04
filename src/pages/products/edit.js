@@ -5,7 +5,6 @@ import BackButton from '../../components/backbutton';
 import ProductForm from '../../components/productform';
 
 export default function EditProductPage() {
-  const [searchParams] = useSearchParams();
   const { sku } = useParams();
   const navigate = useNavigate();
 
