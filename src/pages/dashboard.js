@@ -36,6 +36,8 @@ export default function Dashboard() {
           <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Dashboard</Link>
           <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Account Settings</Link>
           <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Products</Link>
+          <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Customers</Link>
+          <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Waitlist</Link>
           {user?.access === 'superadmin' && (
             <Link to="/register" className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold">
               Register New User
