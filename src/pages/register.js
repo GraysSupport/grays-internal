@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import BackButton from '../components/backbutton';
+import toast from 'react-hot-toast';
 
 export default function Register() {
   const [activeTab, setActiveTab] = useState('register');
@@ -11,7 +12,6 @@ export default function Register() {
     confirmPassword: '',
   });
   const [users, setUsers] = useState([]);
-  const [message, setMessage] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
 
   const handleChange = (e) =>
@@ -20,28 +20,39 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (form.password !== form.confirmPassword) {
-      setMessage('Passwords do not match.');
+      toast.error('Passwords do not match');
       return;
     }
 
     const { confirmPassword, ...formData } = form;
+    const registerToast = toast.loading('Registering user...');
 
-    const res = await fetch('/api/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData),
-    });
-
-    const data = await res.json();
-    setMessage(data.message || data.error);
-    if (res.ok)
-      setForm({
-        id: '',
-        name: '',
-        email: '',
-        password: '',
-        confirmPassword: '',
+    try {
+      const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
       });
+
+      const data = await res.json();
+      toast.dismiss(registerToast);
+
+      if (res.ok) {
+        toast.success(data.message || 'User registered');
+        setForm({
+          id: '',
+          name: '',
+          email: '',
+          password: '',
+          confirmPassword: '',
+        });
+      } else {
+        toast.error(data.error || 'Registration failed');
+      }
+    } catch (err) {
+      toast.dismiss(registerToast);
+      toast.error('Server error');
+    }
   };
 
   const fetchUsers = async () => {
@@ -51,7 +62,7 @@ export default function Register() {
       const data = await res.json();
       setUsers(data);
     } catch (error) {
-      console.error('Failed to fetch users:', error);
+      toast.error('Failed to fetch users');
       setUsers([]);
     } finally {
       setLoadingUsers(false);
@@ -59,27 +70,33 @@ export default function Register() {
   };
 
   const handleUpdate = async (user) => {
-    const res = await fetch('/api/users', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
-    });
-    const data = await res.json();
-    setMessage(data.message || data.error);
-    fetchUsers(); // refresh
+    const updateToast = toast.loading('Updating user...');
+    try {
+      const res = await fetch('/api/users', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user),
+      });
+
+      const data = await res.json();
+      toast.dismiss(updateToast);
+      if (res.ok) {
+        toast.success(data.message || 'User updated');
+        fetchUsers();
+      } else {
+        toast.error(data.error || 'Update failed');
+      }
+    } catch (err) {
+      toast.dismiss(updateToast);
+      toast.error('Update error');
+    }
   };
 
   useEffect(() => {
     if (activeTab === 'update') fetchUsers();
   }, [activeTab]);
 
-  const accessLevels = [
-    'superadmin',
-    'admin',
-    'staff',
-    'technician',
-    'it-technician',
-  ];
+  const accessLevels = ['superadmin', 'admin', 'staff', 'technician', 'it-technician'];
 
   return (
     <>
@@ -109,7 +126,6 @@ export default function Register() {
 
       <div className="flex items-center justify-center bg-gray-100 min-h-screen pt-0">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl mt-0">
-
           {activeTab === 'register' && (
             <form onSubmit={handleSubmit}>
               <h2 className="text-2xl font-bold mb-4 text-center">Register</h2>
@@ -142,11 +158,11 @@ export default function Register() {
             <div>
               <h2 className="text-2xl font-bold mb-4 text-center">Update Users</h2>
               {loadingUsers ? (
-                  <p className="text-center text-gray-500">Loading users...</p>
-                ) : users.length === 0 ? (
-                  <p className="text-center">No users found.</p>
-                ) : (
-                  <div className="overflow-auto">
+                <p className="text-center text-gray-500">Loading users...</p>
+              ) : users.length === 0 ? (
+                <p className="text-center">No users found.</p>
+              ) : (
+                <div className="overflow-auto">
                   <table className="w-full table-auto border-collapse border border-gray-300">
                     <thead>
                       <tr className="bg-gray-200">
@@ -218,8 +234,6 @@ export default function Register() {
               )}
             </div>
           )}
-
-          {message && <p className="mt-4 text-center text-sm text-red-500">{message}</p>}
         </div>
       </div>
     </>

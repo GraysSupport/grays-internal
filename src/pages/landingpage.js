@@ -1,32 +1,41 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 
 export default function LandingPage() {
   const [form, setForm] = useState({ email: '', password: '' });
-  const [message, setMessage] = useState('');
   const navigate = useNavigate();
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
+    const loginToast = toast.loading('Logging in...');
 
-    const data = await res.json();
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
 
-    if (res.ok) {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem(
-        'user',
-        JSON.stringify({ id: data.id, name: data.name, email: data.email, access: data.access })
-      );
-      navigate('/dashboard');
-    } else {
-      setMessage(data.error);
+      const data = await res.json();
+      toast.dismiss(loginToast);
+
+      if (res.ok) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem(
+          'user',
+          JSON.stringify({ id: data.id, name: data.name, email: data.email, access: data.access })
+        );
+        toast.success('Login successful!');
+        navigate('/dashboard');
+      } else {
+        toast.error(data.error || 'Login failed');
+      }
+    } catch (err) {
+      toast.dismiss(loginToast);
+      toast.error('Server error');
     }
   };
 
@@ -51,7 +60,6 @@ export default function LandingPage() {
           <button type="submit" className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600">
             Login
           </button>
-          <p className="mt-4 text-center text-sm text-red-500">{message}</p>
         </form>
       </div>
     </div>
