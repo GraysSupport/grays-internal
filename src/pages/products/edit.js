@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import ProductForm from '../../components/productform';
 
 export default function EditProductPage() {
   const [searchParams] = useSearchParams();
-  const sku = searchParams.get('sku');
+  const { sku } = useParams();
   const navigate = useNavigate();
 
   const [product, setProduct] = useState(null);
