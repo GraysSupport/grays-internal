@@ -81,9 +81,22 @@ export default function Dashboard() {
             </Link>
           )}
           <button
-            onClick={() => {
+            onClick={async () => {
+              const user = JSON.parse(localStorage.getItem('user'));
+              if (user) {
+                await fetch('/api/access-log', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    userId: user.id,
+                    description: 'User manually logged out',
+                  }),
+                });
+              }
+
               localStorage.removeItem('user');
               localStorage.removeItem('token');
+              localStorage.removeItem('sessionExpiry');
               toast('Logged out');
               navigate('/');
             }}
