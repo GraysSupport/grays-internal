@@ -26,11 +26,12 @@ export default function ProductsPage() {
     }
   };
 
-  const filteredProducts = products.filter((product) =>
-    `${product.sku} ${product.name} ${product.brand}`
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase())
-  );
+  const filteredProducts = products.filter((product) => {
+    const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
+    const keywords = searchTerm.toLowerCase().split(' ').filter(Boolean);
+    return keywords.every((keyword) => productText.includes(keyword));
+  });
+
 
   const totalPages = Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE);
   const currentProducts = filteredProducts.slice(

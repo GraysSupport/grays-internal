@@ -125,9 +125,11 @@ export default function CreateWaitlistPage() {
               {showCustomerDropdown && (
                 <div className="absolute z-10 bg-white border rounded w-full max-h-40 overflow-y-auto shadow">
                   {customers
-                    .filter((c) =>
-                      `${c.id} ${c.name}`.toLowerCase().includes(customerInput.toLowerCase())
-                    )
+                    .filter((c) => {
+                      const text = `${c.id} ${c.name}`.toLowerCase();
+                      const keywords = customerInput.toLowerCase().split(' ').filter(Boolean);
+                      return keywords.every((kw) => text.includes(kw));
+                    })
                     .map((c) => (
                       <div
                         key={c.id}
@@ -165,9 +167,11 @@ export default function CreateWaitlistPage() {
               {showProductDropdown && (
                 <div className="absolute z-10 bg-white border rounded w-full max-h-40 overflow-y-auto shadow">
                   {products
-                    .filter((p) =>
-                      `${p.sku} ${p.name}`.toLowerCase().includes(productInput.toLowerCase())
-                    )
+                    .filter((p) => {
+                      const text = `${p.sku} ${p.name}`.toLowerCase();
+                      const keywords = productInput.toLowerCase().split(' ').filter(Boolean);
+                      return keywords.every((kw) => text.includes(kw));
+                    })
                     .map((p) => (
                       <div
                         key={p.sku}

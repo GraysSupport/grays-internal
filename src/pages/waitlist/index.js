@@ -46,13 +46,15 @@ export default function WaitlistPage() {
     }
   };
 
-  const filtered = waitlist.filter(
-    (w) =>
-      ['Active', 'Notified'].includes(w.status) &&
-      `${w.customer_name} ${w.product_name} ${w.status}`
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
-  );
+  const filtered = waitlist.filter((w) => {
+    if (!['Active', 'Notified'].includes(w.status)) return false;
+
+    const entryText = `${w.customer_name} ${w.product_name} ${w.status}`.toLowerCase();
+    const keywords = searchTerm.toLowerCase().split(' ').filter(Boolean);
+    return keywords.every((kw) => entryText.includes(kw));
+  });
+
+
 
   const grouped = filtered.reduce((acc, entry) => {
     if (!acc[entry.product_name]) acc[entry.product_name] = { entries: [], stock: entry.stock ?? 0 };
