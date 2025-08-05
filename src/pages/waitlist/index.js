@@ -87,8 +87,12 @@ export default function WaitlistPage() {
         {sortedGroups.map(([product, { entries, stock }]) => (
           <div key={product} className="mb-8">
             <h3 className="text-lg font-semibold mb-2">
-              {product} - {stock === 0 ? 'Out of Stock' : `${stock} in Stock`}
+              {product} -{' '}
+              <span className={stock === 0 ? 'text-red-500' : 'text-green-600'}>
+                {stock === 0 ? 'Out of Stock' : `${stock} in Stock`}
+              </span>
             </h3>
+
             <table className="w-full border text-sm mb-2">
               <thead className="bg-gray-100">
                 <tr>

@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState([]);
+  const [waitlist, setWaitlist] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -19,6 +21,31 @@ export default function Dashboard() {
     setLoading(false);
   }, [navigate]);
 
+  useEffect(() => {
+    const fetchData = async () => {
+      await toast.promise(
+        Promise.all([
+          fetch('/api/products'),
+          fetch('/api/waitlist')
+        ])
+          .then(async ([productsRes, waitlistRes]) => {
+            const productsData = await productsRes.json();
+            const waitlistData = await waitlistRes.json();
+
+            setProducts(productsData);
+            setWaitlist(waitlistData);
+          }),
+        {
+          loading: 'Fetching dashboard data...',
+          success: 'Data loaded successfully!',
+          error: 'Failed to load data.',
+        }
+      );
+    };
+
+    fetchData();
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-100">
@@ -26,6 +53,16 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  // ======= ANALYTICS ========
+  const totalProducts = products.length;
+  const inStockCount = products.filter(p => p.stock > 0).length;
+  const outOfStockCount = products.filter(p => p.stock === 0).length;
+
+  const totalWaitlist = waitlist.length;
+  const uniqueWaitlistProducts = new Set(waitlist.map(w => w.product_sku)).size;
+  const uniqueWaitlistCustomers = new Set(waitlist.map(w => w.customer_id)).size;
+  const waitlistWithStock = waitlist.filter(w => w.stock > 0).length;
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -65,7 +102,42 @@ export default function Dashboard() {
 
         <main className="flex-1 p-6 overflow-auto">
           <div className="bg-white p-6 rounded shadow-md">
-            {/* You can add content here later */}
+            <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium">Total Products</h3>
+                <p className="text-2xl font-bold">{totalProducts}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium text-green-700">In Stock</h3>
+                <p className="text-2xl font-bold text-green-700">{inStockCount}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium text-red-700">Out of Stock</h3>
+                <p className="text-2xl font-bold text-red-700">{outOfStockCount}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium">Total Waitlist Entries</h3>
+                <p className="text-2xl font-bold">{totalWaitlist}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium">Products Waitlisted</h3>
+                <p className="text-2xl font-bold">{uniqueWaitlistProducts}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium">Customers Waitlisted</h3>
+                <p className="text-2xl font-bold">{uniqueWaitlistCustomers}</p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded shadow">
+                <h3 className="font-medium text-green-700">Waitlist in Stock</h3>
+                <p className="text-2xl font-bold text-green-700">{waitlistWithStock}</p>
+              </div>
+            </div>
+          </div>
+          <br />
+          <div className="bg-white p-6 rounded shadow-md">
+            <h2 className="text-xl font-bold mb-4">Workshop Analytics</h2>
+            <h3 className='italic'>Under construction...</h3>
           </div>
         </main>
       </div>

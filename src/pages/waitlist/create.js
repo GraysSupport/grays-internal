@@ -109,7 +109,7 @@ export default function CreateWaitlistPage() {
           <form onSubmit={handleSubmit} className="space-y-3 relative">
 
             {/* Customer Input */}
-            <div className="relative" ref={customerRef}>
+            <div className="relative mb-1" ref={customerRef}>
               <input
                 type="text"
                 placeholder="Search customer..."
@@ -143,10 +143,13 @@ export default function CreateWaitlistPage() {
                     ))}
                 </div>
               )}
+              <div className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer" onClick={() => navigate('/customers/create')}>
+                Can&apos;t find customer? Add one
+              </div>
             </div>
 
             {/* Product Input */}
-            <div className="relative" ref={productRef}>
+            <div className="relative mb-1" ref={productRef}>
               <input
                 type="text"
                 placeholder="Search product..."
@@ -180,6 +183,9 @@ export default function CreateWaitlistPage() {
                     ))}
                 </div>
               )}
+              <div className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer" onClick={() => navigate('/products/create')}>
+                Can&apos;t find product? Add one
+              </div>
             </div>
 
             {/* Salesperson ID (read-only) */}
