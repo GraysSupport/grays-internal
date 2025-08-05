@@ -1,5 +1,5 @@
-import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
 import Dashboard from './pages/dashboard';
@@ -19,6 +19,55 @@ import WaitlistPage from './pages/waitlist';
 import CreateWaitlistPage from './pages/waitlist/create';
 
 function App() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+    const checkSession = () => {
+      const expiry = parseInt(localStorage.getItem('sessionExpiry'), 10);
+      if (!expiry || Date.now() > expiry) {
+        logout();
+      }
+    };
+
+    const logout = async () => {
+      const user = JSON.parse(localStorage.getItem('user'));
+      if (user) {
+        await fetch('/api/access-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.id,
+            description: 'Session expired due to inactivity',
+          }),
+        });
+      }
+
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('sessionExpiry');
+      navigate('/');
+    };
+
+    const resetSession = () => {
+      const newExpiry = Date.now() + SESSION_TIMEOUT;
+      localStorage.setItem('sessionExpiry', newExpiry.toString());
+    };
+
+    // Check session every 5 seconds
+    const interval = setInterval(checkSession, 5000);
+
+    // Reset session expiry on user activity
+    const events = ['mousemove', 'keydown', 'click'];
+    events.forEach((event) => window.addEventListener(event, resetSession));
+
+    return () => {
+      clearInterval(interval);
+      events.forEach((event) => window.removeEventListener(event, resetSession));
+    };
+  }, [navigate]);
+
   return (
     <>
       <Toaster

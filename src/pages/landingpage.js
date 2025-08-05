@@ -6,7 +6,8 @@ export default function LandingPage() {
   const [form, setForm] = useState({ email: '', password: '' });
   const navigate = useNavigate();
 
-  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+  const handleChange = (e) =>
+    setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -23,11 +24,19 @@ export default function LandingPage() {
       toast.dismiss(loginToast);
 
       if (res.ok) {
+        const expiryTime = Date.now() + 30 * 60 * 1000; // 30 minutes
         localStorage.setItem('token', data.token);
         localStorage.setItem(
           'user',
-          JSON.stringify({ id: data.id, name: data.name, email: data.email, access: data.access })
+          JSON.stringify({
+            id: data.id,
+            name: data.name,
+            email: data.email,
+            access: data.access,
+          })
         );
+        localStorage.setItem('sessionExpiry', expiryTime.toString());
+
         toast.success('Login successful!');
         navigate('/dashboard');
       } else {
@@ -44,7 +53,10 @@ export default function LandingPage() {
       <div className="bg-white p-10 rounded shadow-md text-center space-y-6">
         <h1 className="text-3xl font-bold text-gray-800">Welcome to Grays Admin Portal</h1>
         <p className="text-gray-600">Please Login to Continue</p>
-        <form className="bg-white p-6 rounded shadow-md w-full max-w-md" onSubmit={handleSubmit}>
+        <form
+          className="bg-white p-6 rounded shadow-md w-full max-w-md"
+          onSubmit={handleSubmit}
+        >
           {['email', 'password'].map((field) => (
             <input
               key={field}
@@ -57,7 +69,10 @@ export default function LandingPage() {
               required
             />
           ))}
-          <button type="submit" className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600">
+          <button
+            type="submit"
+            className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
+          >
             Login
           </button>
         </form>

@@ -1,19 +1,15 @@
 import { compare } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { Pool } from 'pg';
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+import { getClientWithTimezone } from '../lib/db.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { email, password } = req.body;
+  const client = await getClientWithTimezone();
 
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await client.query('SELECT * FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) return res.status(401).json({ error: 'User not found' });
 
     const user = result.rows[0];
@@ -24,16 +20,23 @@ export default async function handler(req, res) {
       expiresIn: '1h',
     });
 
+    await client.query(
+      'INSERT INTO access_log (user_id, description) VALUES ($1, $2)',
+      [user.id, 'User logged in']
+    );
+
     return res.status(200).json({
       message: 'Login successful',
       token,
       id: user.id,
       name: user.name,
       email: user.email,
-      access: user.access
+      access: user.access,
     });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Login failed' });
+  } finally {
+    client.release();
   }
 }
