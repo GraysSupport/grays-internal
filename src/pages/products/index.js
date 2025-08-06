@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 
@@ -7,7 +7,12 @@ export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchParams] = useSearchParams();
   const PRODUCTS_PER_PAGE = 20;
+
+  // Read inStock param as boolean or null if not present
+  const inStockParam = searchParams.get('inStock');
+  const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
   useEffect(() => {
     fetchProducts();
@@ -26,12 +31,21 @@ export default function ProductsPage() {
     }
   };
 
+  // Filter by search term and stock filter
   const filteredProducts = products.filter((product) => {
+    // Search filter
     const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
     const keywords = searchTerm.toLowerCase().split(' ').filter(Boolean);
-    return keywords.every((keyword) => productText.includes(keyword));
-  });
+    if (!keywords.every((keyword) => productText.includes(keyword))) return false;
 
+    // Stock filter if set
+    if (inStockFilter !== null) {
+      if (inStockFilter && product.stock <= 0) return false;    // inStock=true means stock > 0 only
+      if (!inStockFilter && product.stock > 0) return false;    // inStock=false means stock = 0 only
+    }
+
+    return true;
+  });
 
   const totalPages = Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE);
   const currentProducts = filteredProducts.slice(
@@ -62,7 +76,6 @@ export default function ProductsPage() {
             </Link>
           </div>
         </div>
-
 
         <input
           type="text"
@@ -99,6 +112,13 @@ export default function ProductsPage() {
                 </td>
               </tr>
             ))}
+            {currentProducts.length === 0 && (
+              <tr>
+                <td colSpan={6} className="text-center p-4 text-gray-500">
+                  No products found.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
 
@@ -118,7 +138,7 @@ export default function ProductsPage() {
 
           <button
             onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage === totalPages}
+            disabled={currentPage === totalPages || totalPages === 0}
             className="px-3 py-1 border rounded disabled:opacity-50"
           >
             Next

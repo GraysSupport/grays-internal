@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 
 export default function WaitlistPage() {
   const [waitlist, setWaitlist] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchParams] = useSearchParams();
+
+  // Read inStock param: true means only entries with stock > 0
+  const inStockParam = searchParams.get('inStock');
+  const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
   useEffect(() => {
     const fetchData = async () => {
@@ -47,14 +52,20 @@ export default function WaitlistPage() {
   };
 
   const filtered = waitlist.filter((w) => {
+    // Only show active or notified
     if (!['Active', 'Notified'].includes(w.status)) return false;
 
+    // Filter by inStock param if set
+    if (inStockFilter !== null) {
+      if (inStockFilter && (w.stock ?? 0) <= 0) return false;
+      if (!inStockFilter && (w.stock ?? 0) > 0) return false;
+    }
+
+    // Search term filter
     const entryText = `${w.customer_name} ${w.product_name} ${w.status}`.toLowerCase();
     const keywords = searchTerm.toLowerCase().split(' ').filter(Boolean);
     return keywords.every((kw) => entryText.includes(kw));
   });
-
-
 
   const grouped = filtered.reduce((acc, entry) => {
     if (!acc[entry.product_name]) acc[entry.product_name] = { entries: [], stock: entry.stock ?? 0 };
@@ -85,6 +96,10 @@ export default function WaitlistPage() {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
+
+        {sortedGroups.length === 0 && (
+          <p className="text-center text-gray-500">No waitlist entries found.</p>
+        )}
 
         {sortedGroups.map(([product, { entries, stock }]) => (
           <div key={product} className="mb-8">
