@@ -13,11 +13,16 @@ export default async function handler(req, res) {
       } else {
         const result = await client.query(`
           SELECT 
-            w.*, 
+            w.waitlist_id,
+            w.customer_id,
+            w.product_sku,
+            w.salesperson,
+            w.status,
+            -- Convert timestamp to Melbourne time
+            w.waitlisted AT TIME ZONE 'Australia/Melbourne' AS waitlisted,
             c.name AS customer_name, 
             c.email AS customer_email,
             c.phone AS customer_phone,
-            w.salesperson,
             p.name AS product_name,
             p.stock
           FROM waitlist w
