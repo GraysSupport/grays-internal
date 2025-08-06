@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import ProductForm from '../../components/productform';
+import ProductForm from './productform';
 
 export default function CreateProductModal({ isOpen, onClose, onCreated }) {
   const [loading, setLoading] = useState(false);

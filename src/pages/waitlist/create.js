@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
+import CreateProductModal from '../../components/CreateProductModal';
 
 export default function CreateWaitlistPage() {
   const navigate = useNavigate();
@@ -19,7 +20,8 @@ export default function CreateWaitlistPage() {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showProductModal, setShowProductModal] = useState(false);
 
   const customerRef = useRef(null);
   const productRef = useRef(null);
@@ -93,12 +95,22 @@ export default function CreateWaitlistPage() {
   return (
     <>
       <BackButton />
-      {showModal && (
+      {showCustomerModal && (
         <CreateCustomerModal
-          onClose={() => setShowModal(false)}
+          onClose={() => setShowCustomerModal(false)}
           onSuccess={async () => {
             await fetchData();
-            setShowModal(false);
+            setShowCustomerModal(false);
+          }}
+        />
+      )}
+      {showProductModal && (
+        <CreateProductModal
+          isOpen={showProductModal}
+          onClose={() => setShowProductModal(false)}
+          onCreated={async () => {
+            await fetchData();
+            setShowProductModal(false);
           }}
         />
       )}
@@ -147,7 +159,7 @@ export default function CreateWaitlistPage() {
               )}
               <div
                 className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer"
-                onClick={() => setShowModal(true)}
+                onClick={() => setShowCustomerModal(true)}
               >
                 Can't find customer? Add one
               </div>
@@ -191,7 +203,10 @@ export default function CreateWaitlistPage() {
                   }
                 </div>
               )}
-              <div className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer" onClick={() => navigate('/products/create')}>
+              <div
+                className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer"
+                onClick={() => setShowProductModal(true)}
+              >
                 Can't find product? Add one
               </div>
             </div>

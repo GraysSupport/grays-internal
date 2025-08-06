@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { Link, useSearchParams } from 'react-router-dom';
 import BackButton from '../../components/backbutton';
+import CreateProductModal from '../../components/CreateProductModal';
 
 export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchParams] = useSearchParams();
+  const [showModal, setShowModal] = useState(false);
   const PRODUCTS_PER_PAGE = 20;
 
-  // Read inStock param as boolean or null if not present
   const inStockParam = searchParams.get('inStock');
   const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
@@ -31,17 +32,14 @@ export default function ProductsPage() {
     }
   };
 
-  // Filter by search term and stock filter
   const filteredProducts = products.filter((product) => {
-    // Search filter
     const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
     const keywords = searchTerm.toLowerCase().split(' ').filter(Boolean);
     if (!keywords.every((keyword) => productText.includes(keyword))) return false;
 
-    // Stock filter if set
     if (inStockFilter !== null) {
-      if (inStockFilter && product.stock <= 0) return false;    // inStock=true means stock > 0 only
-      if (!inStockFilter && product.stock > 0) return false;    // inStock=false means stock = 0 only
+      if (inStockFilter && product.stock <= 0) return false;
+      if (!inStockFilter && product.stock > 0) return false;
     }
 
     return true;
@@ -62,18 +60,26 @@ export default function ProductsPage() {
   return (
     <>
       <BackButton />
+      {showModal && (
+        <CreateProductModal
+          isOpen={showModal}
+          onClose={() => setShowModal(false)}
+          onCreated={fetchProducts}
+        />
+      )}
+
       <div className="min-h-screen bg-gray-100 p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1 text-center">
             <h2 className="text-xl font-bold">Products</h2>
           </div>
           <div className="flex-shrink-0">
-            <Link
-              to="/products/create"
+            <button
+              onClick={() => setShowModal(true)}
               className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             >
               + Add Product
-            </Link>
+            </button>
           </div>
         </div>
 
@@ -122,7 +128,6 @@ export default function ProductsPage() {
           </tbody>
         </table>
 
-        {/* Pagination */}
         <div className="mt-4 flex justify-between items-center">
           <button
             onClick={() => goToPage(currentPage - 1)}
