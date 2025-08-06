@@ -64,6 +64,16 @@ export default function Dashboard() {
   const uniqueWaitlistCustomers = new Set(waitlist.map(w => w.customer_id)).size;
   const waitlistWithStock = waitlist.filter(w => w.stock > 0).length;
 
+  const analyticsCard = (label, value, extraClasses = '', onClick = null) => (
+    <div
+      onClick={onClick}
+      className={`bg-gray-50 p-4 rounded shadow transition cursor-pointer hover:shadow-md ${extraClasses}`}
+    >
+      <h3 className="font-medium">{label}</h3>
+      <p className="text-2xl font-bold">{value}</p>
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
@@ -117,37 +127,18 @@ export default function Dashboard() {
           <div className="bg-white p-6 rounded shadow-md">
             <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium">Total Products</h3>
-                <p className="text-2xl font-bold">{totalProducts}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium text-green-700">In Stock</h3>
-                <p className="text-2xl font-bold text-green-700">{inStockCount}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium text-red-700">Out of Stock</h3>
-                <p className="text-2xl font-bold text-red-700">{outOfStockCount}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium">Total Waitlist Entries</h3>
-                <p className="text-2xl font-bold">{totalWaitlist}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium">Products Waitlisted</h3>
-                <p className="text-2xl font-bold">{uniqueWaitlistProducts}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium">Customers Waitlisted</h3>
-                <p className="text-2xl font-bold">{uniqueWaitlistCustomers}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded shadow">
-                <h3 className="font-medium text-green-700">Waitlist in Stock</h3>
-                <p className="text-2xl font-bold text-green-700">{waitlistWithStock}</p>
-              </div>
+              {analyticsCard('Total Products', totalProducts, '', () => navigate('/products'))}
+              {analyticsCard('In Stock', inStockCount, 'text-green-700', () => navigate('/products?inStock=true'))}
+              {analyticsCard('Out of Stock', outOfStockCount, 'text-red-700', () => navigate('/products?inStock=false'))}
+              {analyticsCard('Total Waitlist Entries', totalWaitlist, '', () => navigate('/waitlist'))}
+              {analyticsCard('Products Waitlisted', uniqueWaitlistProducts)}
+              {analyticsCard('Customers Waitlisted', uniqueWaitlistCustomers)}
+              {analyticsCard('Waitlist in Stock', waitlistWithStock, 'text-green-700', () => navigate('/waitlist?inStock=true'))}
             </div>
           </div>
+
           <br />
+
           <div className="bg-white p-6 rounded shadow-md">
             <h2 className="text-xl font-bold mb-4">Workshop Analytics</h2>
             <h3 className='italic'>Under construction...</h3>
