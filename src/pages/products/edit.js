@@ -15,7 +15,7 @@ export default function EditProductPage() {
       if (!sku) return toast.error('Missing SKU in URL');
 
       try {
-        const res = await fetch(`/api/products/${sku}`);
+        const res = await fetch(`/api/products/${encodeURIComponent(sku)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Product fetch failed');
 
@@ -31,7 +31,7 @@ export default function EditProductPage() {
   const handleUpdate = async (updatedForm) => {
     const toastId = toast.loading('Updating product...');
     try {
-      const res = await fetch(`/api/products/${sku}`, {
+      const res = await fetch(`/api/products/${encodeURIComponent(sku)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedForm),

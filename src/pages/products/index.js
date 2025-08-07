@@ -114,7 +114,7 @@ export default function ProductsPage() {
                 <td className="border px-4 py-2">{p.stock}</td>
                 <td className="border px-4 py-2">${p.price}</td>
                 <td className="border px-4 py-2 text-blue-600 underline text-center align-middle">
-                  <Link to={`/products/${p.sku}/edit`}>Edit</Link>
+                  <Link to={`/products/${encodeURIComponent(p.sku)}/edit`}>Edit</Link>
                 </td>
               </tr>
             ))}
