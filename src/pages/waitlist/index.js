@@ -51,6 +51,24 @@ export default function WaitlistPage() {
     }
   };
 
+  const handleNoteUpdate = async (entry, newNote) => {
+    const toastId = toast.loading('Updating notes...');
+    try {
+      const res = await fetch(`/api/waitlist/${entry.waitlist_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: entry.status, notes: newNote }),
+      });
+      toast.dismiss(toastId);
+      if (!res.ok) throw new Error('Note update failed');
+      toast.success('Notes updated');
+    } catch (err) {
+      toast.dismiss(toastId);
+      toast.error(err.message);
+    }
+  };
+
+
   const filtered = waitlist.filter((w) => {
     // Only show active or notified
     if (!['Active', 'Notified'].includes(w.status)) return false;
@@ -104,11 +122,12 @@ export default function WaitlistPage() {
         {sortedGroups.map(([product, { entries, stock }]) => (
           <div key={product} className="mb-8">
             <h3 className="text-lg font-semibold mb-2">
-              {product} -{' '}
+              {entries[0].product_sku} - {product} -{' '}
               <span className={stock === 0 ? 'text-red-500' : 'text-green-600'}>
                 {stock === 0 ? 'Out of Stock' : `${stock} in Stock`}
               </span>
             </h3>
+
 
             <table className="w-full border text-sm mb-2">
               <thead className="bg-gray-100">
@@ -119,6 +138,7 @@ export default function WaitlistPage() {
                   <th className="border px-4 py-2">Status</th>
                   <th className="border px-4 py-2">Salesperson</th>
                   <th className="border px-4 py-2">Created</th>
+                  <th className="border px-4 py-2">Notes</th> {/* ✅ */}
                 </tr>
               </thead>
               <tbody>
@@ -149,6 +169,24 @@ export default function WaitlistPage() {
                       {entry.waitlisted
                         ? new Date(entry.waitlisted.replace(' ', 'T')).toLocaleString()
                         : 'N/A'}
+                    </td>
+                    <td className="border px-4 py-2">
+                      <textarea
+                        className="border rounded px-2 py-1 w-full"
+                        defaultValue={entry.notes || ''}
+                        rows={2}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            await handleNoteUpdate(entry, e.target.value);
+                          }
+                        }}
+                        onBlur={async (e) => {
+                          if (e.target.value !== entry.notes) {
+                            await handleNoteUpdate(entry, e.target.value);
+                          }
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}

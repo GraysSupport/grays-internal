@@ -13,8 +13,11 @@ export default async function handler(req, res) {
     }
 
     if (method === 'PUT') {
-      const { status } = req.body;
-      await pool.query('UPDATE waitlist SET status = $1 WHERE waitlist_id = $2', [status, id]);
+      const { status, notes } = req.body;
+      await pool.query(
+        'UPDATE waitlist SET status = $1, notes = $2 WHERE waitlist_id = $3',
+        [status, notes, id]
+      );
       return res.status(200).json({ message: 'Waitlist updated' });
     }
 

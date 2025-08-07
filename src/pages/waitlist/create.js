@@ -1,18 +1,19 @@
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import CreateCustomerModal from '../../components/CreateCustomerModal';
+import CreateProductModal from '../../components/CreateProductModal';
 
 export default function CreateWaitlistPage() {
   const navigate = useNavigate();
-
   const [form, setForm] = useState({
     customer_id: '',
     product_sku: '',
     staff_id: '',
-    status: 'Active',
+    notes: '',
+    status: 'Active'
   });
-
   const [customerInput, setCustomerInput] = useState('');
   const [productInput, setProductInput] = useState('');
   const [customers, setCustomers] = useState([]);
@@ -20,43 +21,44 @@ export default function CreateWaitlistPage() {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showProductModal, setShowProductModal] = useState(false);
 
   const customerRef = useRef(null);
   const productRef = useRef(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res1 = await fetch('/api/customers');
-        const res2 = await fetch('/api/products');
-        const data1 = await res1.json();
-        const data2 = await res2.json();
-        if (!res1.ok || !res2.ok) throw new Error('Failed to fetch');
-        setCustomers(data1);
-        setProducts(data2);
+  const fetchData = async () => {
+    try {
+      const [cRes, pRes] = await Promise.all([
+        fetch('/api/customers'),
+        fetch('/api/products')
+      ]);
+      const [cData, pData] = await Promise.all([cRes.json(), pRes.json()]);
+      if (!cRes.ok || !pRes.ok) throw new Error('Failed to fetch data');
+      setCustomers(cData);
+      setProducts(pData);
 
-        const stored = localStorage.getItem('user');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setForm((prev) => ({ ...prev, staff_id: parsed.id }));
-        }
-
-        setLoading(false);
-      } catch (err) {
-        toast.error(err.message);
-        setLoading(false);
+      const stored = localStorage.getItem('user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setForm(f => ({ ...f, staff_id: parsed.id }));
       }
-    };
 
-    fetchData();
-  }, []);
+      setLoading(false);
+    } catch (err) {
+      toast.error(err.message);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
 
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (customerRef.current && !customerRef.current.contains(event.target)) {
+    const handleClickOutside = e => {
+      if (customerRef.current && !customerRef.current.contains(e.target)) {
         setShowCustomerDropdown(false);
       }
-      if (productRef.current && !productRef.current.contains(event.target)) {
+      if (productRef.current && !productRef.current.contains(e.target)) {
         setShowProductDropdown(false);
       }
     };
@@ -64,7 +66,7 @@ export default function CreateWaitlistPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async e => {
     e.preventDefault();
     const toastId = toast.loading('Creating waitlist...');
     try {
@@ -77,15 +79,6 @@ export default function CreateWaitlistPage() {
       toast.dismiss(toastId);
       if (!res.ok) throw new Error(data.error || 'Creation failed');
       toast.success('Waitlist entry added!');
-
-      setForm((prev) => ({
-        ...prev,
-        customer_id: '',
-        product_sku: '',
-        status: 'Active',
-      }));
-      setCustomerInput('');
-      setProductInput('');
       navigate('/waitlist');
     } catch (err) {
       toast.error(err.message, { id: toastId });
@@ -103,6 +96,25 @@ export default function CreateWaitlistPage() {
   return (
     <>
       <BackButton />
+      {showCustomerModal && (
+        <CreateCustomerModal
+          onClose={() => setShowCustomerModal(false)}
+          onSuccess={async () => {
+            await fetchData();
+            setShowCustomerModal(false);
+          }}
+        />
+      )}
+      {showProductModal && (
+        <CreateProductModal
+          isOpen={showProductModal}
+          onClose={() => setShowProductModal(false)}
+          onCreated={async () => {
+            await fetchData();
+            setShowProductModal(false);
+          }}
+        />
+      )}
       <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
           <h2 className="text-xl font-bold mb-4 text-center">Add to Waitlist</h2>
@@ -116,7 +128,7 @@ export default function CreateWaitlistPage() {
                 className="border p-2 rounded w-full"
                 value={customerInput}
                 onFocus={() => setShowCustomerDropdown(true)}
-                onChange={(e) => {
+                onChange={e => {
                   setCustomerInput(e.target.value);
                   setShowCustomerDropdown(true);
                 }}
@@ -125,16 +137,16 @@ export default function CreateWaitlistPage() {
               {showCustomerDropdown && (
                 <div className="absolute z-10 bg-white border rounded w-full max-h-40 overflow-y-auto shadow">
                   {customers
-                    .filter((c) => {
+                    .filter(c => {
                       const text = `${c.id} ${c.name}`.toLowerCase();
                       const keywords = customerInput.toLowerCase().split(' ').filter(Boolean);
-                      return keywords.every((kw) => text.includes(kw));
+                      return keywords.every(kw => text.includes(kw));
                     })
-                    .map((c) => (
+                    .map(c => (
                       <div
                         key={c.id}
                         onClick={() => {
-                          setForm({ ...form, customer_id: c.id });
+                          setForm(f => ({ ...f, customer_id: c.id }));
                           setCustomerInput(`${c.id} - ${c.name}`);
                           setShowCustomerDropdown(false);
                         }}
@@ -142,11 +154,15 @@ export default function CreateWaitlistPage() {
                       >
                         {c.id} - {c.name}
                       </div>
-                    ))}
+                    ))
+                  }
                 </div>
               )}
-              <div className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer" onClick={() => navigate('/customers/create')}>
-                Can&apos;t find customer? Add one
+              <div
+                className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer"
+                onClick={() => setShowCustomerModal(true)}
+              >
+                Can't find customer? Add one
               </div>
             </div>
 
@@ -158,7 +174,7 @@ export default function CreateWaitlistPage() {
                 className="border p-2 rounded w-full"
                 value={productInput}
                 onFocus={() => setShowProductDropdown(true)}
-                onChange={(e) => {
+                onChange={e => {
                   setProductInput(e.target.value);
                   setShowProductDropdown(true);
                 }}
@@ -167,16 +183,16 @@ export default function CreateWaitlistPage() {
               {showProductDropdown && (
                 <div className="absolute z-10 bg-white border rounded w-full max-h-40 overflow-y-auto shadow">
                   {products
-                    .filter((p) => {
+                    .filter(p => {
                       const text = `${p.sku} ${p.name}`.toLowerCase();
                       const keywords = productInput.toLowerCase().split(' ').filter(Boolean);
-                      return keywords.every((kw) => text.includes(kw));
+                      return keywords.every(kw => text.includes(kw));
                     })
-                    .map((p) => (
+                    .map(p => (
                       <div
                         key={p.sku}
                         onClick={() => {
-                          setForm({ ...form, product_sku: p.sku });
+                          setForm(f => ({ ...f, product_sku: p.sku }));
                           setProductInput(`${p.sku} - ${p.name}`);
                           setShowProductDropdown(false);
                         }}
@@ -184,37 +200,47 @@ export default function CreateWaitlistPage() {
                       >
                         {p.sku} - {p.name}
                       </div>
-                    ))}
+                    ))
+                  }
                 </div>
               )}
-              <div className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer" onClick={() => navigate('/products/create')}>
-                Can&apos;t find product? Add one
+              <div
+                className="text-sm mt-1 text-blue-600 hover:underline cursor-pointer"
+                onClick={() => setShowProductModal(true)}
+              >
+                Can't find product? Add one
               </div>
             </div>
 
-            {/* Salesperson ID (read-only) */}
+            {/* Salesperson ID */}
             <input
               type="text"
               disabled
               className="border p-2 rounded w-full bg-gray-100 text-gray-600 cursor-not-allowed"
-              value={`${form.staff_id || 'Loading...'}`}
+              value={form.staff_id || 'Loading...'}
             />
 
             {/* Status Selector */}
             <select
               className="border p-2 rounded w-full"
               value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value })}
+              onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
             >
               <option value="Active">Active</option>
               <option value="Notified">Notified</option>
               <option value="Archived">Archived</option>
             </select>
 
-            <button
-              type="submit"
-              className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            >
+            {/* Notes Text Area */}
+            <textarea
+              placeholder="Notes (optional)"
+              className="border p-2 rounded w-full"
+              value={form.notes}
+              onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
+              rows={3}
+            />
+
+            <button type="submit" className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
               Save
             </button>
           </form>

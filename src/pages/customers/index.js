@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import CreateCustomerModal from '../../components/CreateCustomerModal';
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [showModal, setShowModal] = useState(false);
+
   const CUSTOMERS_PER_PAGE = 20;
 
   useEffect(() => {
@@ -53,14 +55,24 @@ export default function CustomersPage() {
             <h2 className="text-xl font-bold">Customers</h2>
           </div>
           <div className="flex-shrink-0">
-            <Link
-              to="/customers/create"
+            <button
+              onClick={() => setShowModal(true)}
               className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             >
               + Add Customer
-            </Link>
+            </button>
           </div>
         </div>
+
+        {showModal && (
+          <CreateCustomerModal
+            onClose={() => setShowModal(false)}
+            onSuccess={() => {
+              setShowModal(false);
+              fetchCustomers();
+            }}
+          />
+        )}
 
         <input
           type="text"
@@ -91,14 +103,13 @@ export default function CustomersPage() {
                 <td className="border px-4 py-2">{c.phone}</td>
                 <td className="border px-4 py-2">{c.address}</td>
                 <td className="border px-4 py-2 text-blue-600 underline text-center">
-                  <Link to={`/customers/${c.id}/edit`}>Edit</Link>
+                  <a href={`/customers/${c.id}/edit`}>Edit</a>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        {/* Pagination */}
         <div className="mt-4 flex justify-between items-center">
           <button
             onClick={() => goToPage(currentPage - 1)}
@@ -107,11 +118,9 @@ export default function CustomersPage() {
           >
             Previous
           </button>
-
           <div className="text-sm text-gray-600">
             Page {currentPage} of {totalPages}
           </div>
-
           <button
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage === totalPages}
