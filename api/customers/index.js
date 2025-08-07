@@ -32,7 +32,7 @@ export default async function handler(req, res) {
       const insert = await pool.query(
         `INSERT INTO customers (name, email, phone, address, notes)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [name, email, phone || null, address || null, notes || null]
+        [name, email, phone || null, address || '', notes || null]
       );
 
       return res.status(201).json(insert.rows[0]);
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
         `UPDATE customers
          SET name = $1, email = $2, phone = $3, address = $4, notes = $5
          WHERE id = $6 RETURNING *`,
-        [name, email, phone || null, address || null, notes || null, id]
+        [name, email, phone || null, address || '', notes || null, id]
       );
 
       if (update.rowCount === 0) {

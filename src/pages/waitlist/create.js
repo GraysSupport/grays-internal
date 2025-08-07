@@ -11,6 +11,7 @@ export default function CreateWaitlistPage() {
     customer_id: '',
     product_sku: '',
     staff_id: '',
+    notes: '',
     status: 'Active'
   });
   const [customerInput, setCustomerInput] = useState('');
@@ -229,6 +230,15 @@ export default function CreateWaitlistPage() {
               <option value="Notified">Notified</option>
               <option value="Archived">Archived</option>
             </select>
+
+            {/* Notes Text Area */}
+            <textarea
+              placeholder="Notes (optional)"
+              className="border p-2 rounded w-full"
+              value={form.notes}
+              onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
+              rows={3}
+            />
 
             <button type="submit" className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
               Save

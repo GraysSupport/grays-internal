@@ -1,4 +1,4 @@
-import { getClientWithTimezone } from '../../lib/db.js'; // adjust path if needed
+import { getClientWithTimezone } from '../../lib/db.js';
 
 export default async function handler(req, res) {
   const { method, query: { id }, body } = req;
@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   try {
     if (method === 'GET') {
       if (id) {
-        const result = await client.query('SELECT * FROM waitlist');
+        const result = await client.query('SELECT * FROM waitlist WHERE waitlist_id = $1', [id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Waitlist not found' });
         return res.status(200).json(result.rows[0]);
       } else {
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
             w.product_sku,
             w.salesperson,
             w.status,
-            -- Convert timestamp to Melbourne time
+            w.notes,
             w.waitlisted AT TIME ZONE 'Australia/Melbourne' AS waitlisted,
             c.name AS customer_name, 
             c.email AS customer_email,
@@ -36,25 +36,26 @@ export default async function handler(req, res) {
     }
 
     if (method === 'POST') {
-      const { customer_id, product_sku, staff_id, status = 'Active' } = body;
+      const { customer_id, product_sku, staff_id, status = 'Active', notes = '' } = body;
       await client.query(
-        'INSERT INTO waitlist (customer_id, product_sku, salesperson, status, waitlisted) VALUES ($1, $2, $3, $4, NOW())',
-        [customer_id, product_sku, staff_id, status]
+        `INSERT INTO waitlist (customer_id, product_sku, salesperson, status, notes, waitlisted)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [customer_id, product_sku, staff_id, status, notes]
       );
       return res.status(201).json({ message: 'Waitlist created' });
     }
 
     if (method === 'PUT') {
-      const { customer_id, product_sku, staff_id, status } = body;
+      const { customer_id, product_sku, staff_id, status, notes } = body;
       await client.query(
-        'UPDATE waitlist SET customer_id=$1, product_sku=$2, salesperson=$3, status=$4 WHERE id=$5',
-        [customer_id, product_sku, staff_id, status, id]
+        `UPDATE waitlist SET customer_id=$1, product_sku=$2, salesperson=$3, status=$4, notes=$5 WHERE waitlist_id=$6`,
+        [customer_id, product_sku, staff_id, status, notes, id]
       );
       return res.status(200).json({ message: 'Waitlist updated' });
     }
 
     if (method === 'DELETE') {
-      await client.query('DELETE FROM waitlist WHERE id = $1', [id]);
+      await client.query('DELETE FROM waitlist WHERE waitlist_id = $1', [id]);
       return res.status(204).end();
     }
 
