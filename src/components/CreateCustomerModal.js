@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 
 export default function CreateCustomerModal({ onClose, onSuccess }) {
@@ -9,6 +9,13 @@ export default function CreateCustomerModal({ onClose, onSuccess }) {
     address: '',
     notes: '',
   });
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -23,19 +30,26 @@ export default function CreateCustomerModal({ onClose, onSuccess }) {
       toast.dismiss(toastId);
       if (!res.ok) throw new Error(data.error || 'Create failed');
       toast.success('Customer created!');
-      onSuccess();  // Refresh customer list or similar
-      onClose();    // Close the modal
+      onSuccess?.();  // Refresh list or similar
+      onClose?.();    // Close the modal
     } catch (err) {
       toast.error(err.message, { id: toastId });
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg relative">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white p-6 rounded shadow-md w-full max-w-lg relative"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
           className="absolute top-2 right-2 text-gray-600 hover:text-black"
+          aria-label="Close"
         >
           &times;
         </button>
