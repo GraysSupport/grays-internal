@@ -1,4 +1,3 @@
-// pages/create_workorder.js
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -8,7 +7,7 @@ import CreateCustomerModal from '../components/CreateCustomerModal';
 /*
 NICK (12/08)
 NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY
-WHEN ITEM IS PLACED IN A WO
+WHEN ITEM IS PLACED IN A WO, ALSO LOG CREATION DATE WITH MESSAGE
 */
 
 const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA'];

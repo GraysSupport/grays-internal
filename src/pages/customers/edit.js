@@ -1,7 +1,9 @@
+// pages/customers/edit.js
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import { parseMaybeJson } from '../../utils/http';
 
 export default function EditCustomerPage() {
   const { id } = useParams();
@@ -11,29 +13,37 @@ export default function EditCustomerPage() {
   useEffect(() => {
     const fetchCustomer = async () => {
       try {
-        const res = await fetch(`/api/customers/${id}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to fetch customer');
+        if (!id) throw new Error('Missing customer ID in URL');
+        // Use query param so it hits /api/customers
+        const res = await fetch(`/api/customers?id=${encodeURIComponent(id)}`);
+        const data = await parseMaybeJson(res);
+        if (!res.ok) {
+          const msg = data?.error || data?.raw || `HTTP ${res.status} fetching customer`;
+          throw new Error(msg);
+        }
         setForm(data);
       } catch (err) {
         toast.error(err.message);
       }
     };
-    if (id) fetchCustomer();
+    fetchCustomer();
   }, [id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     const toastId = toast.loading('Updating customer...');
     try {
-      const res = await fetch(`/api/customers/${id}`, {
+      const res = await fetch(`/api/customers?id=${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const data = await res.json();
+      const data = await parseMaybeJson(res);
       toast.dismiss(toastId);
-      if (!res.ok) throw new Error(data.error || 'Update failed');
+      if (!res.ok) {
+        const msg = data?.error || data?.raw || 'Update failed';
+        throw new Error(msg);
+      }
       toast.success('Customer updated!');
       navigate('/customers');
     } catch (err) {
@@ -52,14 +62,17 @@ export default function EditCustomerPage() {
           {['name', 'email', 'phone', 'address', 'notes'].map((field) => (
             <input
               key={field}
-              type="text"
+              type={field === 'email' ? 'email' : 'text'}
               placeholder={field.charAt(0).toUpperCase() + field.slice(1)}
               className="border p-2 rounded w-full"
-              value={form[field]}
+              value={form[field] ?? ''}
               onChange={(e) => setForm({ ...form, [field]: e.target.value })}
             />
           ))}
-          <button type="submit" className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+          <button
+            type="submit"
+            className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
             Save Changes
           </button>
         </form>

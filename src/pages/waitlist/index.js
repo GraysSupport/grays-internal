@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import { parseMaybeJson } from '../../utils/http';
 
 export default function WaitlistPage() {
   const [waitlist, setWaitlist] = useState([]);
@@ -10,16 +11,17 @@ export default function WaitlistPage() {
 
   // Read inStock param: true means only entries with stock > 0
   const inStockParam = searchParams.get('inStock');
-  const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
+  const inStockFilter =
+    inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
   useEffect(() => {
     const fetchData = async () => {
       toast.loading('Loading waitlist...', { id: 'waitlist-load' });
       try {
-        const res = await fetch('/api/waitlist');
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to load waitlist');
-        setWaitlist(data);
+        const res = await fetch('/api/waitlist'); // server returns JSON list
+        const data = await parseMaybeJson(res);
+        if (!res.ok) throw new Error(data?.error || data?.raw || 'Failed to load waitlist');
+        setWaitlist(Array.isArray(data) ? data : []);
         toast.success('Waitlist loaded!', { id: 'waitlist-load' });
       } catch (err) {
         toast.error(err.message, { id: 'waitlist-load' });
@@ -31,14 +33,15 @@ export default function WaitlistPage() {
   const handleStatusChange = async (id, newStatus) => {
     const toastId = toast.loading('Updating status...');
     try {
-      const res = await fetch(`/api/waitlist/${id}`, {
+      // Use query param so it maps to /api/waitlist with ?id=
+      const res = await fetch(`/api/waitlist?id=${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      const data = await res.json();
+      const data = await parseMaybeJson(res);
       toast.dismiss(toastId);
-      if (!res.ok) throw new Error(data.error || 'Update failed');
+      if (!res.ok) throw new Error(data?.error || data?.raw || 'Update failed');
 
       setWaitlist((prev) =>
         prev.map((entry) =>
@@ -54,13 +57,20 @@ export default function WaitlistPage() {
   const handleNoteUpdate = async (entry, newNote) => {
     const toastId = toast.loading('Updating notes...');
     try {
-      const res = await fetch(`/api/waitlist/${entry.waitlist_id}`, {
+      const res = await fetch(`/api/waitlist?id=${encodeURIComponent(entry.waitlist_id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: entry.status, notes: newNote }),
       });
+      const data = await parseMaybeJson(res);
       toast.dismiss(toastId);
-      if (!res.ok) throw new Error('Note update failed');
+      if (!res.ok) throw new Error(data?.error || data?.raw || 'Note update failed');
+
+      setWaitlist((prev) =>
+        prev.map((e) =>
+          e.waitlist_id === entry.waitlist_id ? { ...e, notes: newNote } : e
+        )
+      );
       toast.success('Notes updated');
     } catch (err) {
       toast.dismiss(toastId);
@@ -68,9 +78,8 @@ export default function WaitlistPage() {
     }
   };
 
-
   const filtered = waitlist.filter((w) => {
-    // Only show active or notified
+    // Only show active or notified (API already filters, but keep client safety)
     if (!['Active', 'Notified'].includes(w.status)) return false;
 
     // Filter by inStock param if set
@@ -86,7 +95,8 @@ export default function WaitlistPage() {
   });
 
   const grouped = filtered.reduce((acc, entry) => {
-    if (!acc[entry.product_name]) acc[entry.product_name] = { entries: [], stock: entry.stock ?? 0 };
+    if (!acc[entry.product_name])
+      acc[entry.product_name] = { entries: [], stock: entry.stock ?? 0 };
     acc[entry.product_name].entries.push(entry);
     return acc;
   }, {});
@@ -128,7 +138,6 @@ export default function WaitlistPage() {
               </span>
             </h3>
 
-
             <table className="w-full border text-sm mb-2">
               <thead className="bg-gray-100">
                 <tr>
@@ -138,7 +147,7 @@ export default function WaitlistPage() {
                   <th className="border px-4 py-2">Status</th>
                   <th className="border px-4 py-2">Salesperson</th>
                   <th className="border px-4 py-2">Created</th>
-                  <th className="border px-4 py-2">Notes</th> {/* ✅ */}
+                  <th className="border px-4 py-2">Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -146,7 +155,10 @@ export default function WaitlistPage() {
                   <tr key={entry.waitlist_id}>
                     <td className="border px-4 py-2">{entry.customer_name}</td>
                     <td className="border px-4 py-2">
-                      <a href={`mailto:${entry.customer_email}`} className="text-blue-600 underline">
+                      <a
+                        href={`mailto:${entry.customer_email}`}
+                        className="text-blue-600 underline"
+                      >
                         {entry.customer_email}
                       </a>
                     </td>
@@ -155,9 +167,7 @@ export default function WaitlistPage() {
                       <select
                         className="border p-1 rounded"
                         value={entry.status}
-                        onChange={(e) =>
-                          handleStatusChange(entry.waitlist_id, e.target.value)
-                        }
+                        onChange={(e) => handleStatusChange(entry.waitlist_id, e.target.value)}
                       >
                         <option value="Active">Active</option>
                         <option value="Notified">Notified</option>
@@ -182,7 +192,7 @@ export default function WaitlistPage() {
                           }
                         }}
                         onBlur={async (e) => {
-                          if (e.target.value !== entry.notes) {
+                          if ((entry.notes || '') !== e.target.value) {
                             await handleNoteUpdate(entry, e.target.value);
                           }
                         }}

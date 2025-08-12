@@ -19,7 +19,8 @@ function segs(req) {
 
 function methodNotAllowed(res, allow) {
   res.setHeader('Allow', allow);
-  return res.status(405).end('Method Not Allowed');
+  // CHANGED: return JSON instead of plain text so clients can safely res.json()
+  return res.status(405).json({ error: 'Method Not Allowed' });
 }
 
 export default async function handler(req, res) {
@@ -214,23 +215,48 @@ async function handleWaitlist(req, res, subId) {
     }
 
     if (method === 'POST') {
-      const { customer_id, product_sku, staff_id, status = 'Active', notes = '' } = body;
+      // VALIDATE required fields so we never insert NULLs
+      const { customer_id, product_sku, staff_id, status = 'Active', notes = '' } = body || {};
+      if (!customer_id || !product_sku) {
+        return res.status(400).json({ error: 'customer_id and product_sku are required' });
+      }
       await client.query(
         `INSERT INTO waitlist (customer_id, product_sku, salesperson, status, notes, waitlisted)
          VALUES ($1,$2,$3,$4,$5,NOW())`,
-        [customer_id, product_sku, staff_id, status, notes]
+        [customer_id, product_sku, staff_id ?? null, status, notes]
       );
       return res.status(201).json({ message: 'Waitlist created' });
     }
 
     if (method === 'PUT') {
+      // PARTIAL UPDATE: merge with existing row so missing fields aren’t nulled
       if (!id) return res.status(400).json({ error: 'Missing waitlist_id' });
-      const { customer_id, product_sku, staff_id, status, notes } = body;
+
+      const existing = await client.query(
+        'SELECT customer_id, product_sku, salesperson, status, notes FROM waitlist WHERE waitlist_id = $1',
+        [id]
+      );
+      if (!existing.rowCount) return res.status(404).json({ error: 'Waitlist not found' });
+      const row = existing.rows[0];
+
+      const merged = {
+        customer_id: body?.customer_id ?? row.customer_id,
+        product_sku: body?.product_sku ?? row.product_sku,
+        salesperson: (body?.staff_id ?? body?.salesperson) ?? row.salesperson,
+        status: body?.status ?? row.status,
+        notes: body?.notes ?? row.notes,
+      };
+
+      // guard again in case someone tries to null them explicitly
+      if (!merged.customer_id || !merged.product_sku) {
+        return res.status(400).json({ error: 'customer_id and product_sku cannot be null' });
+      }
+
       await client.query(
         `UPDATE waitlist
            SET customer_id=$1, product_sku=$2, salesperson=$3, status=$4, notes=$5
          WHERE waitlist_id=$6`,
-        [customer_id, product_sku, staff_id, status, notes, id]
+        [merged.customer_id, merged.product_sku, merged.salesperson, merged.status, merged.notes, id]
       );
       return res.status(200).json({ message: 'Waitlist updated' });
     }

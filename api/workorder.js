@@ -1,4 +1,3 @@
-// api/workorder.js
 import { getClientWithTimezone } from '../lib/db.js';
 
 // Parsing lead time weeks label

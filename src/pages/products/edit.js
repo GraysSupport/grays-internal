@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import ProductForm from '../../components/productform';
+import { parseMaybeJson } from '../../utils/http';
 
 export default function EditProductPage() {
   const { sku } = useParams();
@@ -15,10 +16,14 @@ export default function EditProductPage() {
       if (!sku) return toast.error('Missing SKU in URL');
 
       try {
-        const res = await fetch(`/api/products/${encodeURIComponent(sku)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Product fetch failed');
-
+        // CHANGED: use ?sku= instead of /:sku so it hits /api/products
+        const res = await fetch(`/api/products?sku=${encodeURIComponent(sku)}`);
+        const data = await parseMaybeJson(res);
+        if (!res.ok) {
+          const msg =
+            data?.error || data?.raw || `HTTP ${res.status} while fetching product`;
+          throw new Error(msg);
+        }
         setProduct(data);
       } catch (err) {
         toast.error(err.message);
@@ -31,16 +36,20 @@ export default function EditProductPage() {
   const handleUpdate = async (updatedForm) => {
     const toastId = toast.loading('Updating product...');
     try {
-      const res = await fetch(`/api/products/${encodeURIComponent(sku)}`, {
+      // CHANGED: PUT to /api/products?sku=...
+      const res = await fetch(`/api/products?sku=${encodeURIComponent(sku)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedForm),
       });
 
-      const data = await res.json();
+      const data = await parseMaybeJson(res);
       toast.dismiss(toastId);
 
-      if (!res.ok) throw new Error(data.error || 'Update failed');
+      if (!res.ok) {
+        const msg = data?.error || data?.raw || 'Update failed';
+        throw new Error(msg);
+      }
       toast.success('Product updated!');
       navigate('/products');
     } catch (err) {
@@ -58,17 +67,17 @@ export default function EditProductPage() {
 
   return (
     <>
-    <BackButton />
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <BackButton />
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
-        <h1 className="text-xl font-bold mb-4 text-center">Edit Product: {sku}</h1>
-        <ProductForm
+          <h1 className="text-xl font-bold mb-4 text-center">Edit Product: {sku}</h1>
+          <ProductForm
             initialValues={product}
             onSubmit={handleUpdate}
             submitLabel="Save Changes"
-        />
+          />
         </div>
-    </div>
+      </div>
     </>
   );
 }
