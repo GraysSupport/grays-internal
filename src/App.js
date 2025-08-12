@@ -17,6 +17,7 @@ import WaitlistPage from './pages/waitlist';
 import CreateWaitlistPage from './pages/waitlist/create';
 
 import CreateWorkorderPage from './pages/create_workorder';
+import ActiveWorkordersPage from './pages/delivery_operations';
 
 function App() {
   const navigate = useNavigate();
@@ -94,6 +95,7 @@ function App() {
         <Route path="/waitlist/create" element={<CreateWaitlistPage />} />
 
         <Route path="/create_workorder" element={<CreateWorkorderPage />} />
+        <Route path="/delivery_operations" element={<ActiveWorkordersPage />} />
       </Routes>
     </>
   );

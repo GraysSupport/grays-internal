@@ -1,3 +1,4 @@
+// api/workorder.js
 import { getClientWithTimezone } from '../lib/db.js';
 
 // Parsing lead time weeks label
@@ -13,7 +14,7 @@ export default async function handler(req, res) {
   try {
     if (method === 'GET') {
       if (id) {
-        // Single workorder with items + customer
+        // Single workorder with items + customer (+ product names)
         const result = await client.query(
           `
           SELECT 
@@ -38,6 +39,7 @@ export default async function handler(req, res) {
                 json_build_object(
                   'workorder_items_id', wi.workorder_items_id,
                   'product_id',        wi.product_id,
+                  'product_name',      COALESCE(p.name, wi.product_id),
                   'quantity',          wi.quantity,
                   'condition',         wi.condition,
                   'technician_id',     wi.technician_id,
@@ -50,6 +52,7 @@ export default async function handler(req, res) {
           FROM workorder wo
           JOIN customers c ON wo.customer_id = c.id
           LEFT JOIN workorder_items wi ON wo.workorder_id = wi.workorder_id
+          LEFT JOIN product p ON p.sku = wi.product_id        -- << KEY LINE: join for product name
           WHERE wo.workorder_id = $1
           GROUP BY wo.workorder_id, c.name, c.email, c.phone
           `,
@@ -62,21 +65,50 @@ export default async function handler(req, res) {
         return res.status(200).json(result.rows[0]);
       }
 
-      // List workorders (summary)
-      const list = await client.query(
-        `
-        SELECT 
+      // List workorders (summary) — returns exactly the columns your table needs
+      const list = await client.query(`
+        SELECT
           wo.workorder_id,
           wo.invoice_id,
           wo.date_created,
           wo.status,
           wo.outstanding_balance,
-          c.name AS customer_name
+          wo.delivery_suburb,
+          wo.delivery_state,
+          wo.salesperson,
+          wo.estimated_completion,
+          wo.notes,
+          c.name AS customer_name,
+
+          -- JSON array of items with product name
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'product_id',   wi.product_id,
+                'product_name', COALESCE(p.name, wi.product_id),
+                'quantity',     wi.quantity
+              )
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            '[]'::json
+          ) AS items,
+
+          -- Readable "Qty × Product Name" list
+          COALESCE(
+            string_agg(
+              (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
+              ', ' ORDER BY wi.workorder_items_id
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            '—'
+          ) AS items_text
+
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
+        LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
+        LEFT JOIN product p ON p.sku = wi.product_id          -- << KEY LINE: join for product name
+        WHERE wo.status = 'Work Ordered'
+        GROUP BY wo.workorder_id, c.name
         ORDER BY wo.date_created DESC
-        `
-      );
+      `);
       return res.status(200).json(list.rows);
     }
 
