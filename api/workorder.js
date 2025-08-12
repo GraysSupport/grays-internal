@@ -1,4 +1,4 @@
-import { getClientWithTimezone } from '../../lib/db.js';
+import { getClientWithTimezone } from '../lib/db.js';
 
 // Parsing lead time weeks label
 function parseWeeks(label) {

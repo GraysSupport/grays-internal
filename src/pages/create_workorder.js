@@ -5,6 +5,12 @@ import toast from 'react-hot-toast';
 import BackButton from '../components/backbutton';
 import CreateCustomerModal from '../components/CreateCustomerModal';
 
+/*
+NICK (12/08)
+NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY
+WHEN ITEM IS PLACED IN A WO
+*/
+
 const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA'];
 const LEAD_OPTIONS = ['1 Week', '2 Weeks', '3 Weeks', '4 Weeks', '5 Weeks'];
 
