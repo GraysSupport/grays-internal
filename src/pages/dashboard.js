@@ -9,13 +9,16 @@ export default function Dashboard() {
   const [waitlist, setWaitlist] = useState([]);
   const navigate = useNavigate();
 
+  // --- helpers ---
+  const ensureArray = (data) =>
+    Array.isArray(data) ? data : (data && typeof data === 'object' ? [data] : []);
+
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     if (!storedUser) {
       navigate('/');
       return;
     }
-
     const parsed = JSON.parse(storedUser);
     setUser(parsed);
     setLoading(false);
@@ -23,24 +26,44 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchData = async () => {
-      await toast.promise(
-        Promise.all([
-          fetch('/api/products'),
-          fetch('/api/waitlist')
-        ])
-          .then(async ([productsRes, waitlistRes]) => {
-            const productsData = await productsRes.json();
-            const waitlistData = await waitlistRes.json();
+      const load = Promise.all([
+        fetch('/api/products', { method: 'GET' }),
+        fetch('/api/waitlist', { method: 'GET' }),
+      ])
+        .then(async ([productsRes, waitlistRes]) => {
+          // Parse bodies first
+          const [productsData, waitlistData] = await Promise.all([
+            productsRes.json().catch(() => null),
+            waitlistRes.json().catch(() => null),
+          ]);
 
-            setProducts(productsData);
-            setWaitlist(waitlistData);
-          }),
-        {
-          loading: 'Fetching dashboard data...',
-          success: 'Data loaded successfully!',
-          error: 'Failed to load data.',
-        }
-      );
+          // Validate status codes
+          if (!productsRes.ok) {
+            console.error('Products API error:', productsData);
+            throw new Error(productsData?.error || `Products HTTP ${productsRes.status}`);
+          }
+          if (!waitlistRes.ok) {
+            console.error('Waitlist API error:', waitlistData);
+            throw new Error(waitlistData?.error || `Waitlist HTTP ${waitlistRes.status}`);
+          }
+
+          // Shape check + normalize to arrays
+          const safeProducts = ensureArray(productsData);
+          const safeWaitlist = ensureArray(waitlistData);
+
+          setProducts(safeProducts);
+          setWaitlist(safeWaitlist);
+        });
+
+      await toast.promise(load, {
+        loading: 'Fetching dashboard data...',
+        success: 'Data loaded successfully!',
+        error: 'Failed to load data.',
+      }).catch((_e) => {
+        // Keep state as arrays to avoid render crashes
+        setProducts([]);
+        setWaitlist([]);
+      });
     };
 
     fetchData();
@@ -54,20 +77,23 @@ export default function Dashboard() {
     );
   }
 
-  // ======= ANALYTICS ========
-  const totalProducts = products.length;
-  const inStockCount = products.filter(p => p.stock > 0).length;
-  const outOfStockCount = products.filter(p => p.stock === 0).length;
+  // ======= ANALYTICS (defensive) ========
+  const p = Array.isArray(products) ? products : [];
+  const w = Array.isArray(waitlist) ? waitlist : [];
 
-  const totalWaitlist = waitlist.length;
-  const uniqueWaitlistProducts = new Set(waitlist.map(w => w.product_sku)).size;
-  const uniqueWaitlistCustomers = new Set(waitlist.map(w => w.customer_id)).size;
-  const waitlistWithStock = waitlist.filter(w => w.stock > 0).length;
+  const totalProducts = p.length;
+  const inStockCount = p.filter((x) => Number(x?.stock) > 0).length;
+  const outOfStockCount = p.filter((x) => Number(x?.stock) === 0).length;
+
+  const totalWaitlist = w.length;
+  const uniqueWaitlistProducts = new Set(w.map((x) => x?.product_sku)).size;
+  const uniqueWaitlistCustomers = new Set(w.map((x) => x?.customer_id)).size;
+  const waitlistWithStock = w.filter((x) => Number(x?.stock) > 0).length;
 
   const analyticsCard = (label, value, extraClasses = '', onClick = null) => (
     <div
-      onClick={onClick}
-      className={`bg-gray-50 p-4 rounded shadow transition cursor-pointer hover:shadow-md ${extraClasses}`}
+      onClick={onClick || undefined}
+      className={`bg-gray-50 p-4 rounded shadow transition ${onClick ? 'cursor-pointer hover:shadow-md' : ''} ${extraClasses}`}
     >
       <h3 className="font-medium">{label}</h3>
       <p className="text-2xl font-bold">{value}</p>
@@ -85,6 +111,7 @@ export default function Dashboard() {
           <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Products</Link>
           <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Customers</Link>
           <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Waitlist</Link>
+          <Link to="/delivery_operations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Delivery Operations</Link>
           {user?.access === 'superadmin' && (
             <Link to="/register" className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold">
               Register New User
@@ -92,18 +119,19 @@ export default function Dashboard() {
           )}
           <button
             onClick={async () => {
-              const user = JSON.parse(localStorage.getItem('user'));
-              if (user) {
-                await fetch('/api/access-log', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    userId: user.id,
-                    description: 'User manually logged out',
-                  }),
-                });
+              const u = JSON.parse(localStorage.getItem('user') || 'null');
+              if (u) {
+                try {
+                  await fetch('/api/access-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      userId: u.id,
+                      description: 'User manually logged out',
+                    }),
+                  });
+                } catch {}
               }
-
               localStorage.removeItem('user');
               localStorage.removeItem('token');
               localStorage.removeItem('sessionExpiry');
