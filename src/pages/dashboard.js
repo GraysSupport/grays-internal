@@ -111,7 +111,9 @@ export default function Dashboard() {
           <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Products</Link>
           <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Customers</Link>
           <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Waitlist</Link>
-          <Link to="/delivery_operations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Delivery Operations</Link>
+          {user?.access === 'superadmin' && (
+            <Link to="/delivery_operations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Delivery Operations</Link>
+          )}
           {user?.access === 'superadmin' && (
             <Link to="/register" className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold">
               Register New User
