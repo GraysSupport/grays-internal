@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import BackButton from '../../components/backbutton';
 import CreateProductModal from '../../components/CreateProductModal';
 
@@ -15,9 +15,16 @@ export default function ProductsPage() {
   const inStockParam = searchParams.get('inStock');
   const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
+  const navigate = useNavigate();
+
   useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
     fetchProducts();
-  }, []);
+  }, [navigate]);
 
   const fetchProducts = async () => {
     toast.loading('Loading products...', { id: 'product-load' });

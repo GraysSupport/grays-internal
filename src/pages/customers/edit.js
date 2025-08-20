@@ -1,4 +1,3 @@
-// pages/customers/edit.js
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -11,10 +10,14 @@ export default function EditCustomerPage() {
   const [form, setForm] = useState(null);
 
   useEffect(() => {
-    const fetchCustomer = async () => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    (async () => {
       try {
         if (!id) throw new Error('Missing customer ID in URL');
-        // Use query param so it hits /api/customers
         const res = await fetch(`/api/customers?id=${encodeURIComponent(id)}`);
         const data = await parseMaybeJson(res);
         if (!res.ok) {
@@ -24,10 +27,10 @@ export default function EditCustomerPage() {
         setForm(data);
       } catch (err) {
         toast.error(err.message);
+        navigate('/customers');
       }
-    };
-    fetchCustomer();
-  }, [id]);
+    })();
+  }, [navigate, id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -51,12 +54,20 @@ export default function EditCustomerPage() {
     }
   };
 
-  if (!form) return <div className="h-screen flex items-center justify-center">Loading...</div>;
+  if (!form) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-lg font-medium text-gray-600">Loading…</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6">
-      <BackButton />
-      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
+    <div className="min-h-screen bg-gray-100 p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <BackButton />
+      </div>
+      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg mx-auto">
         <h2 className="text-xl font-bold mb-4 text-center">Edit Customer</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           {['name', 'email', 'phone', 'address', 'notes'].map((field) => (

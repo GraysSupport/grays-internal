@@ -51,7 +51,7 @@ export default async function handler(req, res) {
           FROM workorder wo
           JOIN customers c ON wo.customer_id = c.id
           LEFT JOIN workorder_items wi ON wo.workorder_id = wi.workorder_id
-          LEFT JOIN product p ON p.sku = wi.product_id        -- << KEY LINE: join for product name
+          LEFT JOIN product p ON p.sku = wi.product_id
           WHERE wo.workorder_id = $1
           GROUP BY wo.workorder_id, c.name, c.email, c.phone
           `,
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
         return res.status(200).json(result.rows[0]);
       }
 
-      // List workorders (summary) — returns exactly the columns your table needs
+      // List workorders (summary) — returns columns your table needs
       const list = await client.query(`
         SELECT
           wo.workorder_id,
@@ -103,7 +103,7 @@ export default async function handler(req, res) {
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
         LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
-        LEFT JOIN product p ON p.sku = wi.product_id          -- << KEY LINE: join for product name
+        LEFT JOIN product p ON p.sku = wi.product_id
         WHERE wo.status = 'Work Ordered'
         GROUP BY wo.workorder_id, c.name
         ORDER BY wo.date_created DESC
@@ -122,7 +122,7 @@ export default async function handler(req, res) {
         lead_time,            // lead_time_enum e.g. "3 Weeks"
         estimated_completion, // optional (server can compute)
         notes,
-        status,               // workorder_status_enum (defaults in DB to 'Work Ordered' if omitted)
+        status,               // workorder_status_enum (defaults to 'Work Ordered')
         outstanding_balance,  // numeric (NOT NULL)
         items                 // [{ product_id, quantity, condition, technician_id, status? }]
       } = body || {};
@@ -130,6 +130,12 @@ export default async function handler(req, res) {
       if (!invoice_id || !customer_id || !salesperson || !delivery_state || !lead_time || outstanding_balance == null) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
+
+      // Who is creating this? Prefer request header, fallback to salesperson
+      const actorId =
+        String(req.headers['x-user-id'] || salesperson || '')
+          .trim()
+          .slice(0, 10); // your user_id column is varchar(2), but slicing is safe
 
       await client.query('BEGIN');
 
@@ -197,6 +203,15 @@ export default async function handler(req, res) {
           );
         }
       }
+
+      // 🔹 Log the creation
+      await client.query(
+        `
+        INSERT INTO workorder_logs (workorder_id, workorder_items_id, event_type, user_id)
+        VALUES ($1, NULL, 'WORKORDER_CREATED'::workorder_log_event, $2)
+        `,
+        [workorderId, actorId || 'SYSTEM']
+      );
 
       await client.query('COMMIT');
       return res.status(201).json({ message: 'Workorder created', workorder_id: workorderId });

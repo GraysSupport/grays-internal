@@ -8,35 +8,42 @@ import { parseMaybeJson } from '../../utils/http';
 export default function EditProductPage() {
   const { sku } = useParams();
   const navigate = useNavigate();
-
   const [product, setProduct] = useState(null);
 
   useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+
     const fetchProduct = async () => {
-      if (!sku) return toast.error('Missing SKU in URL');
+      if (!sku) {
+        toast.error('Missing SKU in URL');
+        navigate('/products');
+        return;
+      }
 
       try {
-        // CHANGED: use ?sku= instead of /:sku so it hits /api/products
         const res = await fetch(`/api/products?sku=${encodeURIComponent(sku)}`);
         const data = await parseMaybeJson(res);
         if (!res.ok) {
-          const msg =
-            data?.error || data?.raw || `HTTP ${res.status} while fetching product`;
+          const msg = data?.error || data?.raw || `HTTP ${res.status} while fetching product`;
           throw new Error(msg);
         }
         setProduct(data);
       } catch (err) {
         toast.error(err.message);
+        navigate('/products');
       }
     };
 
     fetchProduct();
-  }, [sku]);
+  }, [sku, navigate]);
 
   const handleUpdate = async (updatedForm) => {
     const toastId = toast.loading('Updating product...');
     try {
-      // CHANGED: PUT to /api/products?sku=...
       const res = await fetch(`/api/products?sku=${encodeURIComponent(sku)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -50,6 +57,7 @@ export default function EditProductPage() {
         const msg = data?.error || data?.raw || 'Update failed';
         throw new Error(msg);
       }
+
       toast.success('Product updated!');
       navigate('/products');
     } catch (err) {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import BackButton from '../components/backbutton';
 import toast from 'react-hot-toast';
 
@@ -13,6 +14,21 @@ export default function Register() {
   });
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    const u = JSON.parse(stored);
+    if (u?.access !== 'superadmin') {
+      toast.error('Insufficient permissions');
+      navigate('/dashboard');
+    }
+  }, [navigate]);
 
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -49,7 +65,7 @@ export default function Register() {
       } else {
         toast.error(data.error || 'Registration failed');
       }
-    } catch (err) {
+    } catch {
       toast.dismiss(registerToast);
       toast.error('Server error');
     }
@@ -59,9 +75,10 @@ export default function Register() {
     setLoadingUsers(true);
     try {
       const res = await fetch('/api/users');
+      if (!res.ok) throw new Error('Failed to fetch users');
       const data = await res.json();
-      setUsers(data);
-    } catch (error) {
+      setUsers(Array.isArray(data) ? data : []);
+    } catch {
       toast.error('Failed to fetch users');
       setUsers([]);
     } finally {
@@ -69,13 +86,13 @@ export default function Register() {
     }
   };
 
-  const handleUpdate = async (user) => {
+  const handleUpdate = async (row) => {
     const updateToast = toast.loading('Updating user...');
     try {
       const res = await fetch('/api/users', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(user),
+        body: JSON.stringify(row),
       });
 
       const data = await res.json();
@@ -86,7 +103,7 @@ export default function Register() {
       } else {
         toast.error(data.error || 'Update failed');
       }
-    } catch (err) {
+    } catch {
       toast.dismiss(updateToast);
       toast.error('Update error');
     }
@@ -104,21 +121,13 @@ export default function Register() {
       <div className="flex justify-center mt-6">
         <button
           onClick={() => setActiveTab('register')}
-          className={`px-4 py-2 rounded-t ${
-            activeTab === 'register'
-              ? 'bg-gray-300 text-gray-700'
-              : 'bg-white text-blue-500 font-bold'
-          }`}
+          className={`px-4 py-2 rounded-t ${activeTab === 'register' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-500 font-bold'}`}
         >
           Register
         </button>
         <button
           onClick={() => setActiveTab('update')}
-          className={`px-4 py-2 rounded-t ${
-            activeTab === 'update'
-              ? 'bg-gray-300 text-gray-700'
-              : 'bg-white text-blue-500 font-bold'
-          }`}
+          className={`px-4 py-2 rounded-t ${activeTab === 'update' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-500 font-bold'}`}
         >
           Update Users
         </button>
@@ -134,11 +143,7 @@ export default function Register() {
                   key={field}
                   type={field.toLowerCase().includes('password') ? 'password' : 'text'}
                   name={field}
-                  placeholder={
-                    field === 'confirmPassword'
-                      ? 'Confirm Password'
-                      : field.charAt(0).toUpperCase() + field.slice(1)
-                  }
+                  placeholder={field === 'confirmPassword' ? 'Confirm Password' : field.charAt(0).toUpperCase() + field.slice(1)}
                   value={form[field]}
                   onChange={handleChange}
                   className="w-full mb-4 px-4 py-2 border rounded"
@@ -174,18 +179,16 @@ export default function Register() {
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map((user) => (
-                        <tr key={user.id}>
-                          <td className="border px-4 py-2">{user.id}</td>
+                      {users.map((u) => (
+                        <tr key={u.id}>
+                          <td className="border px-4 py-2">{u.id}</td>
                           <td className="border px-4 py-2">
                             <input
                               type="text"
                               className="w-full px-2 py-1 border rounded"
-                              value={user.name}
+                              value={u.name}
                               onChange={(e) =>
-                                setUsers(users.map((u) =>
-                                  u.id === user.id ? { ...u, name: e.target.value } : u
-                                ))
+                                setUsers(users.map((x) => (x.id === u.id ? { ...x, name: e.target.value } : x)))
                               }
                             />
                           </td>
@@ -193,22 +196,18 @@ export default function Register() {
                             <input
                               type="email"
                               className="w-full px-2 py-1 border rounded"
-                              value={user.email}
+                              value={u.email}
                               onChange={(e) =>
-                                setUsers(users.map((u) =>
-                                  u.id === user.id ? { ...u, email: e.target.value } : u
-                                ))
+                                setUsers(users.map((x) => (x.id === u.id ? { ...x, email: e.target.value } : x)))
                               }
                             />
                           </td>
                           <td className="border px-4 py-2">
                             <select
                               className="w-full px-2 py-1 border rounded"
-                              value={user.access}
+                              value={u.access}
                               onChange={(e) =>
-                                setUsers(users.map((u) =>
-                                  u.id === user.id ? { ...u, access: e.target.value } : u
-                                ))
+                                setUsers(users.map((x) => (x.id === u.id ? { ...x, access: e.target.value } : x)))
                               }
                             >
                               {accessLevels.map((level) => (
@@ -220,7 +219,7 @@ export default function Register() {
                           </td>
                           <td className="border px-4 py-2 text-center">
                             <button
-                              onClick={() => handleUpdate(user)}
+                              onClick={() => handleUpdate(u)}
                               className="bg-green-500 text-white px-4 py-1 rounded hover:bg-green-600"
                             >
                               Save

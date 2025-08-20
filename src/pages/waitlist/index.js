@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import { parseMaybeJson } from '../../utils/http';
@@ -8,6 +8,7 @@ export default function WaitlistPage() {
   const [waitlist, setWaitlist] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   // Read inStock param: true means only entries with stock > 0
   const inStockParam = searchParams.get('inStock');
@@ -15,6 +16,12 @@ export default function WaitlistPage() {
     inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
 
   useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+
     const fetchData = async () => {
       toast.loading('Loading waitlist...', { id: 'waitlist-load' });
       try {
@@ -28,7 +35,7 @@ export default function WaitlistPage() {
       }
     };
     fetchData();
-  }, []);
+  }, [navigate]);
 
   const handleStatusChange = async (id, newStatus) => {
     const toastId = toast.loading('Updating status...');
