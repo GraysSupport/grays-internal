@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
+import { useNavigate, Link } from 'react-router-dom';
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
@@ -10,10 +11,16 @@ export default function CustomersPage() {
   const [showModal, setShowModal] = useState(false);
 
   const CUSTOMERS_PER_PAGE = 20;
+  const navigate = useNavigate();
 
   useEffect(() => {
-    fetchCustomers();
-  }, []);
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    fetchCustomers(); // only runs if user exists
+  }, [navigate]);
 
   const fetchCustomers = async () => {
     toast.loading('Loading customers...', { id: 'customer-load' });
@@ -21,7 +28,7 @@ export default function CustomersPage() {
       const res = await fetch('/api/customers');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load customers');
-      setCustomers(data);
+      setCustomers(Array.isArray(data) ? data : []);
       toast.success('Customers loaded!', { id: 'customer-load' });
     } catch (err) {
       toast.error(err.message, { id: 'customer-load' });
@@ -29,21 +36,17 @@ export default function CustomersPage() {
   };
 
   const filtered = customers.filter((c) =>
-    `${c.name} ${c.email} ${c.phone}`
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase())
+    `${c.name} ${c.email} ${c.phone}`.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const totalPages = Math.ceil(filtered.length / CUSTOMERS_PER_PAGE);
+  const totalPages = Math.ceil(filtered.length / CUSTOMERS_PER_PAGE) || 1;
   const currentCustomers = filtered.slice(
     (currentPage - 1) * CUSTOMERS_PER_PAGE,
     currentPage * CUSTOMERS_PER_PAGE
   );
 
   const goToPage = (page) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
-    }
+    if (page >= 1 && page <= totalPages) setCurrentPage(page);
   };
 
   return (
@@ -97,13 +100,13 @@ export default function CustomersPage() {
           </thead>
           <tbody>
             {currentCustomers.map((c) => (
-              <tr key={c.customer_id}>
+              <tr key={c.id}>
                 <td className="border px-4 py-2">{c.name}</td>
                 <td className="border px-4 py-2">{c.email}</td>
                 <td className="border px-4 py-2">{c.phone}</td>
                 <td className="border px-4 py-2">{c.address}</td>
                 <td className="border px-4 py-2 text-blue-600 underline text-center">
-                  <a href={`/customers/${c.id}/edit`}>Edit</a>
+                  <Link to={`/customers/${c.id}/edit`}>Edit</Link>
                 </td>
               </tr>
             ))}

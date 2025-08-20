@@ -39,6 +39,11 @@ export default function ActiveWorkordersPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
     let mounted = true;
     const load = async () => {
       toast.loading('Loading work orders...', { id: 'wo-load' });
@@ -63,7 +68,7 @@ export default function ActiveWorkordersPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [navigate]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

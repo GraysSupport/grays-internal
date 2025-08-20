@@ -51,7 +51,14 @@ export default function CreateWaitlistPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    fetchData(); 
+  }, [navigate]);
 
   useEffect(() => {
     const handleClickOutside = e => {

@@ -6,8 +6,8 @@ import CreateCustomerModal from '../components/CreateCustomerModal';
 
 /*
 NICK (12/08)
-NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY
-WHEN ITEM IS PLACED IN A WO, ALSO LOG CREATION DATE WITH MESSAGE
+NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY WHEN ITEM IS PLACED IN A WO, 
+ALSO LOG CREATION DATE WITH MESSAGE - WO CREATION LOGGING DONE
 */
 
 const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA'];
@@ -58,6 +58,8 @@ export default function CreateWorkorderPage() {
   const [openTechDropdownIdx, setOpenTechDropdownIdx] = useState(null);
   const [techSearch, setTechSearch] = useState({});
 
+  const [currentUserId, setCurrentUserId] = useState('');
+
   const customerRef = useRef(null);
 
   const fetchData = async () => {
@@ -91,6 +93,7 @@ export default function CreateWorkorderPage() {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed?.id) {
+            setCurrentUserId(parsed.id);
             setForm((f) => ({ ...f, salesperson: parsed.id }));
           }
         }
@@ -103,7 +106,14 @@ export default function CreateWorkorderPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    fetchData(); 
+  }, [navigate]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -176,14 +186,17 @@ export default function CreateWorkorderPage() {
 
       const res = await fetch('/api/workorder', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': currentUserId || form.salesperson || '',
+        },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Creation failed');
 
       toast.success('Workorder created!', { id: toastId });
-      navigate('/workorders');
+      navigate('/delivery_operations');
     } catch (err) {
       toast.error(err.message || 'Failed to create', { id: toastId });
     }
