@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import HomeButton from '../../components/homebutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
 import CreateProductModal from '../../components/CreateProductModal';
 
@@ -102,7 +103,10 @@ export default function CreateWaitlistPage() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       {showCustomerModal && (
         <CreateCustomerModal
           onClose={() => setShowCustomerModal(false)}

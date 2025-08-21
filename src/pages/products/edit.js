@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import HomeButton from '../../components/homebutton';
 import ProductForm from '../../components/productform';
 import { parseMaybeJson } from '../../utils/http';
 
@@ -75,7 +76,10 @@ export default function EditProductPage() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
           <h1 className="text-xl font-bold mb-4 text-center">Edit Product: {sku}</h1>

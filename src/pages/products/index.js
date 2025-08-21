@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import BackButton from '../../components/backbutton';
+import HomeButton from '../../components/homebutton';
 import CreateProductModal from '../../components/CreateProductModal';
 
 export default function ProductsPage() {
@@ -66,7 +67,10 @@ export default function ProductsPage() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       {showModal && (
         <CreateProductModal
           isOpen={showModal}

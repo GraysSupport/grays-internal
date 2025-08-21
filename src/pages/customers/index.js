@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import HomeButton from '../../components/homebutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
 import { useNavigate, Link } from 'react-router-dom';
 
@@ -51,7 +52,10 @@ export default function CustomersPage() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       <div className="min-h-screen bg-gray-100 p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1 text-center">

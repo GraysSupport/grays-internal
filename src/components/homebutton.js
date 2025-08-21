@@ -1,16 +1,16 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { Home } from 'lucide-react';
 
-export default function BackButton() {
+export default function HomeButton() {
   const navigate = useNavigate();
 
   return (
     <button
-      onClick={() => navigate(-1)}
+      onClick={() => navigate('/dashboard')}
       className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-800 shadow transition"
-      aria-label="Go back"
+      aria-label="Go home"
     >
-      <ArrowLeft size={20} />
+      <Home size={20} />
     </button>
   );
 }

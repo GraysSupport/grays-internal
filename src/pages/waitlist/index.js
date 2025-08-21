@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
+import HomeButton from '../../components/homebutton';
 import { parseMaybeJson } from '../../utils/http';
 
 export default function WaitlistPage() {
@@ -112,7 +113,10 @@ export default function WaitlistPage() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <BackButton />
+        <HomeButton />
+      </div>
       <div className="min-h-screen bg-gray-100 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-center flex-1">Waitlist</h2>

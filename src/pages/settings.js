@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BackButton from '../components/backbutton';
+import HomeButton from '../components/homebutton';
 import toast from 'react-hot-toast';
 
 export default function Settings() {
@@ -54,7 +55,10 @@ export default function Settings() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-md">
           <h2 className="text-2xl font-bold mb-4 text-center">User Settings</h2>

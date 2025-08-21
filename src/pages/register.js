@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BackButton from '../components/backbutton';
+import HomeButton from '../components/homebutton';
 import toast from 'react-hot-toast';
 
 export default function Register() {
@@ -117,7 +118,10 @@ export default function Register() {
 
   return (
     <>
-      <BackButton />
+      <div className="fixed top-4 left-6 z-50 flex gap-2">
+        <HomeButton />
+        <BackButton />
+      </div>
       <div className="flex justify-center mt-6">
         <button
           onClick={() => setActiveTab('register')}
