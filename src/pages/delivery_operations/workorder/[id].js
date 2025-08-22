@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
 function formatMoney(n) {
@@ -34,8 +34,18 @@ export default function WorkorderDetailPage() {
     try {
       const u = JSON.parse(localStorage.getItem('user') || '{}');
       return u?.id || '';
-    } catch { return ''; }
+    } catch {
+      return '';
+    }
   }, []);
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/delivery_operations');
+    }
+  };
 
   // Load technicians once
   useEffect(() => {
@@ -51,7 +61,10 @@ export default function WorkorderDetailPage() {
   // Load WO
   useEffect(() => {
     const stored = localStorage.getItem('user');
-    if (!stored) { navigate('/'); return; }
+    if (!stored) {
+      navigate('/');
+      return;
+    }
 
     (async () => {
       setLoading(true);
@@ -90,23 +103,30 @@ export default function WorkorderDetailPage() {
     try {
       const payload = {
         notes,
-        delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
-        outstanding_balance: outstandingBalance === '' ? wo.outstanding_balance : Number(outstandingBalance),
+        delivery_charged:
+          deliveryCharged === '' ? null : Number(deliveryCharged),
+        outstanding_balance:
+          outstandingBalance === ''
+            ? wo.outstanding_balance
+            : Number(outstandingBalance),
         items: items.map((it) => ({
           workorder_items_id: it.workorder_items_id,
           status: it.status,
-          technician_id: it.technician_id
-        }))
+          technician_id: it.technician_id,
+        })),
       };
 
-      const r = await fetch(`/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': userId || ''
-        },
-        body: JSON.stringify(payload)
-      });
+      const r = await fetch(
+        `/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': userId || '',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || 'Save failed');
 
@@ -138,18 +158,29 @@ export default function WorkorderDetailPage() {
     return (
       <div className="p-6">
         <div className="mb-4">
-          <Link to="/delivery_operations" className="text-blue-600 underline">← Back</Link>
+          <button
+            onClick={handleBack}
+            className="text-blue-600 underline"
+          >
+            ← Back
+          </button>
         </div>
         <div className="text-red-600">Work order not found.</div>
       </div>
     );
   }
 
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <header className="border-b bg-white">
         <div className="py-4 px-4 flex items-center justify-between">
-          <Link to="/delivery_operations" className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50">← Back</Link>
+          <button
+            onClick={handleBack}
+            className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+          >
+            ← Back
+          </button>
           <h1 className="text-2xl font-semibold tracking-tight text-center">
             Work Order Details: Invoice #{wo.invoice_id}
           </h1>
