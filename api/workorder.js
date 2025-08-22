@@ -83,7 +83,9 @@ export default async function handler(req, res) {
         });
       }
 
-      // List "active" workorders (unchanged)
+      // List workorders
+      const { status: statusFilter } = req.query;
+
       const list = await client.query(`
         SELECT
           wo.workorder_id,
@@ -118,10 +120,11 @@ export default async function handler(req, res) {
         JOIN customers c ON wo.customer_id = c.id
         LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
         LEFT JOIN product p ON p.sku = wi.product_id
-        WHERE wo.status = 'Work Ordered'
+        ${statusFilter ? `WHERE wo.status = $1` : ''}
         GROUP BY wo.workorder_id, c.name
         ORDER BY wo.date_created DESC
-      `);
+      `, statusFilter ? [statusFilter] : []);
+
       return res.status(200).json(list.rows);
     }
 
