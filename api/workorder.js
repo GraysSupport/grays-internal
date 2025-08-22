@@ -1,9 +1,17 @@
 import { getClientWithTimezone } from '../lib/db.js';
 
-// Parsing lead time weeks label
+// Helpers
 function parseWeeks(label) {
   const m = String(label || '').match(/(\d+)/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+async function logEvent(client, { workorder_id, workorder_items_id = null, event_type, user_id = 'SYSTEM' }) {
+  await client.query(
+    `INSERT INTO workorder_logs (workorder_id, workorder_items_id, event_type, user_id)
+     VALUES ($1,$2,$3,$4)`,
+    [workorder_id, workorder_items_id, event_type, String(user_id).slice(0, 10)]
+  );
 }
 
 export default async function handler(req, res) {
@@ -13,58 +21,71 @@ export default async function handler(req, res) {
   try {
     if (method === 'GET') {
       if (id) {
-        // Single workorder with items + customer (+ product names)
-        const result = await client.query(
+        // Workorder + items + activity log
+        const wo = await client.query(
+          `
+          WITH base AS (
+            SELECT 
+              wo.*,
+              c.name  AS customer_name,
+              c.email AS customer_email,
+              c.phone AS customer_phone
+            FROM workorder wo
+            JOIN customers c ON c.id = wo.customer_id
+            WHERE wo.workorder_id = $1
+          )
+          SELECT * FROM base
+          `,
+          [id]
+        );
+        if (!wo.rows.length) return res.status(404).json({ error: 'Workorder not found' });
+
+        const items = await client.query(
           `
           SELECT 
-            wo.workorder_id,
-            wo.invoice_id,
-            wo.customer_id,
-            wo.salesperson,
-            wo.delivery_suburb,
-            wo.delivery_state,
-            wo.delivery_charged,
-            wo.lead_time,
-            wo.estimated_completion,
-            wo.notes,
-            wo.status,
-            wo.date_created,
-            wo.outstanding_balance,
-            c.name  AS customer_name,
-            c.email AS customer_email,
-            c.phone AS customer_phone,
-            COALESCE(
-              json_agg(
-                json_build_object(
-                  'workorder_items_id', wi.workorder_items_id,
-                  'product_id',        wi.product_id,
-                  'product_name',      COALESCE(p.name, wi.product_id),
-                  'quantity',          wi.quantity,
-                  'condition',         wi.condition,
-                  'technician_id',     wi.technician_id,
-                  'status',            wi.status,
-                  'in_workshop',       wi.in_workshop
-                )
-              ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
-              '[]'::json
-            ) AS items
-          FROM workorder wo
-          JOIN customers c ON wo.customer_id = c.id
-          LEFT JOIN workorder_items wi ON wo.workorder_id = wi.workorder_id
+            wi.workorder_items_id, wi.workorder_id, wi.product_id,
+            COALESCE(p.name, wi.product_id) AS product_name,
+            wi.quantity, wi.condition, wi.technician_id, wi.status, wi.in_workshop,
+            wi.wokrshop_duration
+          FROM workorder_items wi
           LEFT JOIN product p ON p.sku = wi.product_id
-          WHERE wo.workorder_id = $1
-          GROUP BY wo.workorder_id, c.name, c.email, c.phone
+          WHERE wi.workorder_id = $1
+          ORDER BY wi.workorder_items_id ASC
           `,
           [id]
         );
 
-        if (!result.rows.length) {
-          return res.status(404).json({ error: 'Workorder not found' });
-        }
-        return res.status(200).json(result.rows[0]);
+        const logs = await client.query(
+          `
+          SELECT 
+            l.id,
+            to_char(l.created_at AT TIME ZONE 'Australia/Melbourne','DD-Mon-YYYY HH24:MI:SS') AS ts,
+            l.event_type,
+            l.user_id,
+            l.workorder_items_id,
+            COALESCE(p.name, wi.product_id) AS product_name,
+            wi.status AS current_item_status
+          FROM workorder_logs l
+          LEFT JOIN workorder_items wi ON wi.workorder_items_id = l.workorder_items_id
+          LEFT JOIN product p ON p.sku = wi.product_id
+          WHERE l.workorder_id = $1
+          ORDER BY l.created_at ASC, l.id ASC
+          `,
+          [id]
+        );
+
+        const woRow = wo.rows[0];
+
+        return res.status(200).json({
+          ...woRow,
+          items: items.rows,
+          activity: logs.rows
+        });
       }
 
-      // List workorders (summary) — returns columns your table needs
+      // List workorders
+      const { status: statusFilter } = req.query;
+
       const list = await client.query(`
         SELECT
           wo.workorder_id,
@@ -78,8 +99,6 @@ export default async function handler(req, res) {
           wo.estimated_completion,
           wo.notes,
           c.name AS customer_name,
-
-          -- JSON array of items with product name
           COALESCE(
             json_agg(
               json_build_object(
@@ -90,8 +109,6 @@ export default async function handler(req, res) {
             ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
             '[]'::json
           ) AS items,
-
-          -- Readable "Qty × Product Name" list
           COALESCE(
             string_agg(
               (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
@@ -99,15 +116,15 @@ export default async function handler(req, res) {
             ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
             '—'
           ) AS items_text
-
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
         LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
         LEFT JOIN product p ON p.sku = wi.product_id
-        WHERE wo.status = 'Work Ordered'
+        ${statusFilter ? `WHERE wo.status = $1` : ''}
         GROUP BY wo.workorder_id, c.name
         ORDER BY wo.date_created DESC
-      `);
+      `, statusFilter ? [statusFilter] : []);
+
       return res.status(200).json(list.rows);
     }
 
@@ -119,10 +136,10 @@ export default async function handler(req, res) {
         delivery_suburb,
         delivery_state,       // delivery_state_enum
         delivery_charged,
-        lead_time,            // lead_time_enum e.g. "3 Weeks"
-        estimated_completion, // optional (server can compute)
+        lead_time,            // lead_time_enum
+        estimated_completion, // optional
         notes,
-        status,               // workorder_status_enum (defaults to 'Work Ordered')
+        status,
         outstanding_balance,  // numeric (NOT NULL)
         items                 // [{ product_id, quantity, condition, technician_id, status? }]
       } = body || {};
@@ -131,15 +148,9 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      // Who is creating this? Prefer request header, fallback to salesperson
-      const actorId =
-        String(req.headers['x-user-id'] || salesperson || '')
-          .trim()
-          .slice(0, 10); // your user_id column is varchar(2), but slicing is safe
-
+      const actorId = String(req.headers['x-user-id'] || salesperson || 'SYSTEM').trim().slice(0, 10);
       await client.query('BEGIN');
 
-      // If client didn't send, compute estimated_completion = NOW() + lead_time(weeks)
       let estComplete = estimated_completion;
       if (!estComplete) {
         const weeks = parseWeeks(lead_time);
@@ -148,7 +159,7 @@ export default async function handler(req, res) {
             `SELECT (NOW()::date + ($1 * 7) * INTERVAL '1 day')::date AS d`,
             [weeks]
           );
-          estComplete = r.rows[0].d; // yyyy-mm-dd
+          estComplete = r.rows[0].d;
         }
       }
 
@@ -169,125 +180,27 @@ export default async function handler(req, res) {
           delivery_state,
           delivery_charged ?? null,
           lead_time,
-          estComplete,         // server-calculated if needed
+          estComplete,
           notes || null,
           status || 'Work Ordered',
           Number(outstanding_balance)
         ]
       );
-
       const workorderId = woRes.rows[0].workorder_id;
 
       if (Array.isArray(items) && items.length) {
         for (const item of items) {
-          const itmStatus =
-            item.status && String(item.status).trim()
-              ? item.status
-              : 'Not in Workshop'; // aligns with DB default
-
+          const itmStatus = item.status && String(item.status).trim()
+            ? item.status
+            : 'Not in Workshop';
           await client.query(
             `
             INSERT INTO workorder_items (
               workorder_id, product_id, quantity, condition, technician_id, status
-            )
-            VALUES ($1,$2,$3,$4,$5,$6)
+            ) VALUES ($1,$2,$3,$4,$5,$6)
             `,
             [
               workorderId,
-              item.product_id,
-              Number(item.quantity),
-              item.condition,         // must match condition_enum
-              item.technician_id,     // varchar(2)
-              itmStatus
-            ]
-          );
-        }
-      }
-
-      // 🔹 Log the creation
-      await client.query(
-        `
-        INSERT INTO workorder_logs (workorder_id, workorder_items_id, event_type, user_id)
-        VALUES ($1, NULL, 'WORKORDER_CREATED'::workorder_log_event, $2)
-        `,
-        [workorderId, actorId || 'SYSTEM']
-      );
-
-      await client.query('COMMIT');
-      return res.status(201).json({ message: 'Workorder created', workorder_id: workorderId });
-    }
-
-    if (method === 'PUT') {
-      if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
-
-      const {
-        invoice_id,
-        customer_id,
-        salesperson,
-        delivery_suburb,
-        delivery_state,
-        delivery_charged,
-        lead_time,
-        estimated_completion, // client may overwrite
-        notes,
-        status,
-        outstanding_balance,
-        items
-      } = body || {};
-
-      await client.query('BEGIN');
-
-      await client.query(
-        `
-        UPDATE workorder
-           SET invoice_id=$1,
-               customer_id=$2,
-               salesperson=$3,
-               delivery_suburb=$4,
-               delivery_state=$5,
-               delivery_charged=$6,
-               lead_time=$7,
-               estimated_completion=$8,
-               notes=$9,
-               status=$10,
-               outstanding_balance=$11
-         WHERE workorder_id=$12
-        `,
-        [
-          invoice_id,
-          customer_id,
-          salesperson,
-          delivery_suburb || null,
-          delivery_state,
-          delivery_charged ?? null,
-          lead_time,
-          estimated_completion,
-          notes || null,
-          status || 'Work Ordered',
-          Number(outstanding_balance),
-          id
-        ]
-      );
-
-      // Replace items (simple approach)
-      await client.query(`DELETE FROM workorder_items WHERE workorder_id = $1`, [id]);
-
-      if (Array.isArray(items) && items.length) {
-        for (const item of items) {
-          const itmStatus =
-            item.status && String(item.status).trim()
-              ? item.status
-              : 'Not in Workshop';
-
-          await client.query(
-            `
-            INSERT INTO workorder_items (
-              workorder_id, product_id, quantity, condition, technician_id, status
-            )
-            VALUES ($1,$2,$3,$4,$5,$6)
-            `,
-            [
-              id,
               item.product_id,
               Number(item.quantity),
               item.condition,
@@ -298,8 +211,151 @@ export default async function handler(req, res) {
         }
       }
 
+      // creation log
+      await logEvent(client, {
+        workorder_id: workorderId,
+        event_type: 'WORKORDER_CREATED',
+        user_id: actorId
+      });
+
       await client.query('COMMIT');
-      return res.status(200).json({ message: 'Workorder updated' });
+      return res.status(201).json({ message: 'Workorder created', workorder_id: workorderId });
+    }
+
+    if (method === 'PUT') {
+      if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
+      const actorId = String(req.headers['x-user-id'] || '').trim().slice(0, 10) || 'SYSTEM';
+
+      const {
+        notes,
+        delivery_charged,
+        outstanding_balance,
+        estimated_completion,
+        items // [{ workorder_items_id, status, technician_id }]
+      } = body || {};
+
+      await client.query('BEGIN');
+
+      // Load current WO for comparisons
+      const currentWO = await client.query(
+        `SELECT notes, delivery_charged, outstanding_balance, status, estimated_completion
+           FROM workorder WHERE workorder_id = $1`,
+        [id]
+      );
+      if (!currentWO.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Workorder not found' });
+      }
+      const beforeWO = currentWO.rows[0];
+
+      // 1) Update editable WO-level fields
+      const updates = [];
+      const params = [];
+      let p = 1;
+
+      if (notes !== undefined) { updates.push(`notes = $${p++}`); params.push(notes || null); }
+      if (delivery_charged !== undefined) { updates.push(`delivery_charged = $${p++}`); params.push(delivery_charged === null || delivery_charged === '' ? null : Number(delivery_charged)); }
+      if (outstanding_balance !== undefined) { updates.push(`outstanding_balance = $${p++}`); params.push(Number(outstanding_balance)); }
+      if (estimated_completion !== undefined) { updates.push(`estimated_completion = $${p++}`); params.push(estimated_completion || beforeWO.estimated_completion); }
+
+      if (updates.length) {
+        params.push(id);
+        await client.query(`UPDATE workorder SET ${updates.join(', ')} WHERE workorder_id = $${p}`, params);
+
+        // WO-level logs
+        if (notes !== undefined && (notes || '') !== (beforeWO.notes || '')) {
+          await logEvent(client, { workorder_id: id, event_type: 'NOTE_ADDED', user_id: actorId });
+        }
+        if (outstanding_balance !== undefined && Number(outstanding_balance) !== Number(beforeWO.outstanding_balance)) {
+          await logEvent(client, { workorder_id: id, event_type: 'PAYMENT_UPDATED', user_id: actorId });
+        }
+      }
+
+      // 2) Update items (status / tech) and log with unified ITEM_STATUS_CHANGED
+      if (Array.isArray(items) && items.length) {
+        for (const row of items) {
+          const { workorder_items_id, status, technician_id } = row || {};
+          if (!workorder_items_id) continue;
+
+          const cur = await client.query(
+            `SELECT workorder_items_id, status, technician_id, in_workshop, wokrshop_duration
+               FROM workorder_items WHERE workorder_items_id = $1 AND workorder_id = $2`,
+            [workorder_items_id, id]
+          );
+          if (!cur.rows.length) continue;
+
+          const before = cur.rows[0];
+          const fields = [];
+          const vals = [];
+          let i = 1;
+
+          // Technician change (no log type for this in enum list; just update)
+          if (technician_id !== undefined && technician_id !== before.technician_id) {
+            fields.push(`technician_id = $${i++}`); vals.push(technician_id);
+          }
+
+          // Status transitions (single logging event: ITEM_STATUS_CHANGED)
+          if (status !== undefined && status !== before.status) {
+            if (status === 'In Workshop') {
+              // stamp start if empty
+              fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
+              vals.push(status);
+              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
+            } else if (status === 'Completed') {
+              // compute duration (hours, 2dp) if we have a start
+              let set = `status = $${i++}`;
+              vals.push(status);
+              set += `, wokrshop_duration = CASE WHEN in_workshop IS NOT NULL 
+                         THEN ROUND(EXTRACT(EPOCH FROM (NOW() - in_workshop)) / 3600.0::numeric, 2)
+                         ELSE wokrshop_duration END`;
+              fields.push(set);
+              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
+            } else if (status === 'Not in Workshop') {
+              fields.push(`status = $${i++}`, `in_workshop = NULL`);
+              vals.push(status);
+              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
+            } else {
+              // any other enum value
+              fields.push(`status = $${i++}`);
+              vals.push(status);
+              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
+            }
+          }
+
+          if (fields.length) {
+            vals.push(workorder_items_id);
+            await client.query(
+              `UPDATE workorder_items SET ${fields.join(', ')} WHERE workorder_items_id = $${i}`,
+              vals
+            );
+          }
+        }
+      }
+
+      // 3) Auto-complete the workorder if all items completed
+      const allItems = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
+                COUNT(*) AS total
+           FROM workorder_items WHERE workorder_id = $1`,
+        [id]
+      );
+      const done = Number(allItems.rows[0].done);
+      const total = Number(allItems.rows[0].total);
+
+      if (total > 0 && done === total) {
+        const curStatus = await client.query(`SELECT status FROM workorder WHERE workorder_id = $1`, [id]);
+        if (curStatus.rows.length && curStatus.rows[0].status !== 'Completed') {
+          await client.query(`UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`, [id]);
+          await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_STATUS_CHANGED', user_id: actorId });
+          await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // Return updated resource
+      req.query.id = id;
+      return await handler({ ...req, method: 'GET' }, res);
     }
 
     if (method === 'DELETE') {

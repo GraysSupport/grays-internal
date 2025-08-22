@@ -242,7 +242,7 @@ export default function ActiveWorkordersPage() {
                       <tr
                         key={w.workorder_id}
                         className="cursor-pointer align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
-                        onClick={() => navigate(`/workorder/${w.workorder_id}`)}
+                        onClick={() => navigate(`./workorder/${w.workorder_id}`)}
                       >
                         <td className="px-4 py-3 text-sm font-medium w-20">
                           {w.invoice_id ?? '—'}

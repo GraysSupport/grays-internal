@@ -18,6 +18,8 @@ import CreateWaitlistPage from './pages/waitlist/create';
 
 import CreateWorkorderPage from './pages/create_workorder';
 import ActiveWorkordersPage from './pages/delivery_operations';
+import WorkorderDetailPage from './pages/delivery_operations/workorder/[id]';
+import CompletedOperationsPage from './pages/delivery_operations/completed-operations';
 
 function App() {
   const navigate = useNavigate();
@@ -96,6 +98,9 @@ function App() {
 
         <Route path="/create_workorder" element={<CreateWorkorderPage />} />
         <Route path="/delivery_operations" element={<ActiveWorkordersPage />} />
+        <Route path="/delivery_operations/workorder/:id" element={<WorkorderDetailPage />} />
+        <Route path="delivery_operations/completed-operations" element={<CompletedOperationsPage />} />
+        
       </Routes>
     </>
   );
