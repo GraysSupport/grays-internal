@@ -1,3 +1,4 @@
+// api/workorder.js
 import { getClientWithTimezone } from '../lib/db.js';
 
 // Helpers
@@ -6,11 +7,17 @@ function parseWeeks(label) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-async function logEvent(client, { workorder_id, workorder_items_id = null, event_type, user_id = 'SYSTEM' }) {
+// Always clamp to 2 chars to satisfy varchar(2)
+function twoCharId(x) {
+  const s = (x == null ? '' : String(x)).trim().toUpperCase();
+  return (s || 'NA').slice(0, 2);
+}
+
+async function logEvent(client, { workorder_id, workorder_items_id = null, event_type, user_id = 'NA' }) {
   await client.query(
     `INSERT INTO workorder_logs (workorder_id, workorder_items_id, event_type, user_id)
      VALUES ($1,$2,$3,$4)`,
-    [workorder_id, workorder_items_id, event_type, String(user_id).slice(0, 10)]
+    [workorder_id, workorder_items_id, event_type, twoCharId(user_id)]
   );
 }
 
@@ -69,13 +76,12 @@ export default async function handler(req, res) {
           LEFT JOIN workorder_items wi ON wi.workorder_items_id = l.workorder_items_id
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE l.workorder_id = $1
-          ORDER BY l.created_at ASC, l.id ASC
+          ORDER BY l.created_at DESC, l.id DESC
           `,
           [id]
         );
 
         const woRow = wo.rows[0];
-
         return res.status(200).json({
           ...woRow,
           items: items.rows,
@@ -83,10 +89,10 @@ export default async function handler(req, res) {
         });
       }
 
-      // List workorders
+      // === List workorders (RESPECT ?status=...) ===
       const { status: statusFilter } = req.query;
 
-      const list = await client.query(`
+      const baseSql = `
         SELECT
           wo.workorder_id,
           wo.invoice_id,
@@ -120,10 +126,19 @@ export default async function handler(req, res) {
         JOIN customers c ON wo.customer_id = c.id
         LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
         LEFT JOIN product p ON p.sku = wi.product_id
-        ${statusFilter ? `WHERE wo.status = $1` : ''}
-        GROUP BY wo.workorder_id, c.name
-        ORDER BY wo.date_created DESC
-      `, statusFilter ? [statusFilter] : []);
+      `;
+
+      const whereSql = statusFilter ? `WHERE wo.status = $1` : ``;
+
+      const list = await client.query(
+        `
+          ${baseSql}
+          ${whereSql}
+          GROUP BY wo.workorder_id, c.name
+          ORDER BY wo.date_created DESC
+        `,
+        statusFilter ? [statusFilter] : []
+      );
 
       return res.status(200).json(list.rows);
     }
@@ -132,23 +147,24 @@ export default async function handler(req, res) {
       const {
         invoice_id,
         customer_id,
-        salesperson,          // varchar(2)
+        salesperson,
         delivery_suburb,
-        delivery_state,       // delivery_state_enum
+        delivery_state,
         delivery_charged,
-        lead_time,            // lead_time_enum
-        estimated_completion, // optional
+        lead_time,
+        estimated_completion,
         notes,
         status,
-        outstanding_balance,  // numeric (NOT NULL)
-        items                 // [{ product_id, quantity, condition, technician_id, status? }]
+        outstanding_balance,
+        items
       } = body || {};
 
       if (!invoice_id || !customer_id || !salesperson || !delivery_state || !lead_time || outstanding_balance == null) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const actorId = String(req.headers['x-user-id'] || salesperson || 'SYSTEM').trim().slice(0, 10);
+      const actorId = twoCharId(req.headers['x-user-id'] || salesperson);
+
       await client.query('BEGIN');
 
       let estComplete = estimated_completion;
@@ -211,7 +227,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // creation log
       await logEvent(client, {
         workorder_id: workorderId,
         event_type: 'WORKORDER_CREATED',
@@ -224,7 +239,7 @@ export default async function handler(req, res) {
 
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
-      const actorId = String(req.headers['x-user-id'] || '').trim().slice(0, 10) || 'SYSTEM';
+      const actorId = twoCharId(req.headers['x-user-id'] || body?.user_id || '');
 
       const {
         notes,
@@ -236,10 +251,9 @@ export default async function handler(req, res) {
 
       await client.query('BEGIN');
 
-      // Load current WO for comparisons
+      // Load WO for comparisons
       const currentWO = await client.query(
-        `SELECT notes, delivery_charged, outstanding_balance, status, estimated_completion
-           FROM workorder WHERE workorder_id = $1`,
+        `SELECT * FROM workorder WHERE workorder_id = $1`,
         [id]
       );
       if (!currentWO.rows.length) {
@@ -248,7 +262,7 @@ export default async function handler(req, res) {
       }
       const beforeWO = currentWO.rows[0];
 
-      // 1) Update editable WO-level fields
+      // 1) Update WO-level fields
       const updates = [];
       const params = [];
       let p = 1;
@@ -262,7 +276,6 @@ export default async function handler(req, res) {
         params.push(id);
         await client.query(`UPDATE workorder SET ${updates.join(', ')} WHERE workorder_id = $${p}`, params);
 
-        // WO-level logs
         if (notes !== undefined && (notes || '') !== (beforeWO.notes || '')) {
           await logEvent(client, { workorder_id: id, event_type: 'NOTE_ADDED', user_id: actorId });
         }
@@ -271,7 +284,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2) Update items (status / tech) and log with unified ITEM_STATUS_CHANGED
+      // 2) Update items (status / tech)
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
           const { workorder_items_id, status, technician_id } = row || {};
@@ -289,20 +302,16 @@ export default async function handler(req, res) {
           const vals = [];
           let i = 1;
 
-          // Technician change (no log type for this in enum list; just update)
           if (technician_id !== undefined && technician_id !== before.technician_id) {
             fields.push(`technician_id = $${i++}`); vals.push(technician_id);
           }
 
-          // Status transitions (single logging event: ITEM_STATUS_CHANGED)
           if (status !== undefined && status !== before.status) {
             if (status === 'In Workshop') {
-              // stamp start if empty
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
               await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             } else if (status === 'Completed') {
-              // compute duration (hours, 2dp) if we have a start
               let set = `status = $${i++}`;
               vals.push(status);
               set += `, wokrshop_duration = CASE WHEN in_workshop IS NOT NULL 
@@ -315,7 +324,6 @@ export default async function handler(req, res) {
               vals.push(status);
               await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             } else {
-              // any other enum value
               fields.push(`status = $${i++}`);
               vals.push(status);
               await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
@@ -332,22 +340,67 @@ export default async function handler(req, res) {
         }
       }
 
-      // 3) Auto-complete the workorder if all items completed
+      // 3) Auto-complete workorder & auto-create delivery if all items completed
       const allItems = await client.query(
         `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
                 COUNT(*) AS total
-           FROM workorder_items WHERE workorder_id = $1`,
+         FROM workorder_items WHERE workorder_id = $1`,
         [id]
       );
       const done = Number(allItems.rows[0].done);
       const total = Number(allItems.rows[0].total);
 
       if (total > 0 && done === total) {
-        const curStatus = await client.query(`SELECT status FROM workorder WHERE workorder_id = $1`, [id]);
-        if (curStatus.rows.length && curStatus.rows[0].status !== 'Completed') {
-          await client.query(`UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`, [id]);
+        const curStatus = await client.query(
+          `SELECT status FROM workorder WHERE workorder_id = $1`,
+          [id]
+        );
+
+        const notAlreadyCompleted = curStatus.rows.length && curStatus.rows[0].status !== 'Completed';
+
+        if (notAlreadyCompleted) {
+          await client.query(
+            `UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`,
+            [id]
+          );
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_STATUS_CHANGED', user_id: actorId });
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
+        }
+
+        // Ensure a single delivery per WO: create if none exists
+        const exists = await client.query(
+          `SELECT delivery_id FROM delivery WHERE workorder_id = $1 LIMIT 1`,
+          [id]
+        );
+        if (!exists.rows.length) {
+          const d = beforeWO; // previously loaded
+          const noteSuffix = `Auto-created from Workorder #${id} on NOW()`;
+          await client.query(
+            `
+            INSERT INTO delivery (
+              invoice_id, customer_id, delivery_suburb, delivery_state,
+              delivery_charged, delivery_quoted, removalist_id, delivery_date,
+              delivery_status, notes, workorder_id, date_created
+            ) VALUES (
+              $1,$2,$3,$4,$5,NULL,NULL,NULL,'To Be Booked',$6,$7,NOW()
+            )
+            `,
+            [
+              d.invoice_id,
+              d.customer_id,
+              d.delivery_suburb || null,
+              d.delivery_state,
+              d.delivery_charged == null ? null : Number(d.delivery_charged),
+              (d.notes ? `${d.notes}\n\n` : '') + noteSuffix,
+              Number(id),
+            ]
+          );
+
+          await logEvent(client, {
+            workorder_id: id,
+            event_type: 'DELIVERY_ORDER_CREATED',
+            user_id: actorId
+          });
         }
       }
 
