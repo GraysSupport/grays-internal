@@ -76,7 +76,7 @@ export default async function handler(req, res) {
           LEFT JOIN workorder_items wi ON wi.workorder_items_id = l.workorder_items_id
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE l.workorder_id = $1
-          ORDER BY l.created_at ASC, l.id ASC
+          ORDER BY l.created_at DESC, l.id DESC
           `,
           [id]
         );

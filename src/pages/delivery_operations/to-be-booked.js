@@ -6,6 +6,22 @@ import toast from 'react-hot-toast';
 const EDITABLE_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 const ORDERED_STATES = ['VIC', 'NSW', 'QLD', 'ACT', 'WA', 'SA', 'TAS'];
 
+// Row navigation helpers
+const useRowNav = (navigate) => {
+  const go = useCallback((wid) => {
+    if (!wid) return;
+    navigate(`/delivery_operations/workorder/${wid}`);
+  }, [navigate]);
+  return go;
+};
+
+// Reusable props to stop row-level navigation from child controls
+const stopRowNav = {
+  onClick: (e) => e.stopPropagation(),
+  onMouseDown: (e) => e.stopPropagation(),
+  onKeyDown: (e) => e.stopPropagation(),
+};
+
 function fmtMoney(n) {
   if (n == null || n === '') return '—';
   const v = Number(n);
@@ -54,6 +70,7 @@ function CompactMoneyInput({
 
 export default function ToBeBookedDeliveriesPage() {
   const navigate = useNavigate();
+  const goWorkorder = useRowNav(navigate);
 
   const [loading, setLoading] = useState(true);
   const [deliveries, setDeliveries] = useState([]);
@@ -330,7 +347,7 @@ export default function ToBeBookedDeliveriesPage() {
       : removalists.filter((r) => (`${r.id} ${r.name}`).toLowerCase().includes(q)).slice(0, 50);
 
     return (
-      <div className="relative w-full">
+      <div className="relative w-full" {...stopRowNav}>
         <input
           ref={inputRef}
           className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
@@ -339,6 +356,7 @@ export default function ToBeBookedDeliveriesPage() {
           onFocus={() => setOpen(true)}
           onChange={(e) => setSearchText(e.target.value)}
           disabled={isSaving}
+          {...stopRowNav}
         />
         <CarrierDropdownPortal
           anchorRef={inputRef}
@@ -382,6 +400,7 @@ export default function ToBeBookedDeliveriesPage() {
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => saveDelivery(row.delivery_id, { delivery_date: val || null })}
         disabled={busy}
+        {...stopRowNav}
       />
     );
   };
@@ -391,7 +410,7 @@ export default function ToBeBookedDeliveriesPage() {
     useEffect(() => { setVal(row.notes ?? ''); }, [row.notes]);
     const busy = savingIds.has(row.delivery_id) && val !== (row.notes || '');
     return (
-      <div className="flex flex-col gap-1 w-full">
+      <div className="flex flex-col gap-1 w-full" {...stopRowNav}>
         <textarea
           className="w-full min-h-[38px] resize-y rounded border px-2 py-1 text-sm disabled:opacity-60"
           value={val}
@@ -399,6 +418,7 @@ export default function ToBeBookedDeliveriesPage() {
           onChange={(e) => setVal(e.target.value)}
           onBlur={() => saveDelivery(row.delivery_id, { notes: val || null })}
           disabled={savingIds.has(row.delivery_id)}
+          {...stopRowNav}
         />
         {busy && <span className="text-xs text-gray-400">Saving…</span>}
       </div>
@@ -427,7 +447,7 @@ export default function ToBeBookedDeliveriesPage() {
     );
 
     return (
-      <div className="flex w-full flex-col items-center gap-1 text-center">
+      <div className="flex w-full flex-col items-center gap-1 text-center" {...stopRowNav}>
         <CompactMoneyInput
           widthClass="w-20"
           value={val}
@@ -455,17 +475,19 @@ export default function ToBeBookedDeliveriesPage() {
     useEffect(() => { setVal(row[field] ?? ''); }, [row, field]);
     const busy = savingIds.has(row.delivery_id);
     return (
-      <CompactMoneyInput
-        widthClass="w-20"
-        value={val ?? ''}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={() => {
-          const num = val === '' ? null : Number(val);
-          const orig = row[field] == null ? null : Number(row[field]);
-          if (num !== orig) saveDelivery(row.delivery_id, { [field]: num });
-        }}
-        disabled={busy}
-      />
+      <div {...stopRowNav}>
+        <CompactMoneyInput
+          widthClass="w-20"
+          value={val ?? ''}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={() => {
+            const num = val === '' ? null : Number(val);
+            const orig = row[field] == null ? null : Number(row[field]);
+            if (num !== orig) saveDelivery(row.delivery_id, { [field]: num });
+          }}
+          disabled={busy}
+        />
+      </div>
     );
   };
 
@@ -478,6 +500,7 @@ export default function ToBeBookedDeliveriesPage() {
         if (v !== row.delivery_status) saveDelivery(row.delivery_id, { delivery_status: v });
       }}
       disabled={savingIds.has(row.delivery_id)}
+      {...stopRowNav}
     >
       {EDITABLE_STATUSES.map((s) => (
         <option key={s} value={s}>{s}</option>
@@ -522,7 +545,15 @@ export default function ToBeBookedDeliveriesPage() {
                   (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted));
                 const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
                 return (
-                  <tr key={row.delivery_id} className={`${rowCls} hover:bg-gray-50 align-top`}>
+                  <tr
+                    key={row.delivery_id}
+                    className={`${rowCls} cursor-pointer hover:bg-gray-100 align-top`}
+                    tabIndex={0}
+                    onClick={() => goWorkorder(row.workorder_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
+                    }}
+                  >
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">
