@@ -123,7 +123,7 @@ export default function ToBeBookedDeliveriesPage() {
         const raw = rowsRaw.filter((d) => String(d.delivery_status || '') === 'To Be Booked');
 
         // Enrich if items_text/outstanding missing
-        const needFallback = raw.some((d) => d.items_text == null || d.outstanding_balance == null);
+        const needFallback = raw.some((d) => d.items_text == null || d.outstanding_balance == null || d.items);
         let woMap = {};
         if (needFallback) {
           const woIds = [...new Set(raw.map((d) => d.workorder_id).filter(Boolean))];
@@ -140,10 +140,22 @@ export default function ToBeBookedDeliveriesPage() {
 
         const rows = raw.map((d) => {
           const wo = d.workorder_id ? woMap[d.workorder_id] : null;
-          const itemsText = d.items_text ?? (wo ? itemsTextFromWorkorderItems(wo.items || []) : '—');
+
+          // --- ITEMS TEXT (force UI formatting to avoid 1.00 etc) ---
+          let itemsText = '—';
+          if (wo?.items?.length) {
+            itemsText = itemsTextFromWorkorderItems(wo.items);
+          } else if (Array.isArray(d.items) && d.items.length) {
+            itemsText = itemsTextFromWorkorderItems(d.items);
+          } else if (typeof d.items_text === 'string') {
+            // last resort: normalize plain text so "1.00" -> "1" for whole numbers
+            itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
+          }
+
           const outstanding =
             d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
+
           const removalistName =
             d.removalist_name ||
             rems.find((r) => Number(r.id) === Number(d.removalist_id))?.name ||

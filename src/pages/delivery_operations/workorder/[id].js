@@ -282,7 +282,7 @@ export default function WorkorderDetailPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
           <div className="md:col-span-2 rounded-xl border bg-white p-3">
             <div className="font-semibold mb-2 text-center">Activity Log</div>
-            <div className="h-64 overflow-auto border rounded p-2 text-sm font-mono bg-gray-50">
+            <div className="h-70 overflow-auto border rounded p-2 text-sm font-mono bg-gray-50">
               {activity.length ? activity.map((l) => {
                 const itemLine = l.workorder_items_id
                   ? `${l.ts}   ${l.product_name ?? '(Item)'} — ${l.event_type}${l.current_item_status ? `: ${l.current_item_status}` : ''} - ${l.user_id}`
