@@ -72,23 +72,32 @@ export default function ActiveWorkordersPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((w) => {
-      // Use items array so we can format qty as requested
-      const itemsStr = formatItemsFromItems(w.items || []);
-      return [
-        w.invoice_id ?? '',
-        w.customer_name ?? '',
-        w.delivery_suburb ?? '',
-        w.delivery_state ?? '',
-        w.salesperson ?? '',
-        w.notes ?? '',
-        itemsStr,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q);
-    });
+    const base = q
+      ? rows.filter((w) => {
+          const itemsStr = formatItemsFromItems(w.items || []);
+          return [
+            w.invoice_id ?? '',
+            w.customer_name ?? '',
+            w.delivery_suburb ?? '',
+            w.delivery_state ?? '',
+            w.salesperson ?? '',
+            w.notes ?? '',
+            itemsStr,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(q);
+        })
+      : rows;
+
+    // Sort by estimated_completion (earliest first), nulls last
+    const toTime = (d) => {
+      if (!d) return Number.POSITIVE_INFINITY;
+      const t = new Date(d).getTime();
+      return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+    };
+
+    return [...base].sort((a, b) => toTime(a.estimated_completion) - toTime(b.estimated_completion));
   }, [rows, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
