@@ -104,12 +104,14 @@ export default function CompletedOperationsPage() {
               <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Operations</Link>
               <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">To Be Booked</Link>
               <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Delivery Schedule</Link>
+              <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Collections</Link>
             </nav>
             <div className="my-4 h-px bg-gray-200" />
             <div className="mb-2 font-semibold">Completed</div>
             <nav className="space-y-1">
               <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">Operations Completed</span>
               <Link to="/delivery_operations/completed-deliveries" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Deliveries Completed</Link>
+              <Link to="/delivery_operations/completed-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Collections Completed</Link>
             </nav>
             <div className="my-4 h-px bg-gray-200" />
             <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Exit</Link>

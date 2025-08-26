@@ -143,6 +143,12 @@ export default function ActiveWorkordersPage() {
               >
                 Delivery Schedule
               </Link>
+              <Link
+                to="/delivery_operations/current-collections"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                Current Collections
+              </Link>
             </nav>
             <div className="my-4 h-px bg-gray-200" />
             <div className="mb-2 font-semibold">Completed</div>
@@ -158,6 +164,12 @@ export default function ActiveWorkordersPage() {
                 className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50"
               >
                 Deliveries Completed
+              </Link>
+              <Link
+                to="/delivery_operations/completed-collections"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                Collections Completed
               </Link>
             </nav>
             <div className="my-4 h-px bg-gray-200" />
