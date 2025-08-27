@@ -22,6 +22,8 @@ import WorkorderDetailPage from './pages/delivery_operations/workorder/[id]';
 import CompletedOperationsPage from './pages/delivery_operations/completed-operations';
 
 import ToBeBookedDeliveriesPage from './pages/delivery_operations/to-be-booked';
+import DeliverySchedulePage from './pages/delivery_operations/schedule';
+import CompletedDeliveriesPage from './pages/delivery_operations/completed-deliveries';
 
 function App() {
   const navigate = useNavigate();
@@ -104,6 +106,8 @@ function App() {
         <Route path="/delivery_operations/completed-operations" element={<CompletedOperationsPage />} />
 
         <Route path="delivery_operations/to-be-booked" element={<ToBeBookedDeliveriesPage />} />
+        <Route path="delivery_operations/schedule" element={<DeliverySchedulePage />} />
+        <Route path="delivery_operations/completed-deliveries" element={<CompletedDeliveriesPage />} />
         
       </Routes>
     </>
