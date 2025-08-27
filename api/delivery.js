@@ -1,4 +1,3 @@
-// api/delivery.js
 import { getClientWithTimezone } from '../lib/db.js';
 
 // Always clamp to 2 chars to satisfy varchar(2)
@@ -41,7 +40,19 @@ export default async function handler(req, res) {
             GROUP BY wi.workorder_id
           )
           SELECT
-            d.*,
+            d.delivery_id,
+            d.invoice_id,
+            d.customer_id,
+            d.delivery_suburb,
+            d.delivery_state,
+            d.delivery_charged,
+            d.delivery_quoted,
+            d.removalist_id,
+            to_char(d.delivery_date, 'YYYY-MM-DD') AS delivery_date,  -- ← force string
+            d.delivery_status,
+            d.notes,
+            d.workorder_id,
+            d.date_created,
             c.name  AS customer_name,
             c.email AS customer_email,
             c.phone AS customer_phone,
@@ -86,7 +97,19 @@ export default async function handler(req, res) {
           GROUP BY wi.workorder_id
         )
         SELECT
-          d.*,
+          d.delivery_id,
+          d.invoice_id,
+          d.customer_id,
+          d.delivery_suburb,
+          d.delivery_state,
+          d.delivery_charged,
+          d.delivery_quoted,
+          d.removalist_id,
+          to_char(d.delivery_date, 'YYYY-MM-DD') AS delivery_date,  -- ← force string
+          d.delivery_status,
+          d.notes,
+          d.workorder_id,
+          d.date_created,
           c.name AS customer_name,
           r.name AS removalist_name,
           w.outstanding_balance,
@@ -97,6 +120,7 @@ export default async function handler(req, res) {
         LEFT JOIN workorder   w ON w.workorder_id = d.workorder_id
         LEFT JOIN wo_items    i ON i.workorder_id = d.workorder_id
         ORDER BY d.date_created DESC, d.delivery_id DESC
+
         `
       );
 

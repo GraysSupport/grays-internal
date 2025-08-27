@@ -39,6 +39,26 @@ function itemsTextFromWorkorderItems(items) {
   return items.map((it) => `${formatQty(it.quantity)} × ${it.product_name || it.product_id || ''}`).join(', ');
 }
 
+/* =======================
+   DATE HELPERS (TZ-SAFE)
+   ======================= */
+// Normalize any incoming value to 'YYYY-MM-DD' (string). If a time/TZ is present, keep only first 10.
+function asYMD(x) {
+  if (!x) return '';
+  if (typeof x === 'string') {
+    const m = x.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  // Fallback: try parse, but read in UTC to avoid AU/Sydney shift
+  const d = new Date(x);
+  if (!Number.isFinite(d.getTime())) return '';
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+/* ======================= */
+
 /** Simple $-prefixed number input, right-aligned */
 function CompactMoneyInput({
   value,
@@ -161,8 +181,12 @@ export default function ToBeBookedDeliveriesPage() {
             rems.find((r) => Number(r.id) === Number(d.removalist_id))?.name ||
             '';
 
+          // ⬅ normalize date to a stable YYYY-MM-DD string
+          const dateYMD = asYMD(d.delivery_date);
+
           return {
             ...d,
+            delivery_date: dateYMD,
             items_text: itemsText,
             outstanding_balance: outstanding,
             removalist_name: removalistName,
@@ -239,9 +263,16 @@ export default function ToBeBookedDeliveriesPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Save failed');
 
-      setDeliveries((list) =>
-        list.map((row) => (row.delivery_id === deliveryId ? { ...row, ...patch } : row))
-      );
+      setDeliveries((list) => {
+        // If status changed and no longer matches this page, drop it
+        if ('delivery_status' in patch && patch.delivery_status !== 'To Be Booked') {
+          return list.filter((r) => r.delivery_id !== deliveryId);
+        }
+        // Otherwise just patch the row
+        return list.map((row) =>
+          row.delivery_id === deliveryId ? { ...row, ...patch, delivery_date: asYMD(patch.delivery_date ?? row.delivery_date) } : row
+        );
+      });
       resolveToast(toastId, true, 'Saved');
     } catch (e) {
       resolveToast(toastId, false, e.message || 'Save failed');
@@ -353,6 +384,20 @@ export default function ToBeBookedDeliveriesPage() {
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
 
+    // derive display name directly (no useMemo so no ESLint warning)
+    const displayName =
+      (row.removalist_name && row.removalist_name.trim())
+        ? row.removalist_name
+        : (row.removalist_id != null
+            ? (removalists.find(r => Number(r.id) === Number(row.removalist_id))?.name || '')
+            : ''
+          );
+
+    // keep input text synced with latest prop when dropdown is closed
+    useEffect(() => {
+      if (!open) setSearchText(displayName || '');
+    }, [displayName, open]);
+
     const q = (searchText || '').toLowerCase().trim();
     const list = !q
       ? removalists.slice(0, 50)
@@ -363,7 +408,7 @@ export default function ToBeBookedDeliveriesPage() {
         <input
           ref={inputRef}
           className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
-          value={open ? searchText : (row.removalist_name || '')}
+          value={open ? searchText : (displayName || '')}
           placeholder="Search carrier…"
           onFocus={() => setOpen(true)}
           onChange={(e) => setSearchText(e.target.value)}
@@ -379,7 +424,10 @@ export default function ToBeBookedDeliveriesPage() {
             setOpen(false);
             setSearchText(r.name);
             if (Number(row.removalist_id) !== Number(r.id)) {
-              await saveDelivery(row.delivery_id, { removalist_id: Number(r.id) });
+              await saveDelivery(row.delivery_id, {
+                removalist_id: Number(r.id),
+                removalist_name: r.name, // optimistic patch so UI updates immediately
+              });
             }
           }}
         />
@@ -387,21 +435,10 @@ export default function ToBeBookedDeliveriesPage() {
     );
   };
 
-  // New: Date cell (HTML5 date picker)
+  // New: Date cell (HTML5 date picker) — bind to stable YYYY-MM-DD
   const DateCell = ({ row }) => {
-    const [val, setVal] = useState(() => {
-      // normalize to yyyy-mm-dd if present
-      if (!row.delivery_date) return '';
-      const d = new Date(row.delivery_date);
-      if (Number.isNaN(d.getTime())) return '';
-      return d.toISOString().slice(0, 10);
-    });
-
-    useEffect(() => {
-      if (!row.delivery_date) { setVal(''); return; }
-      const d = new Date(row.delivery_date);
-      setVal(Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10));
-    }, [row.delivery_date]);
+    const [val, setVal] = useState(() => asYMD(row.delivery_date));
+    useEffect(() => { setVal(asYMD(row.delivery_date)); }, [row.delivery_date]);
 
     const busy = savingIds.has(row.delivery_id);
     return (
@@ -529,7 +566,7 @@ export default function ToBeBookedDeliveriesPage() {
 
   // ===== Section renderer (State column removed; Date column added) =====
   const renderSection = (code) => {
-    const rows = groupByState.get(code) || [];
+    const rows = (groupByState.get(code) || []).map(r => ({ ...r, delivery_date: asYMD(r.delivery_date) }));
     return (
       <section key={code} className="rounded-xl border bg-white">
         <div className="p-3 text-center text-lg font-semibold">{stateLabel(code)}</div>
@@ -547,7 +584,6 @@ export default function ToBeBookedDeliveriesPage() {
                 <th className="px-3 py-2 w-20">Delivery Charged</th>
                 <th className="px-3 py-2 w-20">Delivery Quoted</th>
                 <th className="px-3 py-2 w-24">Margin</th>
-                {/* expanded status */}
                 <th className="px-3 py-2 w-64">Status</th>
               </tr>
             </thead>

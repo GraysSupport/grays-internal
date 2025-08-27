@@ -210,7 +210,15 @@ export default function DeliverySchedulePage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Save failed');
 
-      setRows(list => list.map(r => (r.delivery_id === deliveryId ? { ...r, ...patch } : r)));
+      setRows((list) => {
+        if ('delivery_status' in patch && patch.delivery_status !== 'Booked for Delivery') {
+          return list.filter((r) => r.delivery_id !== deliveryId);
+        }
+        return list.map((r) =>
+          r.delivery_id === deliveryId ? { ...r, ...patch } : r
+        );
+      });
+
       resolveToast(toastId, true, 'Saved');
     } catch (e) {
       resolveToast(toastId, false, e.message || 'Save failed');
@@ -314,17 +322,31 @@ export default function DeliverySchedulePage() {
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
 
+    // 🔁 Derive display name directly (no useMemo = no ESLint warning)
+    const displayName =
+      (row.removalist_name && row.removalist_name.trim())
+        ? row.removalist_name
+        : (row.removalist_id != null
+            ? (removalists.find(r => Number(r.id) === Number(row.removalist_id))?.name || '')
+            : ''
+          );
+
+    // keep input text synced with latest value when dropdown closes
+    useEffect(() => {
+      if (!open) setSearchText(displayName || '');
+    }, [displayName, open]);
+
     const q = (searchText || '').toLowerCase().trim();
     const list = !q
       ? removalists.slice(0, 50)
-      : removalists.filter((r) => (`${r.id} ${r.name}`).toLowerCase().includes(q)).slice(0, 50);
+      : removalists.filter(r => (`${r.id} ${r.name}`).toLowerCase().includes(q)).slice(0, 50);
 
     return (
       <div className="relative w-full" {...stopRowNav}>
         <input
           ref={inputRef}
           className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
-          value={open ? searchText : (row.removalist_name || '')}
+          value={open ? searchText : (displayName || '')}
           placeholder="Search carrier…"
           onFocus={() => setOpen(true)}
           onChange={(e) => setSearchText(e.target.value)}
@@ -340,13 +362,17 @@ export default function DeliverySchedulePage() {
             setOpen(false);
             setSearchText(r.name);
             if (Number(row.removalist_id) !== Number(r.id)) {
-              await saveDelivery(row.delivery_id, { removalist_id: Number(r.id) });
+              await saveDelivery(row.delivery_id, {
+                removalist_id: Number(r.id),
+                removalist_name: r.name, // optimistic patch so UI updates immediately
+              });
             }
           }}
         />
       </div>
     );
   };
+
 
   const DateCell = ({ row }) => {
     const [val, setVal] = useState(() => ymd(row.delivery_date) === 'Unscheduled' ? '' : ymd(row.delivery_date));

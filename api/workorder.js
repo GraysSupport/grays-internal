@@ -1,23 +1,30 @@
-// api/workorder.js
 import { getClientWithTimezone } from '../lib/db.js';
 
-// Helpers
+/** Helpers **/
 function parseWeeks(label) {
   const m = String(label || '').match(/(\d+)/);
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// Always clamp to 2 chars to satisfy varchar(2)
+// Clamp to 2 chars to satisfy varchar(2)
 function twoCharId(x) {
   const s = (x == null ? '' : String(x)).trim().toUpperCase();
   return (s || 'NA').slice(0, 2);
 }
 
-async function logEvent(client, { workorder_id, workorder_items_id = null, event_type, user_id = 'NA' }) {
+/** Centralized logger (snapshots ONLY the "to" item status) **/
+async function logEvent(client, {
+  workorder_id,
+  workorder_items_id = null,
+  event_type,
+  user_id = 'NA',
+  item_status = null, // item_status_enum or null
+}) {
   await client.query(
-    `INSERT INTO workorder_logs (workorder_id, workorder_items_id, event_type, user_id)
-     VALUES ($1,$2,$3,$4)`,
-    [workorder_id, workorder_items_id, event_type, twoCharId(user_id)]
+    `INSERT INTO workorder_logs
+       (workorder_id, workorder_items_id, event_type, user_id, item_status)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [workorder_id, workorder_items_id, event_type, twoCharId(user_id), item_status]
   );
 }
 
@@ -26,9 +33,14 @@ export default async function handler(req, res) {
   const client = await getClientWithTimezone();
 
   try {
+    /** =========================
+     * GET
+     *  - GET ?id=...   -> One workorder + items + activity
+     *  - GET (list)    -> Optional ?status= filter
+     * ========================== */
     if (method === 'GET') {
       if (id) {
-        // Workorder + items + activity log
+        // Workorder core
         const wo = await client.query(
           `
           WITH base AS (
@@ -47,6 +59,7 @@ export default async function handler(req, res) {
         );
         if (!wo.rows.length) return res.status(404).json({ error: 'Workorder not found' });
 
+        // Items
         const items = await client.query(
           `
           SELECT 
@@ -62,6 +75,7 @@ export default async function handler(req, res) {
           [id]
         );
 
+        // Activity logs (IMPORTANT: use snapshot from logs, NOT live wi.status)
         const logs = await client.query(
           `
           SELECT 
@@ -71,7 +85,7 @@ export default async function handler(req, res) {
             l.user_id,
             l.workorder_items_id,
             COALESCE(p.name, wi.product_id) AS product_name,
-            wi.status AS current_item_status
+            l.item_status AS current_item_status
           FROM workorder_logs l
           LEFT JOIN workorder_items wi ON wi.workorder_items_id = l.workorder_items_id
           LEFT JOIN product p ON p.sku = wi.product_id
@@ -143,6 +157,9 @@ export default async function handler(req, res) {
       return res.status(200).json(list.rows);
     }
 
+    /** =========================
+     * POST  (Create workorder)
+     * ========================== */
     if (method === 'POST') {
       const {
         invoice_id,
@@ -167,6 +184,7 @@ export default async function handler(req, res) {
 
       await client.query('BEGIN');
 
+      // Auto-calc estimated completion from lead_time if needed
       let estComplete = estimated_completion;
       if (!estComplete) {
         const weeks = parseWeeks(lead_time);
@@ -237,6 +255,9 @@ export default async function handler(req, res) {
       return res.status(201).json({ message: 'Workorder created', workorder_id: workorderId });
     }
 
+    /** =========================
+     * PUT  (Update workorder + items)
+     * ========================== */
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
       const actorId = twoCharId(req.headers['x-user-id'] || body?.user_id || '');
@@ -284,7 +305,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2) Update items (status / tech)
+      // 2) Update items (status / technician)
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
           const { workorder_items_id, status, technician_id } = row || {};
@@ -310,7 +331,6 @@ export default async function handler(req, res) {
             if (status === 'In Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
-              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             } else if (status === 'Completed') {
               let set = `status = $${i++}`;
               vals.push(status);
@@ -318,16 +338,22 @@ export default async function handler(req, res) {
                          THEN ROUND(EXTRACT(EPOCH FROM (NOW() - in_workshop)) / 3600.0::numeric, 2)
                          ELSE wokrshop_duration END`;
               fields.push(set);
-              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             } else if (status === 'Not in Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = NULL`);
               vals.push(status);
-              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             } else {
               fields.push(`status = $${i++}`);
               vals.push(status);
-              await logEvent(client, { workorder_id: id, workorder_items_id, event_type: 'ITEM_STATUS_CHANGED', user_id: actorId });
             }
+
+            // SNAPSHOT the "to" status in the log row
+            await logEvent(client, {
+              workorder_id: id,
+              workorder_items_id,
+              event_type: 'ITEM_STATUS_CHANGED',
+              user_id: actorId,
+              item_status: status
+            });
           }
 
           if (fields.length) {
@@ -374,7 +400,6 @@ export default async function handler(req, res) {
         );
         if (!exists.rows.length) {
           const d = beforeWO; // previously loaded
-          const noteSuffix = `Auto-created from Workorder #${id} on NOW()`;
           await client.query(
             `
             INSERT INTO delivery (
@@ -391,7 +416,7 @@ export default async function handler(req, res) {
               d.delivery_suburb || null,
               d.delivery_state,
               d.delivery_charged == null ? null : Number(d.delivery_charged),
-              (d.notes ? `${d.notes}\n\n` : '') + noteSuffix,
+              (d.notes ? `${d.notes}\n\n` : ''),
               Number(id),
             ]
           );
@@ -411,6 +436,9 @@ export default async function handler(req, res) {
       return await handler({ ...req, method: 'GET' }, res);
     }
 
+    /** =========================
+     * DELETE
+     * ========================== */
     if (method === 'DELETE') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
       await client.query('BEGIN');
