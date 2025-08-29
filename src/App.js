@@ -25,6 +25,9 @@ import ToBeBookedDeliveriesPage from './pages/delivery_operations/to-be-booked';
 import DeliverySchedulePage from './pages/delivery_operations/schedule';
 import CompletedDeliveriesPage from './pages/delivery_operations/completed-deliveries';
 
+import CurrentCollectionsPage from './pages/delivery_operations/current-collections';
+import CompletedCollectionsPage from './pages/delivery_operations/completed-collections';
+
 function App() {
   const navigate = useNavigate();
 
@@ -109,6 +112,9 @@ function App() {
         <Route path="delivery_operations/schedule" element={<DeliverySchedulePage />} />
         <Route path="delivery_operations/completed-deliveries" element={<CompletedDeliveriesPage />} />
         
+        <Route path="delivery_operations/current-collections" element={<CurrentCollectionsPage />} />
+        <Route path="delivery_operations/completed-collections" element={<CompletedCollectionsPage />} />
+
       </Routes>
     </>
   );

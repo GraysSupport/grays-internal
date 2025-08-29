@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
-const PAGE_SIZE = 20;
-
 function formatDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -35,7 +33,6 @@ export default function ActiveWorkordersPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -99,16 +96,6 @@ export default function ActiveWorkordersPage() {
 
     return [...base].sort((a, b) => toTime(a.estimated_completion) - toTime(b.estimated_completion));
   }, [rows, search]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, page]);
-
-  useEffect(() => {
-    if (page > totalPages) setPage(1);
-  }, [totalPages, page]);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -185,7 +172,7 @@ export default function ActiveWorkordersPage() {
         {/* Main */}
         <main className="col-span-12 sm:col-span-9 lg:col-span-10">
           <div className="rounded-xl border bg-white">
-            {/* Toolbar: center header between search and button on sm+ */}
+            {/* Toolbar */}
             <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
               {/* Left: Search */}
               <div className="w-full sm:max-w-xs">
@@ -218,10 +205,10 @@ export default function ActiveWorkordersPage() {
               </div>
             </div>
 
-            {/* Table */}
-            <div className="overflow-x-auto">
+            {/* Table (sticky header + vertical scroll) */}
+            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
               <table className="min-w-full divide-y divide-gray-200 table-fixed">
-                <thead className="bg-gray-100">
+                <thead className="bg-gray-100 sticky top-0 z-10">
                   <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
                     <th className="px-4 py-3 w-20">Invoice</th>
                     <th className="px-4 py-3 w-28">WO Date</th>
@@ -244,7 +231,7 @@ export default function ActiveWorkordersPage() {
                     </tr>
                   )}
 
-                  {!loading && pageRows.length === 0 && (
+                  {!loading && filtered.length === 0 && (
                     <tr>
                       <td colSpan={10} className="px-4 py-6 text-center text-sm">
                         No active work orders.
@@ -252,96 +239,63 @@ export default function ActiveWorkordersPage() {
                     </tr>
                   )}
 
-                  {pageRows.map((w) => {
-                    const itemsStr = formatItemsFromItems(w.items);
+                  {!loading &&
+                    filtered.map((w) => {
+                      const itemsStr = formatItemsFromItems(w.items);
 
-                    const hasDue =
-                      w.outstanding_balance != null &&
-                      Number(w.outstanding_balance) > 0;
+                      const hasDue =
+                        w.outstanding_balance != null &&
+                        Number(w.outstanding_balance) > 0;
 
-                    return (
-                      <tr
-                        key={w.workorder_id}
-                        className="cursor-pointer align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
-                        onClick={() => navigate(`./workorder/${w.workorder_id}`)}
-                      >
-                        <td className="px-4 py-3 text-sm font-medium w-20">
-                          {w.invoice_id ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-28">
-                          {formatDate(w.date_created)}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-36">
-                          {w.customer_name ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-28">
-                          {w.delivery_suburb ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-20">
-                          {w.delivery_state ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm whitespace-normal break-words">
-                          {itemsStr}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-20">
-                          {w.salesperson ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-28">
-                          {hasDue ? (
-                            <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">
-                              ${Number(w.outstanding_balance).toFixed(2)}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-semibold text-green-700 ring-1 ring-inset ring-green-200">
-                              Paid
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm w-28">
-                          {formatDate(w.estimated_completion)}
-                        </td>
-                        <td className="px-4 py-3 text-sm whitespace-normal break-words w-40">
-                          {w.notes || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                      return (
+                        <tr
+                          key={w.workorder_id}
+                          className="cursor-pointer align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
+                          onClick={() => navigate(`./workorder/${w.workorder_id}`)}
+                        >
+                          <td className="px-4 py-3 text-sm font-medium w-20">
+                            {w.invoice_id ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-28">
+                            {formatDate(w.date_created)}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-36">
+                            {w.customer_name ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-28">
+                            {w.delivery_suburb ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-20">
+                            {w.delivery_state ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-normal break-words">
+                            {itemsStr}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-20">
+                            {w.salesperson ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-28">
+                            {hasDue ? (
+                              <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+                                ${Number(w.outstanding_balance).toFixed(2)}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-semibold text-green-700 ring-1 ring-inset ring-green-200">
+                                Paid
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm w-28">
+                            {formatDate(w.estimated_completion)}
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-normal break-words w-40">
+                            {w.notes || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
-            </div>
-
-            {/* Pagination */}
-            <div className="flex items-center justify-between border-t p-3 text-sm">
-              <div className="text-gray-600">
-                Showing{' '}
-                <span className="font-medium">
-                  {filtered.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}
-                </span>{' '}
-                to{' '}
-                <span className="font-medium">
-                  {Math.min(page * PAGE_SIZE, filtered.length)}
-                </span>{' '}
-                of <span className="font-medium">{filtered.length}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  disabled={page === 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="rounded-md border px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  ← Previous
-                </button>
-                <span className="mx-2 rounded-md bg-gray-900 px-3 py-1 text-white">
-                  {page}
-                </span>
-                <button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="rounded-md border px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Next →
-                </button>
-              </div>
             </div>
           </div>
         </main>
