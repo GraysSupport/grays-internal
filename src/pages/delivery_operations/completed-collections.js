@@ -81,7 +81,7 @@ export default function CompletedCollectionsPage() {
           <div className="sticky top-6 rounded-xl border bg-white p-4">
             <div className="mb-4 font-semibold">Current</div>
             <nav className="space-y-1">
-              <Link to="/delivery_operations/current-operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Operations</Link>
+              <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Operations</Link>
               <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">To Be Booked</Link>
               <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Delivery Schedule</Link>
               <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Collections</Link>

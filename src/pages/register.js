@@ -114,7 +114,7 @@ export default function Register() {
     if (activeTab === 'update') fetchUsers();
   }, [activeTab]);
 
-  const accessLevels = ['superadmin', 'admin', 'staff', 'technician', 'it-technician'];
+  const accessLevels = ['superadmin', 'admin', 'staff', 'technician'];
 
   return (
     <>
