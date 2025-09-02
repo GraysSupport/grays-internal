@@ -11,7 +11,7 @@ NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY WHEN ITEM IS 
 ALSO LOG CREATION DATE WITH MESSAGE - WO CREATION LOGGING DONE
 */
 
-const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA'];
+const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA', 'NT'];
 const LEAD_OPTIONS = ['1 Week', '2 Weeks', '3 Weeks', '4 Weeks', '5 Weeks'];
 
 function datePlusWeeks(weeks) {
