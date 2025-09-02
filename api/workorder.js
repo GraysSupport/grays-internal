@@ -12,13 +12,13 @@ function twoCharId(x) {
   return (s || 'NA').slice(0, 2);
 }
 
-/** Centralized logger (snapshots ONLY the "to" item status) **/
+/** Centralized logger **/
 async function logEvent(client, {
   workorder_id,
   workorder_items_id = null,
   event_type,
   user_id = 'NA',
-  item_status = null, // item_status_enum or null
+  item_status = null,
 }) {
   await client.query(
     `INSERT INTO workorder_logs
@@ -29,18 +29,23 @@ async function logEvent(client, {
 }
 
 export default async function handler(req, res) {
-  const { method, query: { id }, body } = req;
+  const { method, query: { id, technicians }, body } = req;
   const client = await getClientWithTimezone();
 
   try {
-    /** =========================
-     * GET
-     *  - GET ?id=...   -> One workorder + items + activity
-     *  - GET (list)    -> Optional ?status= filter
-     * ========================== */
     if (method === 'GET') {
+      const { id } = req.query;
+
+      // === Get technicians list (dropdown) ===
+      if (req.query.technicians) {
+        const techsRes = await client.query(
+          `SELECT id, name FROM users WHERE access = 'technician' ORDER BY name`
+        );
+        return res.status(200).json(techsRes.rows);
+      }
+
+      // === Get single workorder ===
       if (id) {
-        // Workorder core
         const wo = await client.query(
           `
           WITH base AS (
@@ -57,9 +62,9 @@ export default async function handler(req, res) {
           `,
           [id]
         );
+
         if (!wo.rows.length) return res.status(404).json({ error: 'Workorder not found' });
 
-        // Items
         const items = await client.query(
           `
           SELECT 
@@ -75,7 +80,6 @@ export default async function handler(req, res) {
           [id]
         );
 
-        // Activity logs (IMPORTANT: use snapshot from logs, NOT live wi.status)
         const logs = await client.query(
           `
           SELECT 
@@ -95,16 +99,37 @@ export default async function handler(req, res) {
           [id]
         );
 
-        const woRow = wo.rows[0];
         return res.status(200).json({
-          ...woRow,
+          ...wo.rows[0],
           items: items.rows,
           activity: logs.rows
         });
       }
 
-      // === List workorders (RESPECT ?status=...) ===
-      const { status: statusFilter } = req.query;
+      // === List workorders with filters ===
+      const { status, state, salesperson, payment, technician } = req.query;
+
+      const statusFilter = status ? decodeURIComponent(status) : undefined;
+      const validStatuses = ['Work Ordered', 'Completed', 'Not in Workshop', 'In Workshop'];
+      if (statusFilter && !validStatuses.includes(statusFilter)) {
+        return res.status(400).json({ error: 'Invalid workorder status' });
+      }
+
+
+      let conditions = [];
+      let params = [];
+      let i = 1;
+
+      if (statusFilter) { conditions.push(`wo.status = $${i++}`); params.push(statusFilter); }
+      if (state) { conditions.push(`wo.delivery_state = $${i++}`); params.push(state); }
+      if (salesperson) { conditions.push(`wo.salesperson = $${i++}`); params.push(salesperson); }
+      if (payment) { 
+        if (payment.toLowerCase() === 'paid') conditions.push(`wo.outstanding_balance = 0`);
+        else if (payment.toLowerCase() === 'due') conditions.push(`wo.outstanding_balance > 0`);
+      }
+      if (technician) { conditions.push(`wi.technician_id = $${i++}`); params.push(technician); }
+
+      const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const baseSql = `
         SELECT
@@ -119,30 +144,43 @@ export default async function handler(req, res) {
           wo.estimated_completion,
           wo.notes,
           c.name AS customer_name,
+
           COALESCE(
             json_agg(
               json_build_object(
                 'product_id',   wi.product_id,
                 'product_name', COALESCE(p.name, wi.product_id),
-                'quantity',     wi.quantity
+                'quantity',     wi.quantity,
+                'technician_id', wi.technician_id,
+                'technician_name', u.name,
+                'status',        wi.status
               )
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Completed'),
             '[]'::json
           ) AS items,
+
           COALESCE(
             string_agg(
               (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
               ', ' ORDER BY wi.workorder_items_id
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Completed'),
             '—'
-          ) AS items_text
+          ) AS items_text,
+
+          COALESCE(
+            json_agg(DISTINCT jsonb_build_object(
+              'id', wi.technician_id,
+              'name', u.name
+            )) FILTER (WHERE wi.technician_id IS NOT NULL AND wi.status <> 'Completed'),
+            '[]'::json
+          ) AS technicians
+
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
         LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
         LEFT JOIN product p ON p.sku = wi.product_id
+        LEFT JOIN users u ON u.id = wi.technician_id AND u.access = 'technician'
       `;
-
-      const whereSql = statusFilter ? `WHERE wo.status = $1` : ``;
 
       const list = await client.query(
         `
@@ -151,11 +189,12 @@ export default async function handler(req, res) {
           GROUP BY wo.workorder_id, c.name
           ORDER BY wo.date_created DESC
         `,
-        statusFilter ? [statusFilter] : []
+        params
       );
 
       return res.status(200).json(list.rows);
     }
+
 
     /** =========================
      * POST  (Create workorder)
