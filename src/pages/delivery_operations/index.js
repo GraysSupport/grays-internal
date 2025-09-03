@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { SlidersHorizontal } from 'lucide-react';
 
 function formatDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString();
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
+
 function formatQty(q) {
   const n = Number(q);
   if (Number.isNaN(n)) return String(q ?? '');
@@ -31,13 +33,15 @@ export default function ActiveWorkordersPage() {
     state: '',
     salesperson: '',
     payment: '',
-    technician: ''
+    technicians: [] // multiple selected
   });
   const [technicians, setTechnicians] = useState([]);
+  const [salespeople, setSalespeople] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const navigate = useNavigate();
 
-  // Fetch technicians for dropdown
+  // Fetch technicians for filter
   useEffect(() => {
     (async () => {
       try {
@@ -50,7 +54,7 @@ export default function ActiveWorkordersPage() {
     })();
   }, []);
 
-  // Fetch workorders with filters
+  // Fetch workorders
   useEffect(() => {
     const stored = localStorage.getItem('user');
     if (!stored) {
@@ -64,30 +68,17 @@ export default function ActiveWorkordersPage() {
       toast.loading('Loading work orders...', { id: 'wo-load' });
 
       try {
-        // Map human-readable status to backend enum
-        const STATUS_MAP = {
-        'Work Ordered': 'Work Ordered',
-        'Completed': 'Completed',
-        'Not in Workshop': 'Not in Workshop',
-        'In Workshop': 'In Workshop'
-      };
-
-        const params = new URLSearchParams();
-
-        // Default status
-        const statusEnum = STATUS_MAP['Work Ordered']; // → "Work Ordered"
-        params.append('status', encodeURIComponent(statusEnum));
-
-        // Add other filters dynamically
-        Object.entries(filters).forEach(([k, v]) => {
-          if (v) params.append(k, v);
-        });
-
-        const res = await fetch(`/api/workorder?${params.toString()}`);
+        const res = await fetch('/api/workorder?status=Work%20Ordered');
         const data = await res.json();
 
         if (!res.ok) throw new Error(data?.error || 'Failed to load work orders');
-        if (mounted) setRows(data);
+        if (mounted) {
+          setRows(data);
+
+          // Extract unique salespeople for dropdown
+          const uniqueSales = [...new Set(data.map(w => w.salesperson).filter(Boolean))].sort();
+          setSalespeople(uniqueSales);
+        }
 
         toast.success('Work orders loaded', { id: 'wo-load' });
       } catch (e) {
@@ -98,24 +89,43 @@ export default function ActiveWorkordersPage() {
     })();
 
     return () => { mounted = false; };
-  }, [navigate, filters]);
+  }, [navigate]);
 
+  // Apply filters client-side
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const base = q
-      ? rows.filter((w) => {
-          const itemsStr = formatItemsFromItems(w.items || []);
-          return [
-            w.invoice_id ?? '',
-            w.customer_name ?? '',
-            w.delivery_suburb ?? '',
-            w.delivery_state ?? '',
-            w.salesperson ?? '',
-            w.notes ?? '',
-            itemsStr,
-          ].join(' ').toLowerCase().includes(q);
-        })
-      : rows;
+
+    let base = rows.filter((w) => {
+      const itemsStr = formatItemsFromItems(w.items || []);
+      const haystack = [
+        w.invoice_id ?? '',
+        w.customer_name ?? '',
+        w.delivery_suburb ?? '',
+        w.delivery_state ?? '',
+        w.salesperson ?? '',
+        w.notes ?? '',
+        itemsStr,
+      ].join(' ').toLowerCase();
+
+      return !q || haystack.includes(q);
+    });
+
+    if (filters.state) {
+      base = base.filter(w => w.delivery_state === filters.state);
+    }
+    if (filters.salesperson) {
+      base = base.filter(w => w.salesperson === filters.salesperson);
+    }
+    if (filters.payment === 'Paid') {
+      base = base.filter(w => Number(w.outstanding_balance) <= 0);
+    } else if (filters.payment === 'Outstanding') {
+      base = base.filter(w => Number(w.outstanding_balance) > 0);
+    }
+    if (filters.technicians.length > 0) {
+      base = base.filter(w =>
+        (w.technicians || []).some(t => filters.technicians.includes(String(t.id)))
+      );
+    }
 
     const toTime = (d) => {
       if (!d) return Number.POSITIVE_INFINITY;
@@ -128,7 +138,7 @@ export default function ActiveWorkordersPage() {
       if (targetDiff !== 0) return targetDiff;
       return toTime(a.date_created) - toTime(b.date_created);
     });
-  }, [rows, search]);
+  }, [rows, search, filters]);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -150,7 +160,13 @@ export default function ActiveWorkordersPage() {
           <h1 className="text-2xl font-semibold tracking-tight flex-1 text-center">
             Delivery Operations
           </h1>
-          <div className="w-[40px]" />
+          <button
+            onClick={() => setShowFilters(f => !f)}
+            className="rounded-lg border px-3 py-2 hover:bg-gray-50 flex items-center gap-1"
+          >
+            <SlidersHorizontal size={16} />
+            Filters
+          </button>
         </div>
       </header>
 
@@ -199,72 +215,92 @@ export default function ActiveWorkordersPage() {
         <main className={sidebarOpen ? 'col-span-12 sm:col-span-9 lg:col-span-10' : 'col-span-12'}>
           <div className="rounded-xl border bg-white">
             {/* Toolbar */}
-            <div className="border-b p-4 grid gap-3 grid-cols-1 lg:grid-cols-5 items-center">
-              {/* Search */}
+            <div className="border-b p-4 flex flex-col lg:flex-row gap-3 items-center">
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search"
-                className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+                className="w-full lg:w-64 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
               />
-
-              {/* State */}
-              <select
-                value={filters.state}
-                onChange={(e) => setFilters(f => ({ ...f, state: e.target.value }))}
-                className="rounded-lg border px-3 py-2"
+              <Link
+                to="/create_workorder"
+                className="ml-auto inline-flex items-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black/90"
               >
-                <option value="">All States</option>
-                <option value="NSW">NSW</option>
-                <option value="VIC">VIC</option>
-                <option value="QLD">QLD</option>
-                <option value="SA">SA</option>
-                <option value="WA">WA</option>
-                <option value="TAS">TAS</option>
-                <option value="NT">NT</option>
-              </select>
-
-              {/* Salesperson */}
-              <input
-                type="text"
-                value={filters.salesperson}
-                onChange={(e) => setFilters(f => ({ ...f, salesperson: e.target.value }))}
-                placeholder="Salesperson"
-                className="rounded-lg border px-3 py-2"
-              />
-
-              {/* Payment */}
-              <select
-                value={filters.payment}
-                onChange={(e) => setFilters(f => ({ ...f, payment: e.target.value }))}
-                className="rounded-lg border px-3 py-2"
-              >
-                <option value="">All Payments</option>
-                <option value="Paid">Paid</option>
-                <option value="Outstanding">Outstanding</option>
-              </select>
-
-              {/* Technician */}
-              <select
-                value={filters.technician}
-                onChange={(e) => setFilters(f => ({ ...f, technician: e.target.value }))}
-                className="rounded-lg border px-3 py-2"
-              >
-                <option value="">All Technicians</option>
-                {technicians.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-              <div className="flex justify-end col-span-1 sm:col-span-3 mt-2">
-                <Link
-                  to="/create_workorder"
-                  className="inline-flex items-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black/90"
-                >
-                  + Create New Work Order
-                </Link>
-              </div>
+                + Create New Work Order
+              </Link>
             </div>
+
+            {/* Filters */}
+            {showFilters && (
+              <div className="p-4 grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+                {/* State */}
+                <select
+                  value={filters.state}
+                  onChange={(e) => setFilters(f => ({ ...f, state: e.target.value }))}
+                  className="rounded-lg border px-3 py-2"
+                >
+                  <option value="">All States</option>
+                  <option value="NSW">NSW</option>
+                  <option value="VIC">VIC</option>
+                  <option value="QLD">QLD</option>
+                  <option value="SA">SA</option>
+                  <option value="WA">WA</option>
+                  <option value="TAS">TAS</option>
+                  <option value="NT">NT</option>
+                </select>
+
+                {/* Salesperson dropdown */}
+                <select
+                  value={filters.salesperson}
+                  onChange={(e) => setFilters(f => ({ ...f, salesperson: e.target.value }))}
+                  className="rounded-lg border px-3 py-2"
+                >
+                  <option value="">All Salespeople</option>
+                  {salespeople.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+
+                {/* Payment */}
+                <select
+                  value={filters.payment}
+                  onChange={(e) => setFilters(f => ({ ...f, payment: e.target.value }))}
+                  className="rounded-lg border px-3 py-2"
+                >
+                  <option value="">All Payments</option>
+                  <option value="Paid">Paid</option>
+                  <option value="Outstanding">Outstanding</option>
+                </select>
+
+                {/* Technicians checkboxes */}
+                <div className="border rounded-lg p-2">
+                  <div className="font-medium text-sm mb-1">Technicians</div>
+                  <div className="max-h-28 overflow-y-auto space-y-1">
+                    {technicians.map(t => (
+                      <label key={t.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={filters.technicians.includes(String(t.id))}
+                          onChange={(e) => {
+                            setFilters(f => {
+                              const id = String(t.id);
+                              return {
+                                ...f,
+                                technicians: e.target.checked
+                                  ? [...f.technicians, id]
+                                  : f.technicians.filter(x => x !== id)
+                              };
+                            });
+                          }}
+                        />
+                        {t.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Table */}
             <div className="p-4">
