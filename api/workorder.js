@@ -29,7 +29,7 @@ async function logEvent(client, {
 }
 
 export default async function handler(req, res) {
-  const { method, query: { id, technicians }, body } = req;
+  const { method, query: { id }, body } = req;
   const client = await getClientWithTimezone();
 
   try {
@@ -115,7 +115,6 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid workorder status' });
       }
 
-
       let conditions = [];
       let params = [];
       let i = 1;
@@ -143,6 +142,7 @@ export default async function handler(req, res) {
           wo.salesperson,
           wo.estimated_completion,
           wo.notes,
+          wo.important_flag,
           c.name AS customer_name,
 
           COALESCE(
@@ -212,7 +212,8 @@ export default async function handler(req, res) {
         notes,
         status,
         outstanding_balance,
-        items
+        items,
+        important_flag
       } = body || {};
 
       if (!invoice_id || !customer_id || !salesperson || !delivery_state || !lead_time || outstanding_balance == null) {
@@ -240,9 +241,9 @@ export default async function handler(req, res) {
         `
         INSERT INTO workorder (
           invoice_id, customer_id, salesperson, delivery_suburb, delivery_state,
-          delivery_charged, lead_time, estimated_completion, notes, status, date_created, outstanding_balance
+          delivery_charged, lead_time, estimated_completion, notes, status, date_created, outstanding_balance, important_flag
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)
         RETURNING workorder_id
         `,
         [
@@ -256,7 +257,8 @@ export default async function handler(req, res) {
           estComplete,
           notes || null,
           status || 'Work Ordered',
-          Number(outstanding_balance)
+          Number(outstanding_balance),
+          important_flag == null ? false : !!important_flag
         ]
       );
       const workorderId = woRes.rows[0].workorder_id;
@@ -277,7 +279,7 @@ export default async function handler(req, res) {
               item.product_id,
               Number(item.quantity),
               item.condition,
-              item.technician_id,
+              twoCharId(item.technician_id),
               itmStatus
             ]
           );
@@ -295,7 +297,7 @@ export default async function handler(req, res) {
     }
 
     /** =========================
-     * PUT  (Update workorder + items)
+     * PUT  (Update workorder + items/add/remove)
      * ========================== */
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
@@ -306,7 +308,10 @@ export default async function handler(req, res) {
         delivery_charged,
         outstanding_balance,
         estimated_completion,
-        items // [{ workorder_items_id, status, technician_id }]
+        important_flag,                 // NEW
+        items,                          // [{ workorder_items_id, status, technician_id }]
+        add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status? }]
+        delete_item_ids                 // NEW [id, id, ...]
       } = body || {};
 
       await client.query('BEGIN');
@@ -331,6 +336,7 @@ export default async function handler(req, res) {
       if (delivery_charged !== undefined) { updates.push(`delivery_charged = $${p++}`); params.push(delivery_charged === null || delivery_charged === '' ? null : Number(delivery_charged)); }
       if (outstanding_balance !== undefined) { updates.push(`outstanding_balance = $${p++}`); params.push(Number(outstanding_balance)); }
       if (estimated_completion !== undefined) { updates.push(`estimated_completion = $${p++}`); params.push(estimated_completion || beforeWO.estimated_completion); }
+      if (important_flag !== undefined) { updates.push(`important_flag = $${p++}`); params.push(!!important_flag); }
 
       if (updates.length) {
         params.push(id);
@@ -342,9 +348,12 @@ export default async function handler(req, res) {
         if (outstanding_balance !== undefined && Number(outstanding_balance) !== Number(beforeWO.outstanding_balance)) {
           await logEvent(client, { workorder_id: id, event_type: 'PAYMENT_UPDATED', user_id: actorId });
         }
+        if (important_flag !== undefined && beforeWO.important_flag !== !!important_flag) {
+          await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_FLAG_CHANGED', user_id: actorId });
+        }
       }
 
-      // 2) Update items (status / technician)
+      // 2) Update existing items (status / technician)
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
           const { workorder_items_id, status, technician_id } = row || {};
@@ -363,7 +372,7 @@ export default async function handler(req, res) {
           let i = 1;
 
           if (technician_id !== undefined && technician_id !== before.technician_id) {
-            fields.push(`technician_id = $${i++}`); vals.push(technician_id);
+            fields.push(`technician_id = $${i++}`); vals.push(twoCharId(technician_id));
           }
 
           if (status !== undefined && status !== before.status) {
@@ -385,7 +394,6 @@ export default async function handler(req, res) {
               vals.push(status);
             }
 
-            // SNAPSHOT the "to" status in the log row
             await logEvent(client, {
               workorder_id: id,
               workorder_items_id,
@@ -403,6 +411,66 @@ export default async function handler(req, res) {
             );
           }
         }
+      }
+
+      // 2b) Add new items
+      if (Array.isArray(add_items) && add_items.length) {
+        for (const item of add_items) {
+          if (!item?.product_id || !item?.quantity || !item?.condition) continue;
+
+          const itmStatus = item.status && String(item.status).trim()
+            ? item.status
+            : 'Not in Workshop';
+
+          const ins = await client.query(
+            `
+            INSERT INTO workorder_items (
+              workorder_id, product_id, quantity, condition, technician_id, status
+            ) VALUES ($1,$2,$3,$4,$5,$6)
+            RETURNING workorder_items_id
+            `,
+            [
+              id,
+              item.product_id,
+              Number(item.quantity),
+              item.condition,
+              twoCharId(item.technician_id),
+              itmStatus
+            ]
+          );
+
+          const newItemId = ins.rows[0].workorder_items_id;
+
+          await logEvent(client, {
+            workorder_id: id,
+            workorder_items_id: newItemId,
+            event_type: 'ITEM_ADDED',
+            user_id: actorId,
+            item_status: itmStatus
+          });
+        }
+      }
+
+      // 2c) Delete items
+      if (Array.isArray(delete_item_ids) && delete_item_ids.length) {
+        const { rows: existing } = await client.query(
+          `SELECT workorder_items_id FROM workorder_items WHERE workorder_id = $1 AND workorder_items_id = ANY($2::int[])`,
+          [id, delete_item_ids]
+        );
+
+        for (const row of existing) {
+          await logEvent(client, {
+            workorder_id: id,
+            workorder_items_id: row.workorder_items_id,
+            event_type: 'ITEM_REMOVED',
+            user_id: actorId
+          });
+        }
+
+        await client.query(
+          `DELETE FROM workorder_items WHERE workorder_id = $1 AND workorder_items_id = ANY($2::int[])`,
+          [id, delete_item_ids]
+        );
       }
 
       // 3) Auto-complete workorder & auto-create delivery if all items completed
