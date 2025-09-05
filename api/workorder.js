@@ -279,7 +279,7 @@ export default async function handler(req, res) {
               item.product_id,
               Number(item.quantity),
               item.condition,
-              twoCharId(item.technician_id),
+              item.technician_id ? twoCharId(item.technician_id) : null,
               itmStatus
             ]
           );
@@ -371,8 +371,15 @@ export default async function handler(req, res) {
           const vals = [];
           let i = 1;
 
-          if (technician_id !== undefined && technician_id !== before.technician_id) {
-            fields.push(`technician_id = $${i++}`); vals.push(twoCharId(technician_id));
+          if (technician_id !== undefined) {
+            const tech = (technician_id === '' || technician_id == null)
+            ? null
+            : twoCharId(technician_id);
+            const beforeTech = before.technician_id ?? null;
+            if (tech !== beforeTech) {
+              fields.push(`technician_id = $${i++}`);
+              vals.push(tech);
+            }
           }
 
           if (status !== undefined && status !== before.status) {
@@ -434,7 +441,7 @@ export default async function handler(req, res) {
               item.product_id,
               Number(item.quantity),
               item.condition,
-              twoCharId(item.technician_id),
+              item.technician_id ? twoCharId(item.technician_id) : null,
               itmStatus
             ]
           );

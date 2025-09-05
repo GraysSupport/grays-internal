@@ -297,7 +297,7 @@ export default function WorkorderDetailPage() {
           product_id: it.product_id,
           quantity: Number(it.quantity) || 1,
           condition: it.condition,
-          technician_id: it.technician_id || 'NA',
+          technician_id: it.technician_id || null,
           status: 'Not in Workshop'
         })),
         delete_item_ids: toDelete
