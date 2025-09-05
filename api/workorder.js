@@ -12,13 +12,13 @@ function twoCharId(x) {
   return (s || 'NA').slice(0, 2);
 }
 
-/** Centralized logger (snapshots ONLY the "to" item status) **/
+/** Centralized logger **/
 async function logEvent(client, {
   workorder_id,
   workorder_items_id = null,
   event_type,
   user_id = 'NA',
-  item_status = null, // item_status_enum or null
+  item_status = null,
 }) {
   await client.query(
     `INSERT INTO workorder_logs
@@ -33,14 +33,19 @@ export default async function handler(req, res) {
   const client = await getClientWithTimezone();
 
   try {
-    /** =========================
-     * GET
-     *  - GET ?id=...   -> One workorder + items + activity
-     *  - GET (list)    -> Optional ?status= filter
-     * ========================== */
     if (method === 'GET') {
+      const { id } = req.query;
+
+      // === Get technicians list (dropdown) ===
+      if (req.query.technicians) {
+        const techsRes = await client.query(
+          `SELECT id, name FROM users WHERE access = 'technician' ORDER BY name`
+        );
+        return res.status(200).json(techsRes.rows);
+      }
+
+      // === Get single workorder ===
       if (id) {
-        // Workorder core
         const wo = await client.query(
           `
           WITH base AS (
@@ -57,9 +62,9 @@ export default async function handler(req, res) {
           `,
           [id]
         );
+
         if (!wo.rows.length) return res.status(404).json({ error: 'Workorder not found' });
 
-        // Items
         const items = await client.query(
           `
           SELECT 
@@ -70,12 +75,12 @@ export default async function handler(req, res) {
           FROM workorder_items wi
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE wi.workorder_id = $1
+            AND wi.status <> 'Canceled'
           ORDER BY wi.workorder_items_id ASC
           `,
           [id]
         );
 
-        // Activity logs (IMPORTANT: use snapshot from logs, NOT live wi.status)
         const logs = await client.query(
           `
           SELECT 
@@ -95,16 +100,36 @@ export default async function handler(req, res) {
           [id]
         );
 
-        const woRow = wo.rows[0];
         return res.status(200).json({
-          ...woRow,
+          ...wo.rows[0],
           items: items.rows,
           activity: logs.rows
         });
       }
 
-      // === List workorders (RESPECT ?status=...) ===
-      const { status: statusFilter } = req.query;
+      // === List workorders with filters ===
+      const { status, state, salesperson, payment, technician } = req.query;
+
+      const statusFilter = status ? decodeURIComponent(status) : undefined;
+      const validStatuses = ['Work Ordered', 'Completed', 'Not in Workshop', 'In Workshop'];
+      if (statusFilter && !validStatuses.includes(statusFilter)) {
+        return res.status(400).json({ error: 'Invalid workorder status' });
+      }
+
+      let conditions = [];
+      let params = [];
+      let i = 1;
+
+      if (statusFilter) { conditions.push(`wo.status = $${i++}`); params.push(statusFilter); }
+      if (state) { conditions.push(`wo.delivery_state = $${i++}`); params.push(state); }
+      if (salesperson) { conditions.push(`wo.salesperson = $${i++}`); params.push(salesperson); }
+      if (payment) { 
+        if (payment.toLowerCase() === 'paid') conditions.push(`wo.outstanding_balance = 0`);
+        else if (payment.toLowerCase() === 'due') conditions.push(`wo.outstanding_balance > 0`);
+      }
+      if (technician) { conditions.push(`wi.technician_id = $${i++}`); params.push(technician); }
+
+      const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const baseSql = `
         SELECT
@@ -118,31 +143,45 @@ export default async function handler(req, res) {
           wo.salesperson,
           wo.estimated_completion,
           wo.notes,
+          wo.important_flag,
           c.name AS customer_name,
+
           COALESCE(
             json_agg(
               json_build_object(
                 'product_id',   wi.product_id,
                 'product_name', COALESCE(p.name, wi.product_id),
-                'quantity',     wi.quantity
+                'quantity',     wi.quantity,
+                'technician_id', wi.technician_id,
+                'technician_name', u.name,
+                'status',        wi.status
               )
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
             '[]'::json
           ) AS items,
+
           COALESCE(
             string_agg(
               (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
               ', ' ORDER BY wi.workorder_items_id
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
             '—'
-          ) AS items_text
+          ) AS items_text,
+
+          COALESCE(
+            json_agg(DISTINCT jsonb_build_object(
+              'id', wi.technician_id,
+              'name', u.name
+            )) FILTER (WHERE wi.technician_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
+            '[]'::json
+          ) AS technicians
+
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
-        LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id
+        LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id AND wi.status <> 'Canceled'
         LEFT JOIN product p ON p.sku = wi.product_id
+        LEFT JOIN users u ON u.id = wi.technician_id AND u.access = 'technician'
       `;
-
-      const whereSql = statusFilter ? `WHERE wo.status = $1` : ``;
 
       const list = await client.query(
         `
@@ -151,11 +190,12 @@ export default async function handler(req, res) {
           GROUP BY wo.workorder_id, c.name
           ORDER BY wo.date_created DESC
         `,
-        statusFilter ? [statusFilter] : []
+        params
       );
 
       return res.status(200).json(list.rows);
     }
+
 
     /** =========================
      * POST  (Create workorder)
@@ -173,7 +213,8 @@ export default async function handler(req, res) {
         notes,
         status,
         outstanding_balance,
-        items
+        items,
+        important_flag
       } = body || {};
 
       if (!invoice_id || !customer_id || !salesperson || !delivery_state || !lead_time || outstanding_balance == null) {
@@ -201,9 +242,9 @@ export default async function handler(req, res) {
         `
         INSERT INTO workorder (
           invoice_id, customer_id, salesperson, delivery_suburb, delivery_state,
-          delivery_charged, lead_time, estimated_completion, notes, status, date_created, outstanding_balance
+          delivery_charged, lead_time, estimated_completion, notes, status, date_created, outstanding_balance, important_flag
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)
         RETURNING workorder_id
         `,
         [
@@ -217,16 +258,24 @@ export default async function handler(req, res) {
           estComplete,
           notes || null,
           status || 'Work Ordered',
-          Number(outstanding_balance)
+          Number(outstanding_balance),
+          important_flag == null ? false : !!important_flag
         ]
       );
       const workorderId = woRes.rows[0].workorder_id;
 
       if (Array.isArray(items) && items.length) {
         for (const item of items) {
+          // Enforce technician is required when adding items at create-time
+          if (!item?.technician_id || String(item.technician_id).trim() === '') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Technician is required for each item.' });
+          }
+
           const itmStatus = item.status && String(item.status).trim()
             ? item.status
             : 'Not in Workshop';
+
           await client.query(
             `
             INSERT INTO workorder_items (
@@ -238,7 +287,7 @@ export default async function handler(req, res) {
               item.product_id,
               Number(item.quantity),
               item.condition,
-              item.technician_id,
+              twoCharId(item.technician_id),
               itmStatus
             ]
           );
@@ -256,7 +305,7 @@ export default async function handler(req, res) {
     }
 
     /** =========================
-     * PUT  (Update workorder + items)
+     * PUT  (Update workorder + items/add/remove)
      * ========================== */
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
@@ -267,7 +316,10 @@ export default async function handler(req, res) {
         delivery_charged,
         outstanding_balance,
         estimated_completion,
-        items // [{ workorder_items_id, status, technician_id }]
+        important_flag,                 // NEW
+        items,                          // [{ workorder_items_id, status, technician_id }]
+        add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status? }]
+        delete_item_ids                 // NEW [id, id, ...]
       } = body || {};
 
       await client.query('BEGIN');
@@ -292,6 +344,7 @@ export default async function handler(req, res) {
       if (delivery_charged !== undefined) { updates.push(`delivery_charged = $${p++}`); params.push(delivery_charged === null || delivery_charged === '' ? null : Number(delivery_charged)); }
       if (outstanding_balance !== undefined) { updates.push(`outstanding_balance = $${p++}`); params.push(Number(outstanding_balance)); }
       if (estimated_completion !== undefined) { updates.push(`estimated_completion = $${p++}`); params.push(estimated_completion || beforeWO.estimated_completion); }
+      if (important_flag !== undefined) { updates.push(`important_flag = $${p++}`); params.push(!!important_flag); }
 
       if (updates.length) {
         params.push(id);
@@ -303,9 +356,12 @@ export default async function handler(req, res) {
         if (outstanding_balance !== undefined && Number(outstanding_balance) !== Number(beforeWO.outstanding_balance)) {
           await logEvent(client, { workorder_id: id, event_type: 'PAYMENT_UPDATED', user_id: actorId });
         }
+        if (important_flag !== undefined && beforeWO.important_flag !== !!important_flag) {
+          await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_FLAG_CHANGED', user_id: actorId });
+        }
       }
 
-      // 2) Update items (status / technician)
+      // 2) Update existing items (status / technician)
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
           const { workorder_items_id, status, technician_id } = row || {};
@@ -323,8 +379,22 @@ export default async function handler(req, res) {
           const vals = [];
           let i = 1;
 
-          if (technician_id !== undefined && technician_id !== before.technician_id) {
-            fields.push(`technician_id = $${i++}`); vals.push(technician_id);
+          if (technician_id !== undefined) {
+            const tech = (technician_id === '' || technician_id == null)
+              ? null
+              : twoCharId(technician_id);
+
+            // Disallow clearing technician (DB column is NOT NULL)
+            if (tech === null) {
+              await client.query('ROLLBACK');
+              return res.status(400).json({ error: 'Technician cannot be cleared from an existing item.' });
+            }
+
+            const beforeTech = before.technician_id ?? null;
+            if (tech !== beforeTech) {
+              fields.push(`technician_id = $${i++}`);
+              vals.push(tech);
+            }
           }
 
           if (status !== undefined && status !== before.status) {
@@ -332,12 +402,19 @@ export default async function handler(req, res) {
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
             } else if (status === 'Completed') {
-              let set = `status = $${i++}`;
-              vals.push(status);
-              set += `, wokrshop_duration = CASE WHEN in_workshop IS NOT NULL 
-                         THEN ROUND(EXTRACT(EPOCH FROM (NOW() - in_workshop)) / 3600.0::numeric, 2)
-                         ELSE wokrshop_duration END`;
-              fields.push(set);
+                let set = `status = $${i++}`;
+                vals.push(status);
+                set += `, wokrshop_duration = CASE
+                          WHEN in_workshop IS NOT NULL THEN public.business_hours_duration(
+                            in_workshop,
+                            NOW(),
+                            'Australia/Melbourne',   -- TZ
+                            '08:00',                 -- workday start
+                            '15:00'                  -- workday end
+                          )
+                          ELSE wokrshop_duration
+                        END`;
+                fields.push(set);
             } else if (status === 'Not in Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = NULL`);
               vals.push(status);
@@ -346,7 +423,6 @@ export default async function handler(req, res) {
               vals.push(status);
             }
 
-            // SNAPSHOT the "to" status in the log row
             await logEvent(client, {
               workorder_id: id,
               workorder_items_id,
@@ -366,11 +442,81 @@ export default async function handler(req, res) {
         }
       }
 
+      // 2b) Add new items
+      if (Array.isArray(add_items) && add_items.length) {
+        for (const item of add_items) {
+          if (!item?.product_id || !item?.quantity || !item?.condition) continue;
+          // Enforce technician is required when adding items later
+          if (!item?.technician_id || String(item.technician_id).trim() === '') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Technician is required for each new item.' });
+          }
+
+          const itmStatus = item.status && String(item.status).trim()
+            ? item.status
+            : 'Not in Workshop';
+
+          const ins = await client.query(
+            `
+            INSERT INTO workorder_items (
+              workorder_id, product_id, quantity, condition, technician_id, status
+            ) VALUES ($1,$2,$3,$4,$5,$6)
+            RETURNING workorder_items_id
+            `,
+            [
+              id,
+              item.product_id,
+              Number(item.quantity),
+              item.condition,
+              twoCharId(item.technician_id),
+              itmStatus
+            ]
+          );
+
+          const newItemId = ins.rows[0].workorder_items_id;
+
+          await logEvent(client, {
+            workorder_id: id,
+            workorder_items_id: newItemId,
+            event_type: 'ITEM_ADDED',
+            user_id: actorId,
+            item_status: itmStatus
+          });
+        }
+      }
+
+      // 2c) Delete items -> mark as Canceled
+      if (Array.isArray(delete_item_ids) && delete_item_ids.length) {
+        const { rows: existing } = await client.query(
+          `SELECT workorder_items_id FROM workorder_items WHERE workorder_id = $1 AND workorder_items_id = ANY($2::int[])`,
+          [id, delete_item_ids]
+        );
+
+        for (const row of existing) {
+          await logEvent(client, {
+            workorder_id: id,
+            workorder_items_id: row.workorder_items_id,
+            event_type: 'ITEM_REMOVED',
+            user_id: actorId
+          });
+        }
+
+        await client.query(
+          `UPDATE workorder_items
+             SET status = 'Canceled'
+           WHERE workorder_id = $1
+             AND workorder_items_id = ANY($2::int[])`,
+          [id, delete_item_ids]
+        );
+      }
+
       // 3) Auto-complete workorder & auto-create delivery if all items completed
       const allItems = await client.query(
         `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
                 COUNT(*) AS total
-         FROM workorder_items WHERE workorder_id = $1`,
+         FROM workorder_items
+         WHERE workorder_id = $1
+           AND status <> 'Canceled'`,
         [id]
       );
       const done = Number(allItems.rows[0].done);

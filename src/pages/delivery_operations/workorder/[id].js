@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 
+/** Utils **/
 function formatMoney(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, { style: 'currency', currency: 'AUD' });
@@ -10,7 +12,129 @@ function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString();
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/** Searchable product dropdown (local filter like Products page) **/
+function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, name, brand' }) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState('');
+  const anchorRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0 });
+
+  // Close on outside click / ESC; reposition on scroll/resize
+  useEffect(() => {
+    const onDoc = (e) => {
+      // If the click is inside the dropdown menu, ignore
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      // Otherwise, close if it's outside the anchor
+      if (anchorRef.current && !anchorRef.current.contains(e.target)) setOpen(false);
+    };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onReflow = () => {
+      if (!anchorRef.current) return;
+      const r = anchorRef.current.getBoundingClientRect();
+      setMenuPos({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+    };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onEsc);
+    window.addEventListener('resize', onReflow);
+    window.addEventListener('scroll', onReflow, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onEsc);
+      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', onReflow, true);
+    };
+  }, []);
+
+  // Position menu when opening
+  useEffect(() => {
+    if (open && anchorRef.current) {
+      const r = anchorRef.current.getBoundingClientRect();
+      setMenuPos({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+    }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!Array.isArray(products)) return [];
+    const t = term.trim().toLowerCase();
+    if (!t) return products.slice(0, 50); // first page
+    const keywords = t.split(' ').filter(Boolean);
+    return products.filter((p) => {
+      const txt = `${p.sku} ${p.name} ${p.brand}`.toLowerCase();
+      return keywords.every((k) => txt.includes(k));
+    }).slice(0, 50);
+  }, [products, term]);
+
+  const current = useMemo(() => {
+    return products?.find((p) => p.sku === value) || null;
+  }, [products, value]);
+
+  return (
+    <>
+      {/* Anchor in the table cell */}
+      <div ref={anchorRef} className="flex items-center gap-2 border rounded px-2 py-1 bg-white cursor-text"
+           onClick={() => setOpen(true)}>
+        <input
+          className="flex-1 outline-none"
+          placeholder={placeholder}
+          value={open ? term : (current ? `${current.sku} — ${current.name}` : '')}
+          onChange={(e) => setTerm(e.target.value)}
+          onFocus={() => setOpen(true)}
+        />
+        {value ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onChange(''); setTerm(''); }}
+            className="text-xs text-gray-500 hover:text-gray-700"
+            title="Clear"
+          >
+            ✕
+          </button>
+        ) : null}
+      </div>
+
+      {/* Menu portaled to body so it can overflow outside the table */}
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: `${menuPos.top}px`,
+            left: `${menuPos.left}px`,
+            width: `${menuPos.width}px`,
+            zIndex: 1000
+          }}
+          className="max-h-64 overflow-auto rounded border bg-white shadow"
+        >
+          {filtered.length ? filtered.map((p) => (
+            <div
+              key={p.sku}
+              className="px-2 py-1 text-sm hover:bg-gray-100 cursor-pointer"
+              onClick={() => { onChange(p.sku); setOpen(false); setTerm(''); }}onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onChange(p.sku);
+                setOpen(false);
+                setTerm('');
+              }}
+              title={`${p.name} (${p.brand || '—'})`}
+            >
+             <div className="font-mono">{p.sku}</div>
+              <div className="text-xs text-gray-600 truncate">
+                {p.name}{p.brand ? ` — ${p.brand}` : ''}
+              </div>
+            </div>
+          )) : (
+            <div className="px-2 py-2 text-sm text-gray-500">No matches.</div>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
 }
 
 export default function WorkorderDetailPage() {
@@ -30,6 +154,18 @@ export default function WorkorderDetailPage() {
   const [activity, setActivity] = useState([]);
   const [techs, setTechs] = useState([]);
 
+  // NEW: important flag
+  const [important, setImportant] = useState(false);
+
+  // NEW: products for dropdown
+  const [products, setProducts] = useState([]);
+
+  // NEW: pending new rows for add
+  const [pendingNewItems, setPendingNewItems] = useState([]); // [{tempId, product_id, quantity, condition, technician_id}]
+
+  // deleting existing rows
+  const [toDelete, setToDelete] = useState([]); // [workorder_items_id]
+
   const userId = useMemo(() => {
     try {
       const u = JSON.parse(localStorage.getItem('user') || '{}');
@@ -47,13 +183,19 @@ export default function WorkorderDetailPage() {
     }
   };
 
-  // Load technicians once
+  // Load technicians & products once
   useEffect(() => {
     (async () => {
       try {
         const r = await fetch('/api/users?access=technician');
         const data = await r.json();
         if (r.ok) setTechs(Array.isArray(data) ? data : []);
+      } catch {}
+
+      try {
+        const res = await fetch('/api/products');
+        const data = await res.json();
+        if (res.ok) setProducts(Array.isArray(data) ? data : []);
       } catch {}
     })();
   }, []);
@@ -74,11 +216,12 @@ export default function WorkorderDetailPage() {
         if (!r.ok) throw new Error(data?.error || 'Failed to load workorder');
 
         setWo(data);
-        setItems(data.items || []);
+        setItems((data.items || []).filter(it => it.status !== 'Canceled'));
         setNotes(data.notes || '');
         setDeliveryCharged(data.delivery_charged ?? '');
         setOutstandingBalance(data.outstanding_balance ?? '');
         setActivity(data.activity || []);
+        setImportant(!!data.important_flag);
       } catch (e) {
         toast.error(e.message || 'Failed to load');
       } finally {
@@ -87,7 +230,7 @@ export default function WorkorderDetailPage() {
     })();
   }, [id, navigate]);
 
-  // Update local item field
+  // Update local existing item field
   const setItemField = (idx, key, val) => {
     setItems((arr) => {
       const copy = [...arr];
@@ -96,8 +239,47 @@ export default function WorkorderDetailPage() {
     });
   };
 
+  // Update pending new item field
+  const setPendingField = (tempId, key, val) => {
+    setPendingNewItems((arr) => arr.map((row) => row.tempId === tempId ? { ...row, [key]: val } : row));
+  };
+
+  const handleAddPendingRow = () => {
+    setPendingNewItems((arr) => [
+      ...arr,
+      {
+        tempId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+        product_id: '',
+        quantity: 1,
+        condition: 'New',
+        technician_id: ''
+      }
+    ]);
+  };
+
+  const handleRemovePendingRow = (tempId) => {
+    setPendingNewItems((arr) => arr.filter((r) => r.tempId !== tempId));
+  };
+
   const handleSave = async () => {
     if (!wo) return;
+
+    // Validate pending rows minimally
+    for (const row of pendingNewItems) {
+      if (!row.product_id) {
+        toast.error('Please select a product for all new rows.');
+        return;
+      }
+      if (!row.quantity || Number(row.quantity) <= 0) {
+        toast.error('Quantity must be at least 1.');
+        return;
+      }
+      if (!row.technician_id || String(row.technician_id).trim() === '') {
+        toast.error('Please select a technician for all new rows.');
+        return;
+      }
+    }
+
     setSaving(true);
     const toastId = toast.loading('Saving changes...');
     try {
@@ -109,11 +291,20 @@ export default function WorkorderDetailPage() {
           outstandingBalance === ''
             ? wo.outstanding_balance
             : Number(outstandingBalance),
+        important_flag: important,
         items: items.map((it) => ({
           workorder_items_id: it.workorder_items_id,
           status: it.status,
           technician_id: it.technician_id,
         })),
+        add_items: pendingNewItems.map((it) => ({
+          product_id: it.product_id,
+          quantity: Number(it.quantity) || 1,
+          condition: it.condition,
+          technician_id: it.technician_id || null,
+          status: 'Not in Workshop'
+        })),
+        delete_item_ids: toDelete
       };
 
       const r = await fetch(
@@ -132,11 +323,16 @@ export default function WorkorderDetailPage() {
 
       // Refresh from response (API returns updated resource)
       setWo(data);
-      setItems(data.items || []);
+      setItems((data.items || []).filter(it => it.status !== 'Canceled'));
       setNotes(data.notes || '');
       setDeliveryCharged(data.delivery_charged ?? '');
       setOutstandingBalance(data.outstanding_balance ?? '');
       setActivity(data.activity || []);
+      setImportant(!!data.important_flag);
+
+      // Clear queued adds/deletes
+      setPendingNewItems([]);
+      setToDelete([]);
 
       toast.success('Saved!', { id: toastId });
     } catch (e) {
@@ -170,6 +366,8 @@ export default function WorkorderDetailPage() {
     );
   }
 
+  const pendingAdds = pendingNewItems.length;
+  const pendingDeletes = toDelete.length;
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -184,7 +382,15 @@ export default function WorkorderDetailPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-center">
             Work Order Details: Invoice #{wo.invoice_id}
           </h1>
-          <div />
+          <div>
+            <button
+              onClick={() => setImportant((v) => !v)}
+              className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 ${important ? 'text-amber-600 border-amber-300' : ''}`}
+              title={important ? 'Unmark as important' : 'Mark as important'}
+            >
+              {important ? '★ Important' : '☆ Mark important'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -221,25 +427,43 @@ export default function WorkorderDetailPage() {
 
         {/* Items */}
         <div className="rounded-xl border bg-white">
-          <div className="border-b p-4 text-center font-semibold">Items</div>
+          <div className="border-b p-4 flex items-center justify-between">
+            <div className="text-center font-semibold flex-1">Items</div>
+            <div className="flex-shrink-0">
+              <button
+                onClick={handleAddPendingRow}
+                className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+              >
+                + Add Product
+              </button>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-100">
                 <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
                   <th className="px-4 py-3 w-14">Qty</th>
-                  <th className="px-4 py-3 w-32">SKU</th>
+                  <th className="px-4 py-3 w-48">SKU</th>
                   <th className="px-4 py-3">Equipment Name</th>
                   <th className="px-4 py-3 w-20">Condition</th>
-                  <th className="px-4 py-3 w-40">Tech Assigned</th>
+                  <th className="px-4 py-3 w-40">Tech Assigned (required)</th>
                   <th className="px-4 py-3 w-48">Status</th>
                   <th className="px-4 py-3 w-28">Workshop Duration</th>
+                  <th className="px-4 py-3 w-24">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {items.map((it, idx) => (
-                  <tr key={it.workorder_items_id} className={idx % 2 ? 'bg-gray-50' : 'bg-white'}>
+                {/* Existing items */}
+                {items
+                .filter(it => it.status !== 'Canceled')
+                .map((it, idx) => (
+                  <tr
+                    key={it.workorder_items_id}
+                    className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${toDelete.includes(it.workorder_items_id) ? 'opacity-60 line-through' : ''}`}
+                  >
                     <td className="px-4 py-3 text-sm">{Number(it.quantity)}</td>
-                    <td className="px-4 py-3 text-sm">{it.product_id}</td>
+                    <td className="px-4 py-3 text-sm font-mono">{it.product_id}</td>
                     <td className="px-4 py-3 text-sm">{it.product_name}</td>
                     <td className="px-4 py-3 text-sm">{it.condition}</td>
                     <td className="px-4 py-3 text-sm">
@@ -263,20 +487,113 @@ export default function WorkorderDetailPage() {
                         <option>Not in Workshop</option>
                         <option>In Workshop</option>
                         <option>Completed</option>
+                        <option>Canceled</option>
                       </select>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {it.wokrshop_duration != null ? `${Number(it.wokrshop_duration)} hours` : (it.status === 'In Workshop' ? '—' : '0 hours')}
                     </td>
+                    <td className="px-4 py-3 text-sm">
+                      <button
+                        onClick={() => {
+                          setToDelete((arr) => arr.includes(it.workorder_items_id)
+                            ? arr.filter((x) => x !== it.workorder_items_id)
+                            : [...arr, it.workorder_items_id]
+                          );
+                        }}
+                        className={`rounded border px-2 py-1 text-xs ${toDelete.includes(it.workorder_items_id) ? 'bg-red-50 border-red-300 text-red-700' : 'hover:bg-gray-50'}`}
+                      >
+                        {toDelete.includes(it.workorder_items_id) ? 'Undo Cancel' : 'Cancel'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
-                {!items.length && (
-                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={7}>No items.</td></tr>
+
+                {/* Pending new rows */}
+                {pendingNewItems.map((row, i) => {
+                  const selected = products.find((p) => p.sku === row.product_id);
+                  return (
+                    <tr key={row.tempId} className="bg-white">
+                      <td className="px-4 py-3 text-sm">
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className="border rounded px-2 py-1 w-14"
+                          value={row.quantity}
+                          onChange={(e) => setPendingField(row.tempId, 'quantity', e.target.value)}
+                        />
+                      </td>
+
+                      <td className="px-4 py-3 text-sm w-48">
+                        <ProductSelect
+                          products={products}
+                          value={row.product_id}
+                          onChange={(sku) => setPendingField(row.tempId, 'product_id', sku)}
+                        />
+                      </td>
+
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {selected ? selected.name : <span className="text-gray-400">—</span>}
+                      </td>
+
+                      <td className="px-4 py-3 text-sm">
+                        <select
+                          className="border rounded px-2 py-1 w-full"
+                          value={row.condition}
+                          onChange={(e) => setPendingField(row.tempId, 'condition', e.target.value)}
+                        >
+                          <option>New</option>
+                          <option>Reco</option>
+                          <option>AT</option>
+                          <option>CS</option>
+                          <option>CCG</option>
+                        </select>
+                      </td>
+
+                      <td className="px-4 py-3 text-sm">
+                        <select
+                          className="border rounded px-2 py-1 w-full"
+                          value={row.technician_id || ''}
+                          onChange={(e) => setPendingField(row.tempId, 'technician_id', e.target.value)}
+                        >
+                          <option value="" disabled>Select tech</option>
+                          {techs.map((t) => (
+                            <option key={t.id} value={t.id}>{t.id} — {t.name}</option>
+                          ))}
+                        </select>
+                      </td>
+
+                      <td className="px-4 py-3 text-sm text-gray-500">Not in Workshop</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">0 hours</td>
+
+                      <td className="px-4 py-3 text-sm">
+                        <button
+                          onClick={() => handleRemovePendingRow(row.tempId)}
+                          className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!items.length && !pendingNewItems.length && (
+                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={8}>No items.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
+
+        {/* Pending changes hint */}
+        {(pendingAdds || pendingDeletes) ? (
+          <div className="mt-3 text-sm text-gray-700">
+            {pendingAdds ? <span className="mr-4">• {pendingAdds} item(s) queued to add</span> : null}
+            {pendingDeletes ? <span>• {pendingDeletes} item(s) marked for delete</span> : null}
+          </div>
+        ) : null}
 
         {/* Activity Log + Notes/Charges */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">

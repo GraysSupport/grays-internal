@@ -8,7 +8,7 @@ function formatDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString();
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
 function formatQty(q) {
