@@ -216,7 +216,7 @@ export default function WorkorderDetailPage() {
         if (!r.ok) throw new Error(data?.error || 'Failed to load workorder');
 
         setWo(data);
-        setItems(data.items || []);
+        setItems((data.items || []).filter(it => it.status !== 'Canceled'));
         setNotes(data.notes || '');
         setDeliveryCharged(data.delivery_charged ?? '');
         setOutstandingBalance(data.outstanding_balance ?? '');
@@ -274,6 +274,10 @@ export default function WorkorderDetailPage() {
         toast.error('Quantity must be at least 1.');
         return;
       }
+      if (!row.technician_id || String(row.technician_id).trim() === '') {
+        toast.error('Please select a technician for all new rows.');
+        return;
+      }
     }
 
     setSaving(true);
@@ -319,7 +323,7 @@ export default function WorkorderDetailPage() {
 
       // Refresh from response (API returns updated resource)
       setWo(data);
-      setItems(data.items || []);
+      setItems((data.items || []).filter(it => it.status !== 'Canceled'));
       setNotes(data.notes || '');
       setDeliveryCharged(data.delivery_charged ?? '');
       setOutstandingBalance(data.outstanding_balance ?? '');
@@ -443,7 +447,7 @@ export default function WorkorderDetailPage() {
                   <th className="px-4 py-3 w-48">SKU</th>
                   <th className="px-4 py-3">Equipment Name</th>
                   <th className="px-4 py-3 w-20">Condition</th>
-                  <th className="px-4 py-3 w-40">Tech Assigned</th>
+                  <th className="px-4 py-3 w-40">Tech Assigned (required)</th>
                   <th className="px-4 py-3 w-48">Status</th>
                   <th className="px-4 py-3 w-28">Workshop Duration</th>
                   <th className="px-4 py-3 w-24">Actions</th>
@@ -451,7 +455,9 @@ export default function WorkorderDetailPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {/* Existing items */}
-                {items.map((it, idx) => (
+                {items
+                .filter(it => it.status !== 'Canceled')
+                .map((it, idx) => (
                   <tr
                     key={it.workorder_items_id}
                     className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${toDelete.includes(it.workorder_items_id) ? 'opacity-60 line-through' : ''}`}
@@ -481,6 +487,7 @@ export default function WorkorderDetailPage() {
                         <option>Not in Workshop</option>
                         <option>In Workshop</option>
                         <option>Completed</option>
+                        <option>Canceled</option>
                       </select>
                     </td>
                     <td className="px-4 py-3 text-sm">
@@ -496,7 +503,7 @@ export default function WorkorderDetailPage() {
                         }}
                         className={`rounded border px-2 py-1 text-xs ${toDelete.includes(it.workorder_items_id) ? 'bg-red-50 border-red-300 text-red-700' : 'hover:bg-gray-50'}`}
                       >
-                        {toDelete.includes(it.workorder_items_id) ? 'Undo Delete' : 'Delete'}
+                        {toDelete.includes(it.workorder_items_id) ? 'Undo Cancel' : 'Cancel'}
                       </button>
                     </td>
                   </tr>
@@ -550,7 +557,7 @@ export default function WorkorderDetailPage() {
                           value={row.technician_id || ''}
                           onChange={(e) => setPendingField(row.tempId, 'technician_id', e.target.value)}
                         >
-                          <option value="">Select tech (optional)</option>
+                          <option value="" disabled>Select tech</option>
                           {techs.map((t) => (
                             <option key={t.id} value={t.id}>{t.id} — {t.name}</option>
                           ))}
