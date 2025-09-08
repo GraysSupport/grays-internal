@@ -333,13 +333,29 @@ export default function ActiveWorkordersPage() {
                       const techsStr = formatTechnicians(w.technicians);
                       const hasDue = w.outstanding_balance != null && Number(w.outstanding_balance) > 0;
                       const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
+
+                      // NEW: flag + overlay color
+                      const isImportant = !!w.important_flag;
+                      const overlayStyle = isImportant
+                        ? { boxShadow: 'inset 0 0 0 9999px rgba(251, 191, 36, 0.25)' } // amber-300 @ 25%
+                        : undefined;
+
                       return (
                         <tr
                           key={w.workorder_id}
                           className={`${rowCls} cursor-pointer align-top hover:bg-gray-100`}
                           onClick={() => navigate(`./workorder/${w.workorder_id}`)}
+                          style={overlayStyle} // ← apply the overlay
+                          title={isImportant ? 'Important work order' : undefined}
                         >
-                          <td className="px-3 py-2 text-sm font-medium w-20">{w.invoice_id ?? '—'}</td>
+                          <td className="px-3 py-2 text-sm font-medium w-20">
+                            {w.invoice_id ?? '—'}
+                            {isImportant && (
+                              <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 align-middle">
+                                Important
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-sm w-28">{formatDate(w.date_created)}</td>
                           <td className="px-3 py-2 text-sm w-36">{w.customer_name ?? '—'}</td>
                           <td className="px-3 py-2 text-sm w-28">{w.delivery_suburb ?? '—'}</td>
