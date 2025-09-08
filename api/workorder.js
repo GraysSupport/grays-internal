@@ -70,8 +70,7 @@ export default async function handler(req, res) {
           SELECT 
             wi.workorder_items_id, wi.workorder_id, wi.product_id,
             COALESCE(p.name, wi.product_id) AS product_name,
-            wi.quantity, wi.condition, wi.technician_id, wi.status, wi.in_workshop,
-            wi.wokrshop_duration
+            wi.quantity, wi.condition, wi.technician_id, wi.status
           FROM workorder_items wi
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE wi.workorder_id = $1
@@ -368,7 +367,7 @@ export default async function handler(req, res) {
           if (!workorder_items_id) continue;
 
           const cur = await client.query(
-            `SELECT workorder_items_id, status, technician_id, in_workshop, wokrshop_duration
+            `SELECT workorder_items_id, status, technician_id, in_workshop
                FROM workorder_items WHERE workorder_items_id = $1 AND workorder_id = $2`,
             [workorder_items_id, id]
           );
@@ -402,19 +401,9 @@ export default async function handler(req, res) {
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
             } else if (status === 'Completed') {
-                let set = `status = $${i++}`;
-                vals.push(status);
-                set += `, wokrshop_duration = CASE
-                          WHEN in_workshop IS NOT NULL THEN public.business_hours_duration(
-                            in_workshop,
-                            NOW(),
-                            'Australia/Melbourne',   -- TZ
-                            '08:00',                 -- workday start
-                            '15:00'                  -- workday end
-                          )
-                          ELSE wokrshop_duration
-                        END`;
-                fields.push(set);
+              // No duration calculation anymore. Just mark completed.
+              fields.push(`status = $${i++}`);
+              vals.push(status);
             } else if (status === 'Not in Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = NULL`);
               vals.push(status);

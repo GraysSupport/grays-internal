@@ -38,12 +38,28 @@ function itemsTextFromWorkorderItems(items) {
   if (!Array.isArray(items) || !items.length) return '—';
   return items.map((it) => `${formatQty(it.quantity)} × ${it.product_name || it.product_id || ''}`).join(', ');
 }
+// For sorting (YYYY-MM-DD)
 function ymd(dateIso) {
   if (!dateIso) return '';
   const d = new Date(dateIso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
+
+// For display (DD-Mon)
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  // Replace space with hyphen: "01-Sept"
+  return d
+    .toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+    .replace(' ', '-');
+}
+
 
 export default function CompletedDeliveriesPage() {
   const navigate = useNavigate();
@@ -485,7 +501,7 @@ export default function CompletedDeliveriesPage() {
                           </td>
                           <td className="px-3 py-2 text-sm">{row.removalist_name || '—'}</td>
                           <td className="px-3 py-2 text-sm text-center"><PaymentBadge outstanding={row.outstanding_balance} /></td>
-                          <td className="px-3 py-2 text-sm">{ymd(row.delivery_date) || '—'}</td>
+                          <td className="px-3 py-2 text-sm">{formatDate(row.delivery_date) || '—'}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>
                           <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_charged)}</td>
                           <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_quoted)}</td>

@@ -26,9 +26,7 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
   // Close on outside click / ESC; reposition on scroll/resize
   useEffect(() => {
     const onDoc = (e) => {
-      // If the click is inside the dropdown menu, ignore
       if (menuRef.current && menuRef.current.contains(e.target)) return;
-      // Otherwise, close if it's outside the anchor
       if (anchorRef.current && !anchorRef.current.contains(e.target)) setOpen(false);
     };
     const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
@@ -49,7 +47,6 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
     };
   }, []);
 
-  // Position menu when opening
   useEffect(() => {
     if (open && anchorRef.current) {
       const r = anchorRef.current.getBoundingClientRect();
@@ -60,7 +57,7 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
   const filtered = useMemo(() => {
     if (!Array.isArray(products)) return [];
     const t = term.trim().toLowerCase();
-    if (!t) return products.slice(0, 50); // first page
+    if (!t) return products.slice(0, 50);
     const keywords = t.split(' ').filter(Boolean);
     return products.filter((p) => {
       const txt = `${p.sku} ${p.name} ${p.brand}`.toLowerCase();
@@ -74,7 +71,6 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
 
   return (
     <>
-      {/* Anchor in the table cell */}
       <div ref={anchorRef} className="flex items-center gap-2 border rounded px-2 py-1 bg-white cursor-text"
            onClick={() => setOpen(true)}>
         <input
@@ -96,7 +92,6 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
         ) : null}
       </div>
 
-      {/* Menu portaled to body so it can overflow outside the table */}
       {open && createPortal(
         <div
           ref={menuRef}
@@ -113,7 +108,7 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
             <div
               key={p.sku}
               className="px-2 py-1 text-sm hover:bg-gray-100 cursor-pointer"
-              onClick={() => { onChange(p.sku); setOpen(false); setTerm(''); }}onMouseDown={(e) => {
+              onClick={() => { onChange(p.sku); setOpen(false); setTerm(''); }} onMouseDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onChange(p.sku);
@@ -449,7 +444,6 @@ export default function WorkorderDetailPage() {
                   <th className="px-4 py-3 w-20">Condition</th>
                   <th className="px-4 py-3 w-40">Tech Assigned (required)</th>
                   <th className="px-4 py-3 w-48">Status</th>
-                  <th className="px-4 py-3 w-28">Workshop Duration</th>
                   <th className="px-4 py-3 w-24">Actions</th>
                 </tr>
               </thead>
@@ -491,9 +485,6 @@ export default function WorkorderDetailPage() {
                       </select>
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {it.wokrshop_duration != null ? `${Number(it.wokrshop_duration)} hours` : (it.status === 'In Workshop' ? '—' : '0 hours')}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
                       <button
                         onClick={() => {
                           setToDelete((arr) => arr.includes(it.workorder_items_id)
@@ -510,7 +501,7 @@ export default function WorkorderDetailPage() {
                 ))}
 
                 {/* Pending new rows */}
-                {pendingNewItems.map((row, i) => {
+                {pendingNewItems.map((row) => {
                   const selected = products.find((p) => p.sku === row.product_id);
                   return (
                     <tr key={row.tempId} className="bg-white">
@@ -565,7 +556,6 @@ export default function WorkorderDetailPage() {
                       </td>
 
                       <td className="px-4 py-3 text-sm text-gray-500">Not in Workshop</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">0 hours</td>
 
                       <td className="px-4 py-3 text-sm">
                         <button
@@ -580,7 +570,7 @@ export default function WorkorderDetailPage() {
                 })}
 
                 {!items.length && !pendingNewItems.length && (
-                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={8}>No items.</td></tr>
+                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={7}>No items.</td></tr>
                 )}
               </tbody>
             </table>
