@@ -116,6 +116,14 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid workorder status' });
       }
 
+      // For item aggregates:
+      // If listing Completed WOs, include only completed items.
+      // Otherwise include only non-completed items.
+      const itemStatusPredicate =
+        statusFilter === 'Completed'
+          ? `wi.status = 'Completed'`
+          : `wi.status <> 'Completed'`;
+
       let conditions = [];
       let params = [];
       let i = 1;
@@ -149,14 +157,14 @@ export default async function handler(req, res) {
           COALESCE(
             json_agg(
               json_build_object(
-                'product_id',   wi.product_id,
-                'product_name', COALESCE(p.name, wi.product_id),
-                'quantity',     wi.quantity,
+                'product_id',    wi.product_id,
+                'product_name',  COALESCE(p.name, wi.product_id),
+                'quantity',      wi.quantity,
                 'technician_id', wi.technician_id,
                 'technician_name', u.name,
                 'status',        wi.status
               )
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND ${itemStatusPredicate}),
             '[]'::json
           ) AS items,
 
@@ -164,21 +172,23 @@ export default async function handler(req, res) {
             string_agg(
               (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
               ', ' ORDER BY wi.workorder_items_id
-            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
+            ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND ${itemStatusPredicate}),
             '—'
           ) AS items_text,
 
           COALESCE(
             json_agg(DISTINCT jsonb_build_object(
-              'id', wi.technician_id,
+              'id',   wi.technician_id,
               'name', u.name
-            )) FILTER (WHERE wi.technician_id IS NOT NULL AND wi.status NOT IN ('Completed','Canceled')),
+            )) FILTER (WHERE wi.technician_id IS NOT NULL AND ${itemStatusPredicate}),
             '[]'::json
           ) AS technicians
 
         FROM workorder wo
         JOIN customers c ON wo.customer_id = c.id
-        LEFT JOIN workorder_items wi ON wi.workorder_id = wo.workorder_id AND wi.status <> 'Canceled'
+        LEFT JOIN workorder_items wi
+          ON wi.workorder_id = wo.workorder_id
+         AND wi.status <> 'Canceled'
         LEFT JOIN product p ON p.sku = wi.product_id
         LEFT JOIN users u ON u.id = wi.technician_id AND u.access = 'technician'
       `;
