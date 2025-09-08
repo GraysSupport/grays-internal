@@ -41,6 +41,7 @@ export default function CreateWorkorderPage() {
     notes: '',
     status: 'Work Ordered',
     outstanding_balance: '',
+    important: false, // <-- NEW: important flag
     items: [
       { product_id: '', quantity: '', condition: '', technician_id: '', status: 'Not in Workshop' }
     ]
@@ -135,10 +136,25 @@ export default function CreateWorkorderPage() {
     return customers.filter((c) => `${c.id} ${c.name}`.toLowerCase().includes(q)).slice(0, 50);
   }, [customers, customerInput]);
 
+  // Fast lookup of product by SKU for display
+  const productBySku = useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set(String(p.sku), p));
+    return m;
+  }, [products]);
+
+  // --- UPDATED: Product search logic similar to Products page ---
   const productListForRow = (idx) => {
-    const q = (productSearch[idx] || '').toLowerCase();
-    return products.filter((p) => `${p.sku} ${p.name}`.toLowerCase().includes(q)).slice(0, 50);
+    const q = (productSearch[idx] || '').trim().toLowerCase();
+    const keywords = q.split(' ').filter(Boolean);
+    return products
+      .filter((p) => {
+        const productText = `${p.sku} ${p.name} ${p.brand || ''}`.toLowerCase();
+        return keywords.every((kw) => productText.includes(kw));
+      })
+      .slice(0, 50);
   };
+
   const techListForRow = (idx) => {
     const q = (techSearch[idx] || '').toLowerCase();
     return technicians.filter((t) => `${t.id} ${t.name}`.toLowerCase().includes(q)).slice(0, 50);
@@ -173,13 +189,28 @@ export default function CreateWorkorderPage() {
     }
     const toastId = toast.loading('Creating workorder...');
     try {
-      const payload = {
-        ...form,
-        items: form.items.map((it) => ({
+      // --- NEW: drop completely empty item rows before mapping ---
+      const cleanedItems = form.items
+        .map((it) => ({
+          ...it,
+          quantity: it.quantity === '' ? null : Number(it.quantity),
+        }))
+        .filter((it) => {
+          const hasAny =
+            (it.product_id && String(it.product_id).trim() !== '') ||
+            it.quantity !== null ||
+            (it.condition && String(it.condition).trim() !== '') ||
+            (it.technician_id && String(it.technician_id).trim() !== '');
+          return hasAny;
+        })
+        .map((it) => ({
           ...it,
           status: it.status && String(it.status).trim() ? it.status : 'Not in Workshop',
-          quantity: it.quantity === '' ? null : Number(it.quantity),
-        })),
+        }));
+
+      const payload = {
+        ...form,
+        items: cleanedItems,
         delivery_charged: form.delivery_charged === '' ? null : Number(form.delivery_charged),
         outstanding_balance: Number(form.outstanding_balance),
       };
@@ -229,7 +260,18 @@ export default function CreateWorkorderPage() {
 
       <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl">
-          <h2 className="text-xl font-bold mb-4 text-center">New Workorder</h2>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xl font-bold text-center flex-1">New Workorder</h2>
+            {/* NEW: Important toggle button */}
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, important: !f.important }))}
+              className={`${form.important ? 'bg-yellow-500 text-white' : 'bg-gray-200 text-gray-700'} px-3 py-1 rounded ml-2`}
+              title={form.important ? 'Marked as Important' : 'Mark as Important'}
+            >
+              {form.important ? '★ Important' : '☆ Mark Important'}
+            </button>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Responsive Two-Column Layout */}
@@ -380,104 +422,115 @@ export default function CreateWorkorderPage() {
 
             {/* ITEMS SECTION */}
             <div>
-              <h3 className="font-semibold mb-2">Items</h3>
-              {form.items.map((item, index) => (
-                <div key={index} className="grid grid-cols-5 gap-2 mb-2">
-                  {/* Product */}
-                  <div className="relative col-span-2">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold mb-2">Items</h3>
+              </div>
+
+              {form.items.map((item, index) => {
+                const selectedProduct = item.product_id ? productBySku.get(String(item.product_id)) : null;
+                const selectedDisplay = selectedProduct
+                  ? `${selectedProduct.sku} — ${selectedProduct.name}`
+                  : (item.product_id ? String(item.product_id) : '');
+
+                return (
+                  <div key={index} className="grid grid-cols-5 gap-2 mb-2">
+                    {/* Product */}
+                    <div className="relative col-span-2">
+                      <input
+                        type="text"
+                        className="border p-2 rounded w-full"
+                        placeholder="Search product..."
+                        value={
+                          openProductDropdownIdx === index
+                            ? (productSearch[index] ?? '')
+                            : selectedDisplay
+                        }
+                        onFocus={() => { setOpenProductDropdownIdx(index); setProductSearch((s) => ({ ...s, [index]: '' })); }}
+                        onChange={(e) => setProductSearch((s) => ({ ...s, [index]: e.target.value }))}
+                      />
+                      {openProductDropdownIdx === index && (
+                        <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
+                          {productListForRow(index).map((p) => (
+                            <div
+                              key={p.sku}
+                              className="cursor-pointer px-2 py-1 hover:bg-gray-100"
+                              onMouseDown={() => {
+                                updateItem(index, 'product_id', p.sku);
+                                setOpenProductDropdownIdx(null);
+                                setProductSearch((s) => ({ ...s, [index]: '' }));
+                              }}
+                            >
+                              {p.sku} — {p.name} {p.brand ? `(${p.brand})` : ''}
+                            </div>
+                          ))}
+                          {!productListForRow(index).length && (
+                            <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Qty */}
                     <input
-                      type="text"
-                      className="border p-2 rounded w-full"
-                      placeholder="Search product..."
-                      value={
-                        openProductDropdownIdx === index
-                          ? (productSearch[index] ?? '')
-                          : (item.product_id ? String(item.product_id) : '')
-                      }
-                      onFocus={() => { setOpenProductDropdownIdx(index); setProductSearch((s) => ({ ...s, [index]: '' })); }}
-                      onChange={(e) => setProductSearch((s) => ({ ...s, [index]: e.target.value }))}
+                      type="number"
+                      step="1"
+                      placeholder="Qty"
+                      className="border p-2 rounded"
+                      value={item.quantity}
+                      onChange={(e) => updateItem(index, 'quantity', e.target.value)}
                     />
-                    {openProductDropdownIdx === index && (
-                      <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
-                        {productListForRow(index).map((p) => (
-                          <div
-                            key={p.sku}
-                            className="cursor-pointer px-2 py-1 hover:bg-gray-100"
-                            onMouseDown={() => {
-                              updateItem(index, 'product_id', p.sku);
-                              setOpenProductDropdownIdx(null);
-                            }}
-                          >
-                            {p.sku} — {p.name}
-                          </div>
-                        ))}
-                        {!productListForRow(index).length && (
-                          <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
-                        )}
-                      </div>
-                    )}
+
+                    {/* Condition dropdown */}
+                    <select
+                      className="border p-2 rounded"
+                      value={item.condition}
+                      onChange={(e) => updateItem(index, 'condition', e.target.value)}
+                    >
+                      <option value="" disabled>Select Condition</option>
+                      <option value="New">New</option>
+                      <option value="Reco">Reco</option>
+                      <option value="CS">CS</option>
+                      <option value="AT">AT</option>
+                      <option value="CCG">CCG</option>
+                    </select>
+
+                    {/* Technician */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        className="border p-2 rounded w-full"
+                        placeholder="Search technician..."
+                        value={
+                          openTechDropdownIdx === index
+                            ? (techSearch[index] ?? '')
+                            : (item.technician_id ? String(item.technician_id) : '')
+                        }
+                        onFocus={() => { setOpenTechDropdownIdx(index); setTechSearch((s) => ({ ...s, [index]: '' })); }}
+                        onChange={(e) => setTechSearch((s) => ({ ...s, [index]: e.target.value }))}
+                      />
+                      {openTechDropdownIdx === index && (
+                        <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
+                          {techListForRow(index).map((t) => (
+                            <div
+                              key={t.id}
+                              className="cursor-pointer px-2 py-1 hover:bg-gray-100"
+                              onMouseDown={() => {
+                                updateItem(index, 'technician_id', t.id);
+                                setOpenTechDropdownIdx(null);
+                              }}
+                            >
+                              {t.id} — {t.name}
+                            </div>
+                          ))}
+                          {!techListForRow(index).length && (
+                            <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-
-                  {/* Qty */}
-                  <input
-                    type="number"
-                    step="1"
-                    placeholder="Qty"
-                    className="border p-2 rounded"
-                    value={item.quantity}
-                    onChange={(e) => updateItem(index, 'quantity', e.target.value)}
-                  />
-
-                  {/* Condition dropdown */}
-                  <select
-                    className="border p-2 rounded"
-                    value={item.condition}
-                    onChange={(e) => updateItem(index, 'condition', e.target.value)}
-                  >
-                    <option value="" disabled>Select Condition</option>
-                    <option value="New">New</option>
-                    <option value="Reco">Reco</option>
-                    <option value="CS">CS</option>
-                    <option value="AT">AT</option>
-                    <option value="CCG">CCG</option>
-                  </select>
-
-                  {/* Technician */}
-                  <div className="relative">
-                    <input
-                      type="text"
-                      className="border p-2 rounded w-full"
-                      placeholder="Search technician..."
-                      value={
-                        openTechDropdownIdx === index
-                          ? (techSearch[index] ?? '')
-                          : (item.technician_id ? String(item.technician_id) : '')
-                      }
-                      onFocus={() => { setOpenTechDropdownIdx(index); setTechSearch((s) => ({ ...s, [index]: '' })); }}
-                      onChange={(e) => setTechSearch((s) => ({ ...s, [index]: e.target.value }))}
-                    />
-                    {openTechDropdownIdx === index && (
-                      <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
-                        {techListForRow(index).map((t) => (
-                          <div
-                            key={t.id}
-                            className="cursor-pointer px-2 py-1 hover:bg-gray-100"
-                            onMouseDown={() => {
-                              updateItem(index, 'technician_id', t.id);
-                              setOpenTechDropdownIdx(null);
-                            }}
-                          >
-                            {t.id} — {t.name}
-                          </div>
-                        ))}
-                        {!techListForRow(index).length && (
-                          <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               <button
                 type="button"
                 className="text-blue-600 mt-1"
