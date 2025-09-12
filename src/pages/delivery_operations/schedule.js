@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import DeliveryTabs from '../../components/DeliveryTabs';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 
@@ -81,8 +82,6 @@ export default function DeliverySchedulePage() {
   const [search, setSearch] = useState('');
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
-  // ⬇️ Sidebar toggle matches To-Be-Booked: collapsed by default
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const currentUserId = useMemo(() => {
     try {
@@ -143,7 +142,7 @@ export default function DeliverySchedulePage() {
           else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
           else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
-          const outstanding =
+        const outstanding =
             d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
@@ -373,7 +372,6 @@ export default function DeliverySchedulePage() {
     );
   };
 
-
   const DateCell = ({ row }) => {
     const [val, setVal] = useState(() => ymd(row.delivery_date) === 'Unscheduled' ? '' : ymd(row.delivery_date));
     useEffect(() => { setVal(ymd(row.delivery_date) === 'Unscheduled' ? '' : ymd(row.delivery_date)); }, [row.delivery_date]);
@@ -591,78 +589,15 @@ export default function DeliverySchedulePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       <header className="border-b bg-white">
-        <div className="py-4 px-4 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen((s) => !s)}
-            className="rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-          >
-            {/* Hamburger icon */}
-            <div className="space-y-1">
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-            </div>
-          </button>
-          <h1 className="text-2xl font-semibold tracking-tight flex-1 text-center">
-            Delivery Operations
-          </h1>
-          <div className="w-[40px]" />
+        <div className="py-4 px-4 flex items-center justify-center">
+          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4">
-        {/* Sidebar (collapsible) */}
-        {sidebarOpen && (
-          <aside className="col-span-12 sm:col-span-3 lg:col-span-2">
-            <div className="sticky top-6 rounded-xl border bg-white p-4">
-              <div className="mb-4 font-semibold">Current</div>
-              <nav className="space-y-1">
-                <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Current Operations
-                </Link>
-                <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  To Be Booked
-                </Link>
-                <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">
-                  Delivery Schedule
-                </span>
-                <Link
-                  to="/delivery_operations/current-collections"
-                  className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50"
-                >
-                  Current Collections
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <div className="mb-2 font-semibold">Completed</div>
-              <nav className="space-y-1">
-                <Link to="/delivery_operations/completed-operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Operations Completed
-                </Link>
-                <Link to="/delivery_operations/completed-deliveries" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Deliveries Completed
-                </Link>
-                <Link
-                  to="/delivery_operations/completed-collections"
-                  className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50"
-                >
-                  Collections Completed
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
-                Exit
-              </Link>
-            </div>
-          </aside>
-        )}
-
-        {/* Main */}
-        <main className={sidebarOpen ? 'col-span-12 sm:col-span-9 lg:col-span-10' : 'col-span-12'}>
+      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
+        <main className="col-span-12">
           <div className="rounded-xl border bg-white">
             <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
               <div className="w-full sm:max-w-xs">
@@ -694,6 +629,8 @@ export default function DeliverySchedulePage() {
           </div>
         </main>
       </div>
+
+      <DeliveryTabs />
     </div>
   );
 }
