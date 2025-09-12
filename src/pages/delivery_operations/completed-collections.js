@@ -1,8 +1,7 @@
-// pages/delivery_operations/completed-collections.js
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
+import DeliveryTabs from '../../components/DeliveryTabs';
 
 const PAGE_SIZE = 30; // tweak as you like
 
@@ -69,36 +68,15 @@ export default function CompletedCollectionsPage() {
   }, [totalPages, page]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       <header className="border-b bg-white">
         <div className="py-4 px-4">
           <h1 className="text-2xl font-semibold tracking-tight text-center">Delivery Operations</h1>
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4">
-        <aside className="col-span-12 sm:col-span-3 lg:col-span-2">
-          <div className="sticky top-6 rounded-xl border bg-white p-4">
-            <div className="mb-4 font-semibold">Current</div>
-            <nav className="space-y-1">
-              <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Operations</Link>
-              <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">To Be Booked</Link>
-              <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Delivery Schedule</Link>
-              <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Collections</Link>
-            </nav>
-            <div className="my-4 h-px bg-gray-200" />
-            <div className="mb-2 font-semibold">Completed</div>
-            <nav className="space-y-1">
-              <Link to="/delivery_operations/completed-operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Operations Completed</Link>
-              <Link to="/delivery_operations/completed-deliveries" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Deliveries Completed</Link>
-              <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">Completed Collections</span>
-            </nav>
-            <div className="my-4 h-px bg-gray-200" />
-            <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Exit</Link>
-          </div>
-        </aside>
-
-        <main className="col-span-12 sm:col-span-9 lg:col-span-10">
+      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
+        <main className="col-span-12">
           <div className="rounded-xl border bg-white">
             <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
               <div className="w-full sm:max-w-xs">
@@ -204,6 +182,8 @@ export default function CompletedCollectionsPage() {
           />
         </main>
       </div>
+
+      <DeliveryTabs />
     </div>
   );
 }

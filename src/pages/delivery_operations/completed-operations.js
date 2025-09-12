@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import DeliveryTabs from '../../components/DeliveryTabs';
 
 const PAGE_SIZE = 20;
 
@@ -86,40 +87,18 @@ export default function CompletedOperationsPage() {
   }, [totalPages, page]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       <header className="border-b bg-white">
         <div className="py-4 px-4">
           <h1 className="text-2xl font-semibold tracking-tight text-center">
-            Operations Completed
+            Delivery Operations
           </h1>
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4">
-        {/* Sidebar (reuse your existing) */}
-        <aside className="col-span-12 sm:col-span-3 lg:col-span-2">
-          <div className="sticky top-6 rounded-xl border bg-white p-4">
-            <div className="mb-4 font-semibold">Current</div>
-            <nav className="space-y-1">
-              <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Operations</Link>
-              <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">To Be Booked</Link>
-              <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Delivery Schedule</Link>
-              <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Current Collections</Link>
-            </nav>
-            <div className="my-4 h-px bg-gray-200" />
-            <div className="mb-2 font-semibold">Completed</div>
-            <nav className="space-y-1">
-              <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">Operations Completed</span>
-              <Link to="/delivery_operations/completed-deliveries" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Deliveries Completed</Link>
-              <Link to="/delivery_operations/completed-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">Collections Completed</Link>
-            </nav>
-            <div className="my-4 h-px bg-gray-200" />
-            <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Exit</Link>
-          </div>
-        </aside>
-
+      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
         {/* Main */}
-        <main className="col-span-12 sm:col-span-9 lg:col-span-10">
+        <main className="col-span-12">
           <div className="rounded-xl border bg-white">
             <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
               <div className="w-full sm:max-w-xs">
@@ -135,7 +114,7 @@ export default function CompletedOperationsPage() {
                 <h2 className="text-lg font-semibold">Operations Completed</h2>
               </div>
               <div className="sm:hidden">
-                <h2 className="text-lg font-semibold">Operations Completed</h2>
+                <h2 className="text-lg font-semibold text-center">Operations Completed</h2>
               </div>
               <div />
             </div>
@@ -171,7 +150,11 @@ export default function CompletedOperationsPage() {
                     const itemsStr = formatItems(w.items);
                     const hasDue = w.outstanding_balance != null && Number(w.outstanding_balance) > 0;
                     return (
-                      <tr key={w.workorder_id} className="cursor-pointer align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100" onClick={() => navigate(`/delivery_operations/workorder/${w.workorder_id}`)}>
+                      <tr
+                        key={w.workorder_id}
+                        className="cursor-pointer align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
+                        onClick={() => navigate(`/delivery_operations/workorder/${w.workorder_id}`)}
+                      >
                         <td className="px-4 py-3 text-sm font-medium w-20">{w.invoice_id ?? '—'}</td>
                         <td className="px-4 py-3 text-sm w-28">{formatDate(w.date_created)}</td>
                         <td className="px-4 py-3 text-sm w-36">{w.customer_name ?? '—'}</td>
@@ -212,6 +195,8 @@ export default function CompletedOperationsPage() {
           </div>
         </main>
       </div>
+
+      <DeliveryTabs />
     </div>
   );
 }

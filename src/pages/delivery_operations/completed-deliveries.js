@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import DeliveryTabs from '../../components/DeliveryTabs';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 const PAGE_SIZE = 50;
@@ -60,7 +61,6 @@ function formatDate(iso) {
     .replace(' ', '-');
 }
 
-
 export default function CompletedDeliveriesPage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
@@ -69,7 +69,6 @@ export default function CompletedDeliveriesPage() {
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState('');
   const [savingIds, setSavingIds] = useState(new Set());
-  const [sidebarOpen, setSidebarOpen] = useState(false); // collapsed by default
   const [page, setPage] = useState(1);
 
   // current user id (2-char)
@@ -357,72 +356,17 @@ export default function CompletedDeliveriesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       {/* Header */}
       <header className="border-b bg-white">
-        <div className="py-4 px-4 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen((s) => !s)}
-            className="rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-          >
-            <div className="space-y-1">
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-            </div>
-          </button>
-          <h1 className="text-2xl font-semibold tracking-tight flex-1 text-center">
-            Delivery Operations
-          </h1>
-          <div className="w-[40px]" />
+        <div className="py-4 px-4 flex items-center justify-center">
+          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4">
-        {/* Sidebar */}
-        {sidebarOpen && (
-          <aside className="col-span-12 sm:col-span-3 lg:col-span-2">
-            <div className="sticky top-6 rounded-xl border bg-white p-4">
-              <div className="mb-4 font-semibold">Current</div>
-              <nav className="space-y-1">
-                <Link to="/delivery_operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Current Operations
-                </Link>
-                <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  To Be Booked
-                </Link>
-                <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Delivery Schedule
-                </Link>
-                <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Current Collections
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <div className="mb-2 font-semibold">Completed</div>
-              <nav className="space-y-1">
-                <Link to="/delivery_operations/completed-operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Operations Completed
-                </Link>
-                <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">
-                  Deliveries Completed
-                </span>
-                <Link to="/delivery_operations/completed-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Completed Collections
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
-                Exit
-              </Link>
-            </div>
-          </aside>
-        )}
-
+      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
         {/* Main */}
-        <main className={sidebarOpen ? 'col-span-12 sm:col-span-9 lg:col-span-10' : 'col-span-12'}>
+        <main className="col-span-12">
           <div className="rounded-xl border bg-white">
             {/* Toolbar */}
             <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
@@ -520,6 +464,8 @@ export default function CompletedDeliveriesPage() {
           </div>
         </main>
       </div>
+
+      <DeliveryTabs />
     </div>
   );
 }

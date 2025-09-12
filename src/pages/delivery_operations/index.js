@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
+import DeliveryTabs from '../../components/DeliveryTabs';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -37,7 +38,6 @@ export default function ActiveWorkordersPage() {
   });
   const [technicians, setTechnicians] = useState([]);
   const [salespeople, setSalespeople] = useState([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const navigate = useNavigate();
 
@@ -141,23 +141,11 @@ export default function ActiveWorkordersPage() {
   }, [rows, search, filters]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       {/* Header */}
       <header className="border-b bg-white">
         <div className="py-4 px-4 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen((s) => !s)}
-            className="rounded-lg border px-3 py-2 hover:bg-gray-50"
-            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-          >
-            <div className="space-y-1">
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-              <span className="block h-0.5 w-5 bg-gray-700"></span>
-            </div>
-          </button>
-          <h1 className="text-2xl font-semibold tracking-tight flex-1 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Delivery Operations
           </h1>
           <button
@@ -170,49 +158,9 @@ export default function ActiveWorkordersPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4">
-        {/* Sidebar */}
-        {sidebarOpen && (
-          <aside className="col-span-12 sm:col-span-3 lg:col-span-2">
-            <div className="sticky top-6 rounded-xl border bg-white p-4">
-              <div className="mb-4 font-semibold">Current</div>
-              <nav className="space-y-1">
-                <span className="block rounded-md bg-gray-100 px-3 py-2 text-sm font-medium">
-                  Current Operations
-                </span>
-                <Link to="/delivery_operations/to-be-booked" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  To Be Booked
-                </Link>
-                <Link to="/delivery_operations/schedule" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Delivery Schedule
-                </Link>
-                <Link to="/delivery_operations/current-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Current Collections
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <div className="mb-2 font-semibold">Completed</div>
-              <nav className="space-y-1">
-                <Link to="/delivery_operations/completed-operations" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Operations Completed
-                </Link>
-                <Link to="/delivery_operations/completed-deliveries" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Deliveries Completed
-                </Link>
-                <Link to="/delivery_operations/completed-collections" className="block rounded-md px-3 py-2 text-sm hover:bg-gray-50">
-                  Collections Completed
-                </Link>
-              </nav>
-              <div className="my-4 h-px bg-gray-200" />
-              <Link to="/dashboard" className="block rounded-md px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
-                Exit
-              </Link>
-            </div>
-          </aside>
-        )}
-
-        {/* Main */}
-        <main className={sidebarOpen ? 'col-span-12 sm:col-span-9 lg:col-span-10' : 'col-span-12'}>
+      {/* Main content */}
+      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
+        <main className="col-span-12">
           <div className="rounded-xl border bg-white">
             {/* Toolbar */}
             <div className="border-b p-4 flex flex-col lg:flex-row gap-3 items-center">
@@ -337,7 +285,7 @@ export default function ActiveWorkordersPage() {
                       // NEW: flag + overlay color
                       const isImportant = !!w.important_flag;
                       const overlayStyle = isImportant
-                        ? { boxShadow: 'inset 0 0 0 9999px rgba(251, 191, 36, 0.25)' } // amber-300 @ 25%
+                        ? { boxShadow: 'inset 0 0 0 9999px rgba(251, 191, 36, 0.25)' }
                         : undefined;
 
                       return (
@@ -345,7 +293,7 @@ export default function ActiveWorkordersPage() {
                           key={w.workorder_id}
                           className={`${rowCls} cursor-pointer align-top hover:bg-gray-100`}
                           onClick={() => navigate(`./workorder/${w.workorder_id}`)}
-                          style={overlayStyle} // ← apply the overlay
+                          style={overlayStyle}
                           title={isImportant ? 'Important work order' : undefined}
                         >
                           <td className="px-3 py-2 text-sm font-medium w-20">
@@ -388,6 +336,9 @@ export default function ActiveWorkordersPage() {
           </div>
         </main>
       </div>
+
+      {/* Reusable bottom tabs */}
+      <DeliveryTabs />
     </div>
   );
 }
