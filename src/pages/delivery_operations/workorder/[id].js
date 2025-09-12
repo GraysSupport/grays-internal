@@ -161,6 +161,9 @@ export default function WorkorderDetailPage() {
   // deleting existing rows
   const [toDelete, setToDelete] = useState([]); // [workorder_items_id]
 
+  // NEW: workorder status (for top-level WO)
+  const [woStatus, setWoStatus] = useState(''); // e.g., 'Work Ordered' | 'Completed' | etc.
+
   const userId = useMemo(() => {
     try {
       const u = JSON.parse(localStorage.getItem('user') || '{}');
@@ -217,6 +220,7 @@ export default function WorkorderDetailPage() {
         setOutstandingBalance(data.outstanding_balance ?? '');
         setActivity(data.activity || []);
         setImportant(!!data.important_flag);
+        setWoStatus(data.status || ''); // NEW: capture WO status from API
       } catch (e) {
         toast.error(e.message || 'Failed to load');
       } finally {
@@ -279,6 +283,8 @@ export default function WorkorderDetailPage() {
     const toastId = toast.loading('Saving changes...');
     try {
       const payload = {
+        // NEW: include top-level workorder status
+        status: woStatus || wo.status,
         notes,
         delivery_charged:
           deliveryCharged === '' ? null : Number(deliveryCharged),
@@ -324,6 +330,7 @@ export default function WorkorderDetailPage() {
       setOutstandingBalance(data.outstanding_balance ?? '');
       setActivity(data.activity || []);
       setImportant(!!data.important_flag);
+      setWoStatus(data.status || woStatus); // NEW: refresh local status
 
       // Clear queued adds/deletes
       setPendingNewItems([]);
@@ -607,6 +614,7 @@ export default function WorkorderDetailPage() {
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Notes"
             />
+
             <div className="mt-4">
               <div className="text-sm text-gray-600 mb-1">Delivery Charged ($)</div>
               <input
@@ -618,6 +626,7 @@ export default function WorkorderDetailPage() {
                 placeholder="Value"
               />
             </div>
+
             <div className="mt-3">
               <div className="text-sm text-gray-600 mb-1">Outstanding Balance ($)</div>
               <input
@@ -629,6 +638,26 @@ export default function WorkorderDetailPage() {
                 placeholder="Value"
               />
             </div>
+
+            {/* NEW: Workorder status change UI (only when current WO is Completed) */}
+            {String(woStatus) === 'Completed' && (
+              <div className="mt-4 border rounded p-3 bg-amber-50">
+                <div className="text-sm font-medium mb-2">Workorder Status</div>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="border rounded px-2 py-1"
+                    value={woStatus}
+                    onChange={(e) => setWoStatus(e.target.value)}
+                  >
+                    <option value="Completed">Completed</option>
+                    <option value="Work Ordered">Work Ordered</option>
+                  </select>
+                  <span className="text-xs text-gray-600">
+                    Change back to <span className="font-semibold">Work Ordered</span> if further work is needed.
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 flex gap-2">
               <button
