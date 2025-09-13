@@ -357,7 +357,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid workorder status' });
       }
 
-      // 1) Update WO-level fields (excluding top-level status here; applied later to override auto-complete)
+      // 1) Update WO-level fields (excluding top-level status here; applied later if it truly changes)
       const updates = [];
       const params = [];
       let p = 1;
@@ -521,7 +521,7 @@ export default async function handler(req, res) {
         );
       }
 
-      // 3) Auto-complete workorder & auto-create delivery if all items completed
+      // 3) Auto-complete workorder & (re)create delivery if all items completed
       const allItems = await client.query(
         `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
                 COUNT(*) AS total
@@ -539,9 +539,9 @@ export default async function handler(req, res) {
           [id]
         );
 
-        const notAlreadyCompleted = curStatus.rows.length && curStatus.rows[0].status !== 'Completed';
+        const isAlreadyCompleted = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
 
-        if (notAlreadyCompleted) {
+        if (!isAlreadyCompleted) {
           await client.query(
             `UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`,
             [id]
@@ -550,67 +550,47 @@ export default async function handler(req, res) {
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
         }
 
-        // Ensure a single delivery per WO: create if none exists
-        const exists = await client.query(
-          `SELECT delivery_id FROM delivery WHERE workorder_id = $1 LIMIT 1`,
-          [id]
+        // Always create a new delivery when (re)completing
+        const d = beforeWO; // previously loaded snapshot of WO
+        await client.query(
+          `
+          INSERT INTO delivery (
+            invoice_id, customer_id, delivery_suburb, delivery_state,
+            delivery_charged, delivery_quoted, removalist_id, delivery_date,
+            delivery_status, notes, workorder_id, date_created
+          ) VALUES (
+            $1,$2,$3,$4,$5,NULL,NULL,NULL,'To Be Booked',$6,$7,NOW()
+          )
+          `,
+          [
+            d.invoice_id,
+            d.customer_id,
+            d.delivery_suburb || null,
+            d.delivery_state,
+            d.delivery_charged == null ? null : Number(d.delivery_charged),
+            (d.notes ? `${d.notes}\n\n` : ''),
+            Number(id),
+          ]
         );
-        if (!exists.rows.length) {
-          const d = beforeWO; // previously loaded
-          await client.query(
-            `
-            INSERT INTO delivery (
-              invoice_id, customer_id, delivery_suburb, delivery_state,
-              delivery_charged, delivery_quoted, removalist_id, delivery_date,
-              delivery_status, notes, workorder_id, date_created
-            ) VALUES (
-              $1,$2,$3,$4,$5,NULL,NULL,NULL,'To Be Booked',$6,$7,NOW()
-            )
-            `,
-            [
-              d.invoice_id,
-              d.customer_id,
-              d.delivery_suburb || null,
-              d.delivery_state,
-              d.delivery_charged == null ? null : Number(d.delivery_charged),
-              (d.notes ? `${d.notes}\n\n` : ''),
-              Number(id),
-            ]
-          );
 
-          await logEvent(client, {
-            workorder_id: id,
-            event_type: 'DELIVERY_ORDER_CREATED',
-            user_id: actorId
-          });
-        }
+        await logEvent(client, {
+          workorder_id: id,
+          event_type: 'DELIVERY_ORDER_CREATED',
+          user_id: actorId
+        });
       }
 
-      // 4) Apply explicit WO status if provided (override auto-complete)
-      if (explicitStatusProvided) {
-        const cur = await client.query(
-          `SELECT status FROM workorder WHERE workorder_id = $1`,
-          [id]
+      // 4) Apply explicit WO status only if it represents a *change* from the DB value at request start
+      if (explicitStatusProvided && status !== beforeWO.status) {
+        await client.query(
+          `UPDATE workorder SET status = $1 WHERE workorder_id = $2`,
+          [status, id]
         );
-        const currentStatus = cur.rows[0]?.status;
-        if (currentStatus !== status) {
-          await client.query(
-            `UPDATE workorder SET status = $1 WHERE workorder_id = $2`,
-            [status, id]
-          );
-          await logEvent(client, {
-            workorder_id: id,
-            event_type: 'WORKORDER_STATUS_CHANGED',
-            user_id: actorId
-          });
-          if (currentStatus === 'Completed' && status === 'Work Ordered') {
-            await logEvent(client, {
-              workorder_id: id,
-              event_type: 'WORKORDER_REOPENED',
-              user_id: actorId
-            });
-          }
-        }
+        await logEvent(client, {
+          workorder_id: id,
+          event_type: 'WORKORDER_STATUS_CHANGED',
+          user_id: actorId
+        });
       }
 
       await client.query('COMMIT');
