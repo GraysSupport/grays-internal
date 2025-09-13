@@ -116,8 +116,6 @@ export default async function handler(req, res) {
       }
 
       // For item aggregates:
-      // If listing Completed WOs, include only completed items.
-      // Otherwise include only non-completed items.
       const itemStatusPredicate =
         statusFilter === 'Completed'
           ? `wi.status = 'Completed'`
@@ -349,6 +347,19 @@ export default async function handler(req, res) {
       }
       const beforeWO = currentWO.rows[0];
 
+      // Capture completion counts BEFORE updates
+      const countsBefore = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
+                COUNT(*) AS total
+         FROM workorder_items
+         WHERE workorder_id = $1
+           AND status <> 'Canceled'`,
+        [id]
+      );
+      const doneBefore = Number(countsBefore.rows[0].done);
+      const totalBefore = Number(countsBefore.rows[0].total);
+      const allCompletedBefore = totalBefore > 0 && doneBefore === totalBefore;
+
       // Validate WO-level status if provided
       const explicitStatusProvided = typeof status !== 'undefined';
       const validWOStatuses = ['Work Ordered', 'Completed'];
@@ -521,8 +532,8 @@ export default async function handler(req, res) {
         );
       }
 
-      // 3) Auto-complete workorder & (re)create delivery if all items completed
-      const allItems = await client.query(
+      // Capture completion counts AFTER updates
+      const countsAfter = await client.query(
         `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
                 COUNT(*) AS total
          FROM workorder_items
@@ -530,18 +541,24 @@ export default async function handler(req, res) {
            AND status <> 'Canceled'`,
         [id]
       );
-      const done = Number(allItems.rows[0].done);
-      const total = Number(allItems.rows[0].total);
+      const doneAfter = Number(countsAfter.rows[0].done);
+      const totalAfter = Number(countsAfter.rows[0].total);
+      const allCompletedAfter = totalAfter > 0 && doneAfter === totalAfter;
 
-      if (total > 0 && done === total) {
+      // Determine if this request CAUSED a transition to "all completed"
+      const transitionedToCompletedViaItems = !allCompletedBefore && allCompletedAfter;
+
+      // 3) Auto-complete workorder on transition; do not create delivery for edits that don't cause transition
+      if (allCompletedAfter) {
         const curStatus = await client.query(
           `SELECT status FROM workorder WHERE workorder_id = $1`,
           [id]
         );
+        const wasCompletedAtStart = beforeWO.status === 'Completed';
+        const isCompletedNow = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
 
-        const isAlreadyCompleted = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
-
-        if (!isAlreadyCompleted) {
+        // If not already completed, set to Completed now
+        if (!isCompletedNow) {
           await client.query(
             `UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`,
             [id]
@@ -550,37 +567,42 @@ export default async function handler(req, res) {
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
         }
 
-        // Always create a new delivery when (re)completing
-        const d = beforeWO; // previously loaded snapshot of WO
-        await client.query(
-          `
-          INSERT INTO delivery (
-            invoice_id, customer_id, delivery_suburb, delivery_state,
-            delivery_charged, delivery_quoted, removalist_id, delivery_date,
-            delivery_status, notes, workorder_id, date_created
-          ) VALUES (
-            $1,$2,$3,$4,$5,NULL,NULL,NULL,'To Be Booked',$6,$7,NOW()
-          )
-          `,
-          [
-            d.invoice_id,
-            d.customer_id,
-            d.delivery_suburb || null,
-            d.delivery_state,
-            d.delivery_charged == null ? null : Number(d.delivery_charged),
-            (d.notes ? `${d.notes}\n\n` : ''),
-            Number(id),
-          ]
-        );
+        // Create delivery ONLY if:
+        //   a) items transitioned to all-completed in this request, OR
+        //   b) caller explicitly changed WO status from not Completed -> Completed
+        const explicitCompletedNow = (explicitStatusProvided && beforeWO.status !== 'Completed' && status === 'Completed');
+        if (transitionedToCompletedViaItems || explicitCompletedNow) {
+          const d = beforeWO;
+          await client.query(
+            `
+            INSERT INTO delivery (
+              invoice_id, customer_id, delivery_suburb, delivery_state,
+              delivery_charged, delivery_quoted, removalist_id, delivery_date,
+              delivery_status, notes, workorder_id, date_created
+            ) VALUES (
+              $1,$2,$3,$4,$5,NULL,NULL,NULL,'To Be Booked',$6,$7,NOW()
+            )
+            `,
+            [
+              d.invoice_id,
+              d.customer_id,
+              d.delivery_suburb || null,
+              d.delivery_state,
+              d.delivery_charged == null ? null : Number(d.delivery_charged),
+              (d.notes ? `${d.notes}\n\n` : ''),
+              Number(id),
+            ]
+          );
 
-        await logEvent(client, {
-          workorder_id: id,
-          event_type: 'DELIVERY_ORDER_CREATED',
-          user_id: actorId
-        });
+          await logEvent(client, {
+            workorder_id: id,
+            event_type: 'DELIVERY_ORDER_CREATED',
+            user_id: actorId
+          });
+        }
       }
 
-      // 4) Apply explicit WO status only if it represents a *change* from the DB value at request start
+      // 4) Apply explicit WO status only if it represents a change from the DB value at request start
       if (explicitStatusProvided && status !== beforeWO.status) {
         await client.query(
           `UPDATE workorder SET status = $1 WHERE workorder_id = $2`,
