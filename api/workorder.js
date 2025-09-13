@@ -116,8 +116,6 @@ export default async function handler(req, res) {
       }
 
       // For item aggregates:
-      // If listing Completed WOs, include only completed items.
-      // Otherwise include only non-completed items.
       const itemStatusPredicate =
         statusFilter === 'Completed'
           ? `wi.status = 'Completed'`
@@ -156,12 +154,13 @@ export default async function handler(req, res) {
           COALESCE(
             json_agg(
               json_build_object(
-                'product_id',    wi.product_id,
-                'product_name',  COALESCE(p.name, wi.product_id),
-                'quantity',      wi.quantity,
-                'technician_id', wi.technician_id,
-                'technician_name', u.name,
-                'status',        wi.status
+                'product_id',       wi.product_id,
+                'product_name',     COALESCE(p.name, wi.product_id),
+                'quantity',         wi.quantity,
+                'condition',        wi.condition,   
+                'technician_id',    wi.technician_id,
+                'technician_name',  u.name,
+                'status',           wi.status
               )
             ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND ${itemStatusPredicate}),
             '[]'::json
@@ -169,7 +168,10 @@ export default async function handler(req, res) {
 
           COALESCE(
             string_agg(
-              (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
+              (
+                wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id) ||
+                ' (' || wi.condition::text || ')'     
+              )::text,
               ', ' ORDER BY wi.workorder_items_id
             ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND ${itemStatusPredicate}),
             '—'
@@ -328,7 +330,8 @@ export default async function handler(req, res) {
         important_flag,                 // NEW
         items,                          // [{ workorder_items_id, status, technician_id }]
         add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status? }]
-        delete_item_ids                 // NEW [id, id, ...]
+        delete_item_ids,                // NEW [id, id, ...]
+        status                          // NEW: optional top-level workorder status override
       } = body || {};
 
       await client.query('BEGIN');
@@ -344,7 +347,28 @@ export default async function handler(req, res) {
       }
       const beforeWO = currentWO.rows[0];
 
-      // 1) Update WO-level fields
+      // Capture completion counts BEFORE updates
+      const countsBefore = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
+                COUNT(*) AS total
+         FROM workorder_items
+         WHERE workorder_id = $1
+           AND status <> 'Canceled'`,
+        [id]
+      );
+      const doneBefore = Number(countsBefore.rows[0].done);
+      const totalBefore = Number(countsBefore.rows[0].total);
+      const allCompletedBefore = totalBefore > 0 && doneBefore === totalBefore;
+
+      // Validate WO-level status if provided
+      const explicitStatusProvided = typeof status !== 'undefined';
+      const validWOStatuses = ['Work Ordered', 'Completed'];
+      if (explicitStatusProvided && !validWOStatuses.includes(String(status))) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Invalid workorder status' });
+      }
+
+      // 1) Update WO-level fields (excluding top-level status here; applied later if it truly changes)
       const updates = [];
       const params = [];
       let p = 1;
@@ -411,7 +435,6 @@ export default async function handler(req, res) {
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
             } else if (status === 'Completed') {
-              // No duration calculation anymore. Just mark completed.
               fields.push(`status = $${i++}`);
               vals.push(status);
             } else if (status === 'Not in Workshop') {
@@ -509,8 +532,8 @@ export default async function handler(req, res) {
         );
       }
 
-      // 3) Auto-complete workorder & auto-create delivery if all items completed
-      const allItems = await client.query(
+      // Capture completion counts AFTER updates
+      const countsAfter = await client.query(
         `SELECT COUNT(*) FILTER (WHERE status = 'Completed') AS done,
                 COUNT(*) AS total
          FROM workorder_items
@@ -518,18 +541,24 @@ export default async function handler(req, res) {
            AND status <> 'Canceled'`,
         [id]
       );
-      const done = Number(allItems.rows[0].done);
-      const total = Number(allItems.rows[0].total);
+      const doneAfter = Number(countsAfter.rows[0].done);
+      const totalAfter = Number(countsAfter.rows[0].total);
+      const allCompletedAfter = totalAfter > 0 && doneAfter === totalAfter;
 
-      if (total > 0 && done === total) {
+      // Determine if this request CAUSED a transition to "all completed"
+      const transitionedToCompletedViaItems = !allCompletedBefore && allCompletedAfter;
+
+      // 3) Auto-complete workorder on transition; do not create delivery for edits that don't cause transition
+      if (allCompletedAfter) {
         const curStatus = await client.query(
           `SELECT status FROM workorder WHERE workorder_id = $1`,
           [id]
         );
+        const wasCompletedAtStart = beforeWO.status === 'Completed';
+        const isCompletedNow = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
 
-        const notAlreadyCompleted = curStatus.rows.length && curStatus.rows[0].status !== 'Completed';
-
-        if (notAlreadyCompleted) {
+        // If not already completed, set to Completed now
+        if (!isCompletedNow) {
           await client.query(
             `UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`,
             [id]
@@ -538,13 +567,12 @@ export default async function handler(req, res) {
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
         }
 
-        // Ensure a single delivery per WO: create if none exists
-        const exists = await client.query(
-          `SELECT delivery_id FROM delivery WHERE workorder_id = $1 LIMIT 1`,
-          [id]
-        );
-        if (!exists.rows.length) {
-          const d = beforeWO; // previously loaded
+        // Create delivery ONLY if:
+        //   a) items transitioned to all-completed in this request, OR
+        //   b) caller explicitly changed WO status from not Completed -> Completed
+        const explicitCompletedNow = (explicitStatusProvided && beforeWO.status !== 'Completed' && status === 'Completed');
+        if (transitionedToCompletedViaItems || explicitCompletedNow) {
+          const d = beforeWO;
           await client.query(
             `
             INSERT INTO delivery (
@@ -572,6 +600,19 @@ export default async function handler(req, res) {
             user_id: actorId
           });
         }
+      }
+
+      // 4) Apply explicit WO status only if it represents a change from the DB value at request start
+      if (explicitStatusProvided && status !== beforeWO.status) {
+        await client.query(
+          `UPDATE workorder SET status = $1 WHERE workorder_id = $2`,
+          [status, id]
+        );
+        await logEvent(client, {
+          workorder_id: id,
+          event_type: 'WORKORDER_STATUS_CHANGED',
+          user_id: actorId
+        });
       }
 
       await client.query('COMMIT');
