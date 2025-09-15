@@ -142,7 +142,7 @@ export default function DeliverySchedulePage() {
           else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
           else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
-        const outstanding =
+          const outstanding =
             d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
@@ -183,10 +183,40 @@ export default function DeliverySchedulePage() {
     );
   }, [rows, search]);
 
-  // Group by date (yyyy-mm-dd), then sort
+  // Helper to detect "Customer Collect" by resolved carrier name
+  const isCustomerCollect = useCallback((row) => {
+    const resolved =
+      (row.removalist_name && row.removalist_name.trim()) ||
+      (row.removalist_id != null
+        ? (removalists.find(r => Number(r.id) === Number(row.removalist_id))?.name || '')
+        : '');
+    return (resolved || '').trim().toLowerCase() === 'customer collect';
+  }, [removalists]);
+
+  // Split rows into Customer Collect vs non-CC
+  const { customerCollectRows, nonCustomerCollectRows } = useMemo(() => {
+    const cc = [];
+    const non = [];
+    for (const r of filtered) {
+      (isCustomerCollect(r) ? cc : non).push(r);
+    }
+    // sort CC by date asc, then customer, then suburb
+    cc.sort((a, b) => {
+      const ad = ymd(a.delivery_date);
+      const bd = ymd(b.delivery_date);
+      const dcmp = ad.localeCompare(bd);
+      if (dcmp !== 0) return dcmp;
+      const ncmp = String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
+      if (ncmp !== 0) return ncmp;
+      return String(a.delivery_suburb || '').localeCompare(String(b.delivery_suburb || ''));
+    });
+    return { customerCollectRows: cc, nonCustomerCollectRows: non };
+  }, [filtered, isCustomerCollect]);
+
+  // Group non-CC by date (yyyy-mm-dd), then sort
   const dates = useMemo(() => {
     const map = new Map();
-    for (const r of filtered) {
+    for (const r of nonCustomerCollectRows) {
       const key = ymd(r.delivery_date);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(r);
@@ -194,7 +224,7 @@ export default function DeliverySchedulePage() {
     return [...map.entries()]
       .sort(([a],[b]) => a.localeCompare(b))
       .map(([k, v]) => [k, v]);
-  }, [filtered]);
+  }, [nonCustomerCollectRows]);
 
   const saveDelivery = useCallback(async (deliveryId, patch) => {
     if (!deliveryId || !patch || typeof patch !== 'object') return;
@@ -587,6 +617,73 @@ export default function DeliverySchedulePage() {
       </section>
     );
   };
+  
+  // Special Customer Collect block (always on top)
+  const CustomerCollectBlock = ({ rowsCC }) => {
+    const sorted = rowsCC; // already sorted in useMemo above
+    return (
+      <section className="rounded-xl border bg-white">
+        <div className="p-3 text-center text-lg font-semibold">Customer Collect (All Dates)</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full table-fixed">
+            <thead className="bg-gray-100">
+              <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <th className="px-3 py-2 w-40">Name</th>
+                <th className="px-3 py-2 w-32">Suburb</th>
+                <th className="px-3 py-2 w-16">State</th>
+                <th className="px-3 py-2 w-[36rem]">Items</th>
+                <th className="px-3 py-2 w-64">Carrier</th>
+                <th className="px-3 py-2 w-16 text-center">Payment</th>
+                <th className="px-3 py-2 w-40">Delivery Date</th>
+                <th className="px-3 py-2 w-72">Notes</th>
+                <th className="px-3 py-2 w-20">Delivery Charged</th>
+                <th className="px-3 py-2 w-20">Delivery Quoted</th>
+                <th className="px-3 py-2 w-24">Margin</th>
+                <th className="px-3 py-2 w-56">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading && (
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+              )}
+              {!loading && sorted.length === 0 && (
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
+              )}
+              {!loading && sorted.map((row, idx) => {
+                const margin =
+                  (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
+                  (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted));
+                return (
+                  <tr
+                    key={row.delivery_id}
+                    className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} cursor-pointer hover:bg-gray-100 align-top`}
+                    tabIndex={0}
+                    onClick={() => goWorkorder(row.workorder_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
+                    }}
+                  >
+                    <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
+                    <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
+                    <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
+                    <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
+                    <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
+                    <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
+                    <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
@@ -619,9 +716,14 @@ export default function DeliverySchedulePage() {
             </div>
 
             <div className="space-y-8 p-4">
-              {dates.length === 0 && !loading && (
+              {customerCollectRows.length > 0 && (
+                <CustomerCollectBlock rowsCC={customerCollectRows} />
+              )}
+
+              {dates.length === 0 && !loading && customerCollectRows.length === 0 && (
                 <div className="text-center text-sm text-gray-600">No “Booked for Delivery” jobs.</div>
               )}
+
               {dates.map(([dateKey, rowsForDate]) => (
                 <DateBlock key={dateKey} dateKey={dateKey} rowsForDate={rowsForDate} />
               ))}

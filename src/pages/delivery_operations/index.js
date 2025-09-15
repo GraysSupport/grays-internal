@@ -187,6 +187,8 @@ export default function ActiveWorkordersPage() {
       { key: 'invoice', header: 'Invoice', get: (w) => w.invoice_id ?? '—' },
       { key: 'woDate', header: 'WO Date', get: (w) => formatDate(w.date_created) },
       { key: 'name', header: 'Name', get: (w) => w.customer_name ?? '—' },
+      { key: 'suburb', header: 'Suburb', get: (w) => w.delivery_suburb ?? '—' }, // ⬅ added
+      { key: 'state', header: 'State', get: (w) => w.delivery_state ?? '—' },     // ⬅ added
       { key: 'items', header: 'Items', get: (w) => formatItemsFromItems(w.items) },
       { key: 'sales', header: 'Sales', get: (w) => w.salesperson ?? '—' },
       { key: 'techs', header: 'Technicians', get: (w) => formatTechnicians(w.technicians) },
@@ -197,10 +199,13 @@ export default function ActiveWorkordersPage() {
     const cols = filtersActive ? compactCols : fullCols;
     const title = `Active Work Orders${filtersActive ? ' (Filtered)' : ''}`;
 
-    const rowsHtml = (filtered || []).map(w => {
-      const tds = cols.map(c => `<td>${escapeHtml(String(c.get(w) ?? ''))}</td>`).join('');
-      return `<tbody class="row-block"><tr>${tds}</tr></tbody>`;
-    }).join('');
+    const rowsHtml = (filtered || [])
+      .map(w => {
+        const tds = cols.map(c => `<td>${escapeHtml(String(c.get(w) ?? ''))}</td>`).join('');
+        const impClass = w.important_flag ? ' row-important' : '';
+        return `<tbody class="row-block${impClass}"><tr>${tds}</tr></tbody>`;
+      })
+      .join('');
 
     const thead = `<thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>`;
 
@@ -208,40 +213,43 @@ export default function ActiveWorkordersPage() {
     const meta = `${now.toLocaleString()}${filtersActive ? buildFilterSummary(filters, search) : ''}`;
 
     const html = `
-        <!doctype html>
-        <html>
-        <head>
-        <meta charset="utf-8" />
-        <title>${title}</title>
-        <style>
-          @media print {
-            @page { size: A4 landscape; margin: 5mm; }
-          }
-          body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
-          h1 { margin: 0 0 4px; font-size: 18px; }
-          .meta { margin: 0 0 12px; font-size: 11px; color: #555; }
-          table { border-collapse: collapse; width: 100%; }
-          th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; vertical-align: top; }
-          th { background: #f3f4f6; text-align: left; }
-          tr:nth-child(even) td { background: #fafafa; }
-          thead { display: table-header-group; }
-          tfoot { display: table-footer-group; }
-          tbody { break-inside: avoid-page; page-break-inside: avoid; }
-          tr, th, td { break-inside: avoid-page; page-break-inside: avoid; }
-          .footer { margin-top: 8px; font-size: 10px; color: #777; }
-        </style>
-        </head>
-        <body>
-          <h1>${title}</h1>
-          <div class="meta">Printed: ${escapeHtml(meta)}</div>
-          <table>
-              ${thead}
-              ${rowsHtml || `<tbody><tr><td colspan="${cols.length}">No active work orders.</td></tr></tbody>`}
-          </table>
-          <div class="footer">Generated from Delivery Operations &middot; ${window.location.origin}</div>
-          <script>window.onload = () => window.print();</script>
-        </body>
-        </html>`.trim();
+      <!doctype html>
+      <html>
+      <head>
+      <meta charset="utf-8" />
+      <title>${title}</title>
+      <style>
+        @media print {
+          @page { size: A4 landscape; margin: 5mm; }
+        }
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
+        h1 { margin: 0 0 4px; font-size: 18px; }
+        .meta { margin: 0 0 12px; font-size: 11px; color: #555; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; vertical-align: top; }
+        th { background: #f3f4f6; text-align: left; }
+        tr:nth-child(even) td { background: #fafafa; }
+        thead { display: table-header-group; }
+        tfoot { display: table-footer-group; }
+        tbody { break-inside: avoid-page; page-break-inside: avoid; }
+        tr, th, td { break-inside: avoid-page; page-break-inside: avoid; }
+        .footer { margin-top: 8px; font-size: 10px; color: #777; }
+
+        /* Highlight important rows in print */
+        tbody.row-important td { background: #eee !important; }
+      </style>
+      </head>
+      <body>
+        <h1>${title}</h1>
+        <div class="meta">Printed: ${escapeHtml(meta)}</div>
+        <table>
+            ${thead}
+            ${rowsHtml || `<tbody><tr><td colspan="${cols.length}">No active work orders.</td></tr></tbody>`}
+        </table>
+        <div class="footer">Generated from Delivery Operations &middot; ${window.location.origin}</div>
+        <script>window.onload = () => window.print();</script>
+      </body>
+      </html>`.trim();
 
     const win = window.open('', '_blank');
     if (!win) return;
