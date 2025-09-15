@@ -635,7 +635,7 @@ export default function DeliverySchedulePage() {
     );
   };
 
-  // Special Customer Collect block (always on top)
+  // Special Customer Collect block (now EDITABLE like others)
   const CustomerCollectBlock = ({ rowsCC }) => {
     const sorted = rowsCC; // already sorted in useMemo above
     return (
@@ -684,19 +684,20 @@ export default function DeliverySchedulePage() {
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
-                    <td className="px-3 py-2 text-sm">{row.removalist_name || '—'}</td>
-                    <td className="px-3 py-2 text-sm text-center">
-                      {Number(row.outstanding_balance || 0) > 0 ? `Outstanding: ${fmtMoney(row.outstanding_balance)}` : 'Paid'}
-                    </td>
-                    <td className="px-3 py-2 text-sm">{niceDate(ymd(row.delivery_date))}</td>
-                    <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words">{row.notes || '—'}</td>
-                    <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_charged)}</td>
-                    <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_quoted)}</td>
-                    <td className="px-3 py-2 text-sm">
-                      {fmtMoney((row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
-                               (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted)))}
-                    </td>
-                    <td className="px-3 py-2 text-sm">{row.delivery_status || '—'}</td>
+                    {/* EDITABLE carrier */}
+                    <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
+                    {/* EDITABLE payment */}
+                    <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
+                    {/* EDITABLE date */}
+                    <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
+                    {/* EDITABLE notes */}
+                    <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
+                    {/* EDITABLE money fields */}
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
+                    <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
+                    {/* EDITABLE status */}
+                    <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
                   </tr>
                 );
               })}
@@ -735,17 +736,31 @@ export default function DeliverySchedulePage() {
         const charged = r.delivery_charged == null ? null : Number(r.delivery_charged);
         const quoted = r.delivery_quoted == null ? null : Number(r.delivery_quoted);
         const margin = (charged || 0) - (quoted || 0);
+
+        // 👇 split items into lines
+        const itemsArray = (r.items_text || '—')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+
         return {
           id: r.delivery_id,
           name: r.customer_name || '—',
           suburb: r.delivery_suburb || '—',
           state: r.delivery_state || '—',
-          items: r.items_text || '—',
+          items: itemsArray,   // <=== array instead of string
+          carrier: r.removalist_name || '—',
+          payment: Number(r.outstanding_balance || 0) > 0 ? `Outstanding: ${fmtMoney(r.outstanding_balance)}` : 'Paid',
           date: niceDate(ymd(r.delivery_date)),
           notes: r.notes || '—',
+          charged: fmtMoney(charged),
+          quoted: fmtMoney(quoted),
+          margin: fmtMoney(margin),
+          status: r.delivery_status || '—',
         };
       });
   }, [filtered]);
+
 
   return (
     <>
@@ -756,12 +771,19 @@ export default function DeliverySchedulePage() {
           .no-print { display: none !important; }
           .print-only { display: block !important; }
           @page { margin: 12mm; }
+
           .print-title { font-size: 18px; margin-bottom: 10px; }
           .print-meta { font-size: 12px; margin-bottom: 8px; }
+
           .print-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
           .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; word-wrap: break-word; }
           .print-table thead th { background: #f3f4f6; }
-          .w-items { width: 36rem; }
+
+          /* column widths */
+          .col-name   { width: 80px; }
+          .col-suburb { width: 80px; }
+          .col-state  { width: 50px; }
+          .col-items  { width: 320px; } /* expanded */
         }
         .print-only { display: none; }
       `}</style>
@@ -816,12 +838,9 @@ export default function DeliverySchedulePage() {
         <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
           <main className="col-span-12">
             <div className="rounded-xl border bg-white">
-              <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
+              <div className="border-b p-4 grid gap-3 grid-cols-1 items-center">
                 <div className="hidden sm:flex justify-center">
-                  <h2 className="text-lg font-semibold">Delivery Schedule</h2>
-                </div>
-                <div className="sm:hidden">
-                  <h2 className="text-lg font-semibold text-center">Delivery Schedule</h2>
+                  <h1 className="text-lg font-semibold">Delivery Schedule</h1>
                 </div>
                 <div />
               </div>
@@ -858,10 +877,10 @@ export default function DeliverySchedulePage() {
         <table className="print-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Suburb</th>
-              <th>State</th>
-              <th>Items</th>
+              <th className='col-name'>Name</th>
+              <th className='col-suburb'>Suburb</th>
+              <th className='col-state'>State</th>
+              <th className='col-items'>Items</th>
               <th>Delivery Date</th>
               <th>Notes</th>
             </tr>
@@ -872,10 +891,14 @@ export default function DeliverySchedulePage() {
             ) : (
               printableRows.map(r => (
                 <tr key={r.id}>
-                  <td>{r.name}</td>
-                  <td>{r.suburb}</td>
-                  <td>{r.state}</td>
-                  <td style={{ whiteSpace: 'pre-wrap' }}>{r.items}</td>
+                  <td className='col-name'>{r.name}</td>
+                  <td className='col-suburb'>{r.suburb}</td>
+                  <td className='col-state'>{r.state}</td>
+                  <td className="col-items">
+                    {r.items.length === 0 ? '—' : r.items.map((it, idx) => (
+                      <div key={idx}>{it}</div>
+                    ))}
+                  </td>
                   <td>{r.date}</td>
                   <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
                 </tr>
