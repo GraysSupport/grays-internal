@@ -80,6 +80,8 @@ export default function DeliverySchedulePage() {
   const [rows, setRows] = useState([]);
   const [removalists, setRemovalists] = useState([]);
   const [search, setSearch] = useState('');
+  const [filterDate, setFilterDate] = useState('');            // NEW
+  const [filterRemovalist, setFilterRemovalist] = useState(''); // NEW
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
 
@@ -168,21 +170,6 @@ export default function DeliverySchedulePage() {
     return () => { mounted = false; };
   }, [navigate]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((d) =>
-      [
-        d.customer_name ?? '',
-        d.delivery_suburb ?? '',
-        d.delivery_state ?? '',
-        d.items_text ?? '',
-        d.invoice_id ?? '',
-        d.removalist_name ?? '',
-      ].join(' ').toLowerCase().includes(q)
-    );
-  }, [rows, search]);
-
   // Helper to detect "Customer Collect" by resolved carrier name
   const isCustomerCollect = useCallback((row) => {
     const resolved =
@@ -192,6 +179,36 @@ export default function DeliverySchedulePage() {
         : '');
     return (resolved || '').trim().toLowerCase() === 'customer collect';
   }, [removalists]);
+
+  // === COMBINED FILTERS (search + date + removalist)
+  const filtered = useMemo(() => {
+    let list = rows;
+
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((d) =>
+        [
+          d.customer_name ?? '',
+          d.delivery_suburb ?? '',
+          d.delivery_state ?? '',
+          d.items_text ?? '',
+          d.invoice_id ?? '',
+          d.removalist_name ?? '',
+        ].join(' ').toLowerCase().includes(q)
+      );
+    }
+
+    if (filterDate) {
+      list = list.filter(d => ymd(d.delivery_date) === filterDate);
+    }
+
+    if (filterRemovalist) {
+      const target = filterRemovalist.trim().toLowerCase();
+      list = list.filter(d => (d.removalist_name || '').trim().toLowerCase() === target);
+    }
+
+    return list;
+  }, [rows, search, filterDate, filterRemovalist]);
 
   // Split rows into Customer Collect vs non-CC
   const { customerCollectRows, nonCustomerCollectRows } = useMemo(() => {
@@ -351,7 +368,7 @@ export default function DeliverySchedulePage() {
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
 
-    // 🔁 Derive display name directly (no useMemo = no ESLint warning)
+    // Derive display name directly
     const displayName =
       (row.removalist_name && row.removalist_name.trim())
         ? row.removalist_name
@@ -537,7 +554,7 @@ export default function DeliverySchedulePage() {
     const sorted = [...rowsForDate].sort((a, b) => {
       const an = (a.removalist_name || '').localeCompare(b.removalist_name || '');
       if (an !== 0) return an;
-      return String(a.customer_name || '').localeCompare(b.customer_name || '');
+      return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
     });
 
     let lastCarrier = null;
@@ -617,7 +634,7 @@ export default function DeliverySchedulePage() {
       </section>
     );
   };
-  
+
   // Special Customer Collect block (always on top)
   const CustomerCollectBlock = ({ rowsCC }) => {
     const sorted = rowsCC; // already sorted in useMemo above
@@ -667,14 +684,19 @@ export default function DeliverySchedulePage() {
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
-                    <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
-                    <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
-                    <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
-                    <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
-                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
-                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
-                    <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
-                    <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm">{row.removalist_name || '—'}</td>
+                    <td className="px-3 py-2 text-sm text-center">
+                      {Number(row.outstanding_balance || 0) > 0 ? `Outstanding: ${fmtMoney(row.outstanding_balance)}` : 'Paid'}
+                    </td>
+                    <td className="px-3 py-2 text-sm">{niceDate(ymd(row.delivery_date))}</td>
+                    <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words">{row.notes || '—'}</td>
+                    <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_charged)}</td>
+                    <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_quoted)}</td>
+                    <td className="px-3 py-2 text-sm">
+                      {fmtMoney((row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
+                               (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted)))}
+                    </td>
+                    <td className="px-3 py-2 text-sm">{row.delivery_status || '—'}</td>
                   </tr>
                 );
               })}
@@ -685,54 +707,183 @@ export default function DeliverySchedulePage() {
     );
   };
 
+  // --- PRINT HANDLER ---
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Unique list of removalist names for filter
+  const removalistOptions = useMemo(() => {
+    const names = new Set(removalists.map(r => (r.name || '').trim()).filter(Boolean));
+    for (const r of rows) {
+      if (r.removalist_name) names.add(r.removalist_name.trim());
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [removalists, rows]);
+
+  // Prepare a flat, printable list (sorted by date, then carrier, then customer)
+  const printableRows = useMemo(() => {
+    return [...filtered]
+      .sort((a, b) => {
+        const d = ymd(a.delivery_date).localeCompare(ymd(b.delivery_date));
+        if (d !== 0) return d;
+        const c = (a.removalist_name || '').localeCompare(b.removalist_name || '');
+        if (c !== 0) return c;
+        return (a.customer_name || '').localeCompare(b.customer_name || '');
+      })
+      .map((r) => {
+        const charged = r.delivery_charged == null ? null : Number(r.delivery_charged);
+        const quoted = r.delivery_quoted == null ? null : Number(r.delivery_quoted);
+        const margin = (charged || 0) - (quoted || 0);
+        return {
+          id: r.delivery_id,
+          name: r.customer_name || '—',
+          suburb: r.delivery_suburb || '—',
+          state: r.delivery_state || '—',
+          items: r.items_text || '—',
+          date: niceDate(ymd(r.delivery_date)),
+          notes: r.notes || '—',
+        };
+      });
+  }, [filtered]);
+
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
-      <header className="border-b bg-white">
-        <div className="py-4 px-4 flex items-center justify-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
-        </div>
-      </header>
+    <>
+      {/* PRINT STYLES */}
+      <style>{`
+        @media print {
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+          @page { margin: 12mm; }
+          .print-title { font-size: 18px; margin-bottom: 10px; }
+          .print-meta { font-size: 12px; margin-bottom: 8px; }
+          .print-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+          .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; word-wrap: break-word; }
+          .print-table thead th { background: #f3f4f6; }
+          .w-items { width: 36rem; }
+        }
+        .print-only { display: none; }
+      `}</style>
 
-      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
-        <main className="col-span-12">
-          <div className="rounded-xl border bg-white">
-            <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
-              <div className="w-full sm:max-w-xs">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search deliveries, items, carriers…"
-                  className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
-                />
-              </div>
-              <div className="hidden sm:flex justify-center">
-                <h2 className="text-lg font-semibold">Delivery Schedule</h2>
-              </div>
-              <div className="sm:hidden">
-                <h2 className="text-lg font-semibold text-center">Delivery Schedule</h2>
-              </div>
-              <div />
-            </div>
+      {/* ===== SCREEN UI ===== */}
+      <div className="no-print min-h-screen bg-gray-50 text-gray-900 flex flex-col">
+        <header className="border-b bg-white">
+          <div className="py-4 px-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
 
-            <div className="space-y-8 p-4">
-              {customerCollectRows.length > 0 && (
-                <CustomerCollectBlock rowsCC={customerCollectRows} />
-              )}
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Search */}
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search deliveries, items, carriers…"
+                className="w-52 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+              />
 
-              {dates.length === 0 && !loading && customerCollectRows.length === 0 && (
-                <div className="text-center text-sm text-gray-600">No “Booked for Delivery” jobs.</div>
-              )}
+              {/* Filter by Date */}
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="rounded-lg border px-3 py-2"
+              />
 
-              {dates.map(([dateKey, rowsForDate]) => (
-                <DateBlock key={dateKey} dateKey={dateKey} rowsForDate={rowsForDate} />
-              ))}
+              {/* Filter by Removalist */}
+              <select
+                value={filterRemovalist}
+                onChange={(e) => setFilterRemovalist(e.target.value)}
+                className="rounded-lg border px-3 py-2"
+              >
+                <option value="">All Carriers</option>
+                {removalistOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              {/* Print Button */}
+              <button
+                onClick={handlePrint}
+                className="rounded-lg bg-gray-800 text-white px-4 py-2 hover:bg-gray-700"
+              >
+                Print
+              </button>
             </div>
           </div>
-        </main>
+        </header>
+
+        <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
+          <main className="col-span-12">
+            <div className="rounded-xl border bg-white">
+              <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
+                <div className="hidden sm:flex justify-center">
+                  <h2 className="text-lg font-semibold">Delivery Schedule</h2>
+                </div>
+                <div className="sm:hidden">
+                  <h2 className="text-lg font-semibold text-center">Delivery Schedule</h2>
+                </div>
+                <div />
+              </div>
+
+              <div className="space-y-8 p-4">
+                {customerCollectRows.length > 0 && (
+                  <CustomerCollectBlock rowsCC={customerCollectRows} />
+                )}
+
+                {dates.length === 0 && !loading && customerCollectRows.length === 0 && (
+                  <div className="text-center text-sm text-gray-600">No “Booked for Delivery” jobs.</div>
+                )}
+
+                {dates.map(([dateKey, rowsForDate]) => (
+                  <DateBlock key={dateKey} dateKey={dateKey} rowsForDate={rowsForDate} />
+                ))}
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <DeliveryTabs />
       </div>
 
-      <DeliveryTabs />
-    </div>
+      {/* ===== PRINT-ONLY FULL ROWS TABLE ===== */}
+      <div className="print-only">
+        <div className="print-title">Delivery Schedule</div>
+        <div className="print-meta">
+          {filterDate ? `Date filter: ${niceDate(filterDate)} · ` : ''}
+          {filterRemovalist ? `Carrier: ${filterRemovalist} · ` : ''}
+          Total: {printableRows.length}
+        </div>
+
+        <table className="print-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Suburb</th>
+              <th>State</th>
+              <th>Items</th>
+              <th>Delivery Date</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {printableRows.length === 0 ? (
+              <tr><td colSpan={12}>No deliveries</td></tr>
+            ) : (
+              printableRows.map(r => (
+                <tr key={r.id}>
+                  <td>{r.name}</td>
+                  <td>{r.suburb}</td>
+                  <td>{r.state}</td>
+                  <td style={{ whiteSpace: 'pre-wrap' }}>{r.items}</td>
+                  <td>{r.date}</td>
+                  <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
