@@ -106,19 +106,45 @@ export default function Dashboard() {
       <aside className="w-64 bg-white shadow-md hidden md:block">
         <div className="p-6 font-bold text-xl border-b">Grays Admin</div>
         <nav className="mt-4 flex flex-col space-y-2 px-4">
-          <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Dashboard</Link>
-          <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Account Settings</Link>
-          <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Products</Link>
-          <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Customers</Link>
-          <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Waitlist</Link>
-          {user?.access === 'superadmin' && (
-            <Link to="/delivery_operations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">Delivery Operations</Link>
+          {/* Always visible */}
+          <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+            Dashboard
+          </Link>
+          <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+            Account Settings
+          </Link>
+
+          {/* Not visible to technician */}
+          {user?.access !== 'technician' && (
+            <>
+              <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+                Products
+              </Link>
+              <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+                Customers
+              </Link>
+              <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+                Waitlist
+              </Link>
+            </>
           )}
+
+          {/* Delivery Ops: visible to everyone */}
+          <Link to="/delivery_operations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+            Delivery Operations
+          </Link>
+
+          {/* Only superadmin */}
           {user?.access === 'superadmin' && (
-            <Link to="/register" className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold">
+            <Link
+              to="/register"
+              className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold"
+            >
               Register New User
             </Link>
           )}
+
+          {/* Logout */}
           <button
             onClick={async () => {
               const u = JSON.parse(localStorage.getItem('user') || 'null');
@@ -147,6 +173,7 @@ export default function Dashboard() {
         </nav>
       </aside>
 
+
       {/* Main */}
       <div className="flex-1 flex flex-col">
         <header className="bg-white shadow-md p-4 flex justify-between items-center">
@@ -154,18 +181,22 @@ export default function Dashboard() {
         </header>
 
         <main className="flex-1 p-6 overflow-auto">
-          <div className="bg-white p-6 rounded shadow-md">
-            <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {analyticsCard('Total Products', totalProducts, '', () => navigate('/products'))}
-              {analyticsCard('In Stock', inStockCount, 'text-green-700', () => navigate('/products?inStock=true'))}
-              {analyticsCard('Out of Stock', outOfStockCount, 'text-red-700', () => navigate('/products?inStock=false'))}
-              {analyticsCard('Total Waitlist Entries', totalWaitlist, '', () => navigate('/waitlist'))}
-              {analyticsCard('Products Waitlisted', uniqueWaitlistProducts)}
-              {analyticsCard('Customers Waitlisted', uniqueWaitlistCustomers)}
-              {analyticsCard('Waitlist in Stock', waitlistWithStock, 'text-green-700', () => navigate('/waitlist?inStock=true'))}
+          {user?.access !== 'technician' && (
+            <>
+            <div className="bg-white p-6 rounded shadow-md">         
+              <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {analyticsCard('Total Products', totalProducts, '', () => navigate('/products'))}
+                {analyticsCard('In Stock', inStockCount, 'text-green-700', () => navigate('/products?inStock=true'))}
+                {analyticsCard('Out of Stock', outOfStockCount, 'text-red-700', () => navigate('/products?inStock=false'))}
+                {analyticsCard('Total Waitlist Entries', totalWaitlist, '', () => navigate('/waitlist'))}
+                {analyticsCard('Products Waitlisted', uniqueWaitlistProducts)}
+                {analyticsCard('Customers Waitlisted', uniqueWaitlistCustomers)}
+                {analyticsCard('Waitlist in Stock', waitlistWithStock, 'text-green-700', () => navigate('/waitlist?inStock=true'))}
+              </div>
             </div>
-          </div>
+          </>
+          )}
 
           <br />
 
