@@ -28,6 +28,30 @@ async function logEvent(client, {
   );
 }
 
+/** =========================
+ * INVENTORY HELPERS
+ * ========================== */
+
+/** Atomic stock adjust with row lock and no-negative guard */
+async function adjustProductStock(client, sku, delta) {
+  const r = await client.query(
+    `SELECT stock FROM product WHERE sku = $1 FOR UPDATE`,
+    [sku]
+  );
+  if (!r.rowCount) throw new Error(`Product not found: ${sku}`);
+
+  const current = Number(r.rows[0].stock ?? 0);
+  const next = current + Number(delta);
+
+  if (Number.isNaN(next)) throw new Error(`Invalid stock math for ${sku}`);
+  if (delta < 0 && next < 0) {
+    throw new Error(`Insufficient stock for ${sku}. Have ${current}, need ${-delta}.`);
+  }
+
+  await client.query(`UPDATE product SET stock = $1 WHERE sku = $2`, [next, sku]);
+  return { before: current, after: next };
+}
+
 export default async function handler(req, res) {
   const { method, query: { id }, body } = req;
   const client = await getClientWithTimezone();
@@ -287,6 +311,11 @@ export default async function handler(req, res) {
             ? item.status
             : 'Not in Workshop';
 
+          const qty = Number(item.quantity);
+
+          // INVENTORY: debit stock before inserting item
+          await adjustProductStock(client, item.product_id, -qty);
+
           await client.query(
             `
             INSERT INTO workorder_items (
@@ -296,7 +325,7 @@ export default async function handler(req, res) {
             [
               workorderId,
               item.product_id,
-              Number(item.quantity),
+              qty,
               item.condition,
               twoCharId(item.technician_id),
               itmStatus
@@ -401,7 +430,7 @@ export default async function handler(req, res) {
           if (!workorder_items_id) continue;
 
           const cur = await client.query(
-            `SELECT workorder_items_id, status, technician_id, in_workshop
+            `SELECT workorder_items_id, status, technician_id, in_workshop, product_id, quantity
                FROM workorder_items WHERE workorder_items_id = $1 AND workorder_id = $2`,
             [workorder_items_id, id]
           );
@@ -431,6 +460,17 @@ export default async function handler(req, res) {
           }
 
           if (status !== undefined && status !== before.status) {
+            // INVENTORY: status transition side-effects
+            // - active -> Canceled : credit stock
+            // - Canceled -> active : debit stock
+            if (status === 'Canceled' && before.status !== 'Canceled') {
+              const delta = Number(before.quantity);
+              await adjustProductStock(client, before.product_id, +delta);
+            } else if (status !== 'Canceled' && before.status === 'Canceled') {
+              const delta = -Number(before.quantity);
+              await adjustProductStock(client, before.product_id, delta);
+            }
+
             if (status === 'In Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = COALESCE(in_workshop, NOW())`);
               vals.push(status);
@@ -439,6 +479,9 @@ export default async function handler(req, res) {
               vals.push(status);
             } else if (status === 'Not in Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = NULL`);
+              vals.push(status);
+            } else if (status === 'Canceled') {
+              fields.push(`status = $${i++}`);
               vals.push(status);
             } else {
               fields.push(`status = $${i++}`);
@@ -478,6 +521,11 @@ export default async function handler(req, res) {
             ? item.status
             : 'Not in Workshop';
 
+          const qty = Number(item.quantity);
+
+          // INVENTORY: debit stock before insert
+          await adjustProductStock(client, item.product_id, -qty);
+
           const ins = await client.query(
             `
             INSERT INTO workorder_items (
@@ -488,7 +536,7 @@ export default async function handler(req, res) {
             [
               id,
               item.product_id,
-              Number(item.quantity),
+              qty,
               item.condition,
               twoCharId(item.technician_id),
               itmStatus
@@ -507,10 +555,13 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2c) Delete items -> mark as Canceled
+      // 2c) Delete items -> mark as Canceled (and restock if they weren't already canceled)
       if (Array.isArray(delete_item_ids) && delete_item_ids.length) {
         const { rows: existing } = await client.query(
-          `SELECT workorder_items_id FROM workorder_items WHERE workorder_id = $1 AND workorder_items_id = ANY($2::int[])`,
+          `SELECT workorder_items_id, product_id, quantity, status
+             FROM workorder_items
+            WHERE workorder_id = $1
+              AND workorder_items_id = ANY($2::int[])`,
           [id, delete_item_ids]
         );
 
@@ -521,6 +572,12 @@ export default async function handler(req, res) {
             event_type: 'ITEM_REMOVED',
             user_id: actorId
           });
+
+          if (row.status !== 'Canceled') {
+            const delta = Number(row.quantity);
+            // INVENTORY: credit stock
+            await adjustProductStock(client, row.product_id, +delta);
+          }
         }
 
         await client.query(
@@ -554,7 +611,6 @@ export default async function handler(req, res) {
           `SELECT status FROM workorder WHERE workorder_id = $1`,
           [id]
         );
-        const wasCompletedAtStart = beforeWO.status === 'Completed';
         const isCompletedNow = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
 
         // If not already completed, set to Completed now
@@ -628,6 +684,20 @@ export default async function handler(req, res) {
     if (method === 'DELETE') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
       await client.query('BEGIN');
+
+      // INVENTORY: restock non-canceled items before deletion
+      const { rows: toRestock } = await client.query(
+        `SELECT product_id, quantity
+           FROM workorder_items
+          WHERE workorder_id = $1
+            AND status <> 'Canceled'`,
+        [id]
+      );
+      for (const row of toRestock) {
+        const delta = Number(row.quantity);
+        await adjustProductStock(client, row.product_id, +delta);
+      }
+
       await client.query(`DELETE FROM workorder_items WHERE workorder_id = $1`, [id]);
       await client.query(`DELETE FROM workorder WHERE workorder_id = $1`, [id]);
       await client.query('COMMIT');
@@ -638,8 +708,21 @@ export default async function handler(req, res) {
     return res.status(405).end(`Method ${method} Not Allowed`);
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
-    console.error('Workorder API error:', err);
-    return res.status(500).json({ error: 'Server error' });
+      const msg = String(err?.message || '');
+      // Surface specific inventory errors so the UI can toast them
+      if (/insufficient\s+stock/i.test(msg)) {
+        // 409 Conflict fits stock contention/availability problems
+        return res.status(409).json({ error: msg });
+      }
+      if (/product not found/i.test(msg)) {
+        return res.status(404).json({ error: msg });
+      }
+      if (/invalid stock math/i.test(msg)) {
+        return res.status(400).json({ error: msg });
+      }
+      // Fallback
+      console.error('Workorder API error:', err);
+      return res.status(500).json({ error: 'Server error' });
   } finally {
     client.release();
   }

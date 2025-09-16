@@ -320,7 +320,14 @@ export default function WorkorderDetailPage() {
         }
       );
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data?.error || 'Save failed');
+      if (!r.ok) {
+        const msg = String(data?.error || '').trim();
+        if(/insufficient\s+stock/i.test(msg)){
+          toast.error(msg.replace(/^Error:\s*/, ''), {id: toastId});
+          return;
+        }
+        throw new Error(msg || 'Creation failed');
+      }
 
       // Refresh from response (API returns updated resource)
       setWo(data);

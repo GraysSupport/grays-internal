@@ -1,5 +1,7 @@
 import { getClientWithTimezone } from '../lib/db.js';
 
+const CUSTOMER_COLLECT_ID = 15;
+
 // Always clamp to 2 chars to satisfy varchar(2)
 function twoCharId(x) {
   const s = (x == null ? '' : String(x)).trim().toUpperCase();
@@ -152,15 +154,22 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      // If creating directly as "Booked for Delivery", require date+carrier
-      if (
-        delivery_status === 'Booked for Delivery' &&
-        (!delivery_date || !removalist_id)
-      ) {
+      // If creating directly as "Booked for Delivery", require date+carrier unless customer collect
+      if (delivery_status === 'Booked for Delivery') {
+      const rid = removalist_id == null || removalist_id === '' ? null : Number(removalist_id);
+      const isCC = rid === CUSTOMER_COLLECT_ID;
+      const hasDate = !!(delivery_date && String(delivery_date).trim() !== '');
+      if (!rid) {
         return res.status(400).json({
-          error: "Cannot set status to 'Booked for Delivery' without Delivery Date and Carrier",
+          error: "Cannot set status to 'Booked for Delivery' without Carrier",
         });
       }
+      if (!isCC && !hasDate) {
+        return res.status(400).json({
+          error: "Cannot set status to 'Booked for Delivery' without Delivery Date",
+        });
+      }
+    }
 
       const actorId = twoCharId(req.headers['x-user-id'] || body?.user_id);
 
@@ -251,14 +260,30 @@ export default async function handler(req, res) {
       // Validate attempting to move into "Booked for Delivery"
       const willBeBooked =
         delivery_status === 'Booked for Delivery' ||
-        (delivery_status === undefined && prevStatus === 'Booked for Delivery'); // (covers no change case harmlessly)
+        (delivery_status === undefined && prevStatus === 'Booked for Delivery'); // harmless if unchanged
 
-      if (delivery_status === 'Booked for Delivery' && (!nextRemovalistId || !nextDeliveryDate)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          error: "Cannot set status to 'Booked for Delivery' without Delivery Date and Carrier",
-        });
+      if (delivery_status === 'Booked for Delivery') {
+        const rid = nextRemovalistId == null ? null : Number(nextRemovalistId);
+        const isCC = rid === CUSTOMER_COLLECT_ID;
+
+        // Must always have a carrier
+        if (!rid) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: "Cannot set status to 'Booked for Delivery' without Carrier",
+          });
+        }
+
+        // Date is required unless Customer Collect (id 15)
+        const hasDate = !!(nextDeliveryDate && String(nextDeliveryDate).trim() !== '');
+        if (!isCC && !hasDate) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: "Cannot set status to 'Booked for Delivery' without Delivery Date",
+          });
+        }
       }
+
 
       const sets = [];
       const vals = [];

@@ -80,6 +80,8 @@ export default function DeliverySchedulePage() {
   const [rows, setRows] = useState([]);
   const [removalists, setRemovalists] = useState([]);
   const [search, setSearch] = useState('');
+  const [filterDate, setFilterDate] = useState('');            // NEW
+  const [filterRemovalist, setFilterRemovalist] = useState(''); // NEW
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
 
@@ -142,7 +144,7 @@ export default function DeliverySchedulePage() {
           else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
           else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
-        const outstanding =
+          const outstanding =
             d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
@@ -168,25 +170,70 @@ export default function DeliverySchedulePage() {
     return () => { mounted = false; };
   }, [navigate]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((d) =>
-      [
-        d.customer_name ?? '',
-        d.delivery_suburb ?? '',
-        d.delivery_state ?? '',
-        d.items_text ?? '',
-        d.invoice_id ?? '',
-        d.removalist_name ?? '',
-      ].join(' ').toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+  // Helper to detect "Customer Collect" by resolved carrier name
+  const isCustomerCollect = useCallback((row) => {
+    const resolved =
+      (row.removalist_name && row.removalist_name.trim()) ||
+      (row.removalist_id != null
+        ? (removalists.find(r => Number(r.id) === Number(row.removalist_id))?.name || '')
+        : '');
+    return (resolved || '').trim().toLowerCase() === 'customer collect';
+  }, [removalists]);
 
-  // Group by date (yyyy-mm-dd), then sort
+  // === COMBINED FILTERS (search + date + removalist)
+  const filtered = useMemo(() => {
+    let list = rows;
+
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((d) =>
+        [
+          d.customer_name ?? '',
+          d.delivery_suburb ?? '',
+          d.delivery_state ?? '',
+          d.items_text ?? '',
+          d.invoice_id ?? '',
+          d.removalist_name ?? '',
+        ].join(' ').toLowerCase().includes(q)
+      );
+    }
+
+    if (filterDate) {
+      list = list.filter(d => ymd(d.delivery_date) === filterDate);
+    }
+
+    if (filterRemovalist) {
+      const target = filterRemovalist.trim().toLowerCase();
+      list = list.filter(d => (d.removalist_name || '').trim().toLowerCase() === target);
+    }
+
+    return list;
+  }, [rows, search, filterDate, filterRemovalist]);
+
+  // Split rows into Customer Collect vs non-CC
+  const { customerCollectRows, nonCustomerCollectRows } = useMemo(() => {
+    const cc = [];
+    const non = [];
+    for (const r of filtered) {
+      (isCustomerCollect(r) ? cc : non).push(r);
+    }
+    // sort CC by date asc, then customer, then suburb
+    cc.sort((a, b) => {
+      const ad = ymd(a.delivery_date);
+      const bd = ymd(b.delivery_date);
+      const dcmp = ad.localeCompare(bd);
+      if (dcmp !== 0) return dcmp;
+      const ncmp = String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
+      if (ncmp !== 0) return ncmp;
+      return String(a.delivery_suburb || '').localeCompare(String(b.delivery_suburb || ''));
+    });
+    return { customerCollectRows: cc, nonCustomerCollectRows: non };
+  }, [filtered, isCustomerCollect]);
+
+  // Group non-CC by date (yyyy-mm-dd), then sort
   const dates = useMemo(() => {
     const map = new Map();
-    for (const r of filtered) {
+    for (const r of nonCustomerCollectRows) {
       const key = ymd(r.delivery_date);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(r);
@@ -194,7 +241,7 @@ export default function DeliverySchedulePage() {
     return [...map.entries()]
       .sort(([a],[b]) => a.localeCompare(b))
       .map(([k, v]) => [k, v]);
-  }, [filtered]);
+  }, [nonCustomerCollectRows]);
 
   const saveDelivery = useCallback(async (deliveryId, patch) => {
     if (!deliveryId || !patch || typeof patch !== 'object') return;
@@ -321,7 +368,7 @@ export default function DeliverySchedulePage() {
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
 
-    // 🔁 Derive display name directly (no useMemo = no ESLint warning)
+    // Derive display name directly
     const displayName =
       (row.removalist_name && row.removalist_name.trim())
         ? row.removalist_name
@@ -507,7 +554,7 @@ export default function DeliverySchedulePage() {
     const sorted = [...rowsForDate].sort((a, b) => {
       const an = (a.removalist_name || '').localeCompare(b.removalist_name || '');
       if (an !== 0) return an;
-      return String(a.customer_name || '').localeCompare(b.customer_name || '');
+      return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
     });
 
     let lastCarrier = null;
@@ -588,49 +635,278 @@ export default function DeliverySchedulePage() {
     );
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
-      <header className="border-b bg-white">
-        <div className="py-4 px-4 flex items-center justify-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
-        <main className="col-span-12">
-          <div className="rounded-xl border bg-white">
-            <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
-              <div className="w-full sm:max-w-xs">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search deliveries, items, carriers…"
-                  className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
-                />
-              </div>
-              <div className="hidden sm:flex justify-center">
-                <h2 className="text-lg font-semibold">Delivery Schedule</h2>
-              </div>
-              <div className="sm:hidden">
-                <h2 className="text-lg font-semibold text-center">Delivery Schedule</h2>
-              </div>
-              <div />
-            </div>
-
-            <div className="space-y-8 p-4">
-              {dates.length === 0 && !loading && (
-                <div className="text-center text-sm text-gray-600">No “Booked for Delivery” jobs.</div>
+  // Special Customer Collect block (now EDITABLE like others)
+  const CustomerCollectBlock = ({ rowsCC }) => {
+    const sorted = rowsCC; // already sorted in useMemo above
+    return (
+      <section className="rounded-xl border bg-white">
+        <div className="p-3 text-center text-lg font-semibold">Customer Collect (All Dates)</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full table-fixed">
+            <thead className="bg-gray-100">
+              <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <th className="px-3 py-2 w-40">Name</th>
+                <th className="px-3 py-2 w-32">Suburb</th>
+                <th className="px-3 py-2 w-16">State</th>
+                <th className="px-3 py-2 w-[36rem]">Items</th>
+                <th className="px-3 py-2 w-64">Carrier</th>
+                <th className="px-3 py-2 w-16 text-center">Payment</th>
+                <th className="px-3 py-2 w-40">Delivery Date</th>
+                <th className="px-3 py-2 w-72">Notes</th>
+                <th className="px-3 py-2 w-20">Delivery Charged</th>
+                <th className="px-3 py-2 w-20">Delivery Quoted</th>
+                <th className="px-3 py-2 w-24">Margin</th>
+                <th className="px-3 py-2 w-56">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading && (
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
-              {dates.map(([dateKey, rowsForDate]) => (
-                <DateBlock key={dateKey} dateKey={dateKey} rowsForDate={rowsForDate} />
-              ))}
+              {!loading && sorted.length === 0 && (
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
+              )}
+              {!loading && sorted.map((row, idx) => {
+                const margin =
+                  (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
+                  (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted));
+                return (
+                  <tr
+                    key={row.delivery_id}
+                    className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} cursor-pointer hover:bg-gray-100 align-top`}
+                    tabIndex={0}
+                    onClick={() => goWorkorder(row.workorder_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
+                    }}
+                  >
+                    <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
+                    <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
+                    <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
+                    <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
+                    {/* EDITABLE carrier */}
+                    <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
+                    {/* EDITABLE payment */}
+                    <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
+                    {/* EDITABLE date */}
+                    <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
+                    {/* EDITABLE notes */}
+                    <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
+                    {/* EDITABLE money fields */}
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
+                    <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
+                    <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
+                    {/* EDITABLE status */}
+                    <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  };
+
+  // --- PRINT HANDLER ---
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Unique list of removalist names for filter
+  const removalistOptions = useMemo(() => {
+    const names = new Set(removalists.map(r => (r.name || '').trim()).filter(Boolean));
+    for (const r of rows) {
+      if (r.removalist_name) names.add(r.removalist_name.trim());
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [removalists, rows]);
+
+  // Prepare a flat, printable list (sorted by date, then carrier, then customer)
+  const printableRows = useMemo(() => {
+    return [...filtered]
+      .sort((a, b) => {
+        const d = ymd(a.delivery_date).localeCompare(ymd(b.delivery_date));
+        if (d !== 0) return d;
+        const c = (a.removalist_name || '').localeCompare(b.removalist_name || '');
+        if (c !== 0) return c;
+        return (a.customer_name || '').localeCompare(b.customer_name || '');
+      })
+      .map((r) => {
+        const charged = r.delivery_charged == null ? null : Number(r.delivery_charged);
+        const quoted = r.delivery_quoted == null ? null : Number(r.delivery_quoted);
+        const margin = (charged || 0) - (quoted || 0);
+
+        // 👇 split items into lines
+        const itemsArray = (r.items_text || '—')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        return {
+          id: r.delivery_id,
+          name: r.customer_name || '—',
+          suburb: r.delivery_suburb || '—',
+          state: r.delivery_state || '—',
+          items: itemsArray,   // <=== array instead of string
+          carrier: r.removalist_name || '—',
+          payment: Number(r.outstanding_balance || 0) > 0 ? `Outstanding: ${fmtMoney(r.outstanding_balance)}` : 'Paid',
+          date: niceDate(ymd(r.delivery_date)),
+          notes: r.notes || '—',
+          charged: fmtMoney(charged),
+          quoted: fmtMoney(quoted),
+          margin: fmtMoney(margin),
+          status: r.delivery_status || '—',
+        };
+      });
+  }, [filtered]);
+
+
+  return (
+    <>
+      {/* PRINT STYLES */}
+      <style>{`
+        @media print {
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+          @page { margin: 12mm; }
+
+          .print-title { font-size: 18px; margin-bottom: 10px; }
+          .print-meta { font-size: 12px; margin-bottom: 8px; }
+
+          .print-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+          .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; word-wrap: break-word; }
+          .print-table thead th { background: #f3f4f6; }
+
+          /* column widths */
+          .col-name   { width: 80px; }
+          .col-suburb { width: 80px; }
+          .col-state  { width: 50px; }
+          .col-items  { width: 320px; } /* expanded */
+        }
+        .print-only { display: none; }
+      `}</style>
+
+      {/* ===== SCREEN UI ===== */}
+      <div className="no-print min-h-screen bg-gray-50 text-gray-900 flex flex-col">
+        <header className="border-b bg-white">
+          <div className="py-4 px-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
+
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Search */}
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search deliveries, items, carriers…"
+                className="w-52 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+              />
+
+              {/* Filter by Date */}
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="rounded-lg border px-3 py-2"
+              />
+
+              {/* Filter by Removalist */}
+              <select
+                value={filterRemovalist}
+                onChange={(e) => setFilterRemovalist(e.target.value)}
+                className="rounded-lg border px-3 py-2"
+              >
+                <option value="">All Carriers</option>
+                {removalistOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              {/* Print Button */}
+              <button
+                onClick={handlePrint}
+                className="rounded-lg bg-gray-800 text-white px-4 py-2 hover:bg-gray-700"
+              >
+                Print
+              </button>
             </div>
           </div>
-        </main>
+        </header>
+
+        <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
+          <main className="col-span-12">
+            <div className="rounded-xl border bg-white">
+              <div className="border-b p-4 grid gap-3 grid-cols-1 items-center">
+                <div className="hidden sm:flex justify-center">
+                  <h1 className="text-lg font-semibold">Delivery Schedule</h1>
+                </div>
+                <div />
+              </div>
+
+              <div className="space-y-8 p-4">
+                {customerCollectRows.length > 0 && (
+                  <CustomerCollectBlock rowsCC={customerCollectRows} />
+                )}
+
+                {dates.length === 0 && !loading && customerCollectRows.length === 0 && (
+                  <div className="text-center text-sm text-gray-600">No “Booked for Delivery” jobs.</div>
+                )}
+
+                {dates.map(([dateKey, rowsForDate]) => (
+                  <DateBlock key={dateKey} dateKey={dateKey} rowsForDate={rowsForDate} />
+                ))}
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <DeliveryTabs />
       </div>
 
-      <DeliveryTabs />
-    </div>
+      {/* ===== PRINT-ONLY FULL ROWS TABLE ===== */}
+      <div className="print-only">
+        <div className="print-title">Delivery Schedule</div>
+        <div className="print-meta">
+          {filterDate ? `Date filter: ${niceDate(filterDate)} · ` : ''}
+          {filterRemovalist ? `Carrier: ${filterRemovalist} · ` : ''}
+          Total: {printableRows.length}
+        </div>
+
+        <table className="print-table">
+          <thead>
+            <tr>
+              <th className='col-name'>Name</th>
+              <th className='col-suburb'>Suburb</th>
+              <th className='col-state'>State</th>
+              <th className='col-items'>Items</th>
+              <th>Delivery Date</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {printableRows.length === 0 ? (
+              <tr><td colSpan={12}>No deliveries</td></tr>
+            ) : (
+              printableRows.map(r => (
+                <tr key={r.id}>
+                  <td className='col-name'>{r.name}</td>
+                  <td className='col-suburb'>{r.suburb}</td>
+                  <td className='col-state'>{r.state}</td>
+                  <td className="col-items">
+                    {r.items.length === 0 ? '—' : r.items.map((it, idx) => (
+                      <div key={idx}>{it}</div>
+                    ))}
+                  </td>
+                  <td>{r.date}</td>
+                  <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

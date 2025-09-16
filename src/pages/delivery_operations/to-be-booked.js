@@ -541,29 +541,44 @@ export default function ToBeBookedDeliveriesPage() {
     );
   };
 
-  const StatusCell = ({ row }) => (
-    <select
-      className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
-      value={row.delivery_status}
-      onChange={(e) => {
-        const v = e.target.value;
-        // ⬇️ Validation: require Date + Carrier before booking
-        if (v === 'Booked for Delivery' && (!row.delivery_date || !row.removalist_id)) {
-          toast.error('Set Delivery Date and Carrier before booking for delivery');
-          return;
-        }
-        if (v !== row.delivery_status) {
-          saveDelivery(row.delivery_id, { delivery_status: v });
-        }
-      }}
-      disabled={savingIds.has(row.delivery_id)}
-      {...stopRowNav}
-    >
-      {EDITABLE_STATUSES.map((s) => (
-        <option key={s} value={s}>{s}</option>
-      ))}
-    </select>
-  );
+  const StatusCell = ({ row }) => {
+    // Allow booking without a date ONLY when carrier id === 15 (Customer Collect)
+    const isCustomerCollect = Number(row.removalist_id) === 15;
+
+    return (
+      <select
+        className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
+        value={row.delivery_status}
+        onChange={(e) => {
+          const v = e.target.value;
+
+          if (v === 'Booked for Delivery') {
+            // Must have a carrier selected in all cases
+            if (!row.removalist_id) {
+              toast.error('Set Carrier before booking for delivery');
+              return;
+            }
+            // Date required unless carrier id is 15 (Customer Collect)
+            if (!row.delivery_date && !isCustomerCollect) {
+              toast.error('Set Delivery Date before booking for delivery');
+              return;
+            }
+          }
+
+          if (v !== row.delivery_status) {
+            saveDelivery(row.delivery_id, { delivery_status: v });
+          }
+        }}
+        disabled={savingIds.has(row.delivery_id)}
+        {...stopRowNav}
+      >
+        {EDITABLE_STATUSES.map((s) => (
+          <option key={s} value={s}>{s}</option>
+        ))}
+      </select>
+    );
+  };
+
 
   // ===== Section renderer (State column removed; Date column added) =====
   const renderSection = (code) => {

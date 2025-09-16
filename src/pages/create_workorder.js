@@ -5,12 +5,6 @@ import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import CreateCustomerModal from '../components/CreateCustomerModal';
 
-/*
-NICK (12/08)
-NEED TO ADD FUNCTION AND API TO REDUCE PRODUCT STOCK AUTOMATICALLY WHEN ITEM IS PLACED IN A WO, 
-ALSO LOG CREATION DATE WITH MESSAGE - WO CREATION LOGGING DONE
-*/
-
 const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA', 'NT'];
 const LEAD_OPTIONS = ['1 Week', '2 Weeks', '3 Weeks', '4 Weeks', '5 Weeks'];
 
@@ -225,12 +219,18 @@ export default function CreateWorkorderPage() {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Creation failed');
-
+      if (!res.ok) {
+        const msg = String(data?.error || '').trim();
+        if(/insufficient\s+stock/i.test(msg)){
+          toast.error(msg.replace(/^Error:\s*/, ''), {id: toastId});
+          return;
+        }
+        throw new Error(msg || 'Creation failed');
+      }
       toast.success('Workorder created!', { id: toastId });
       navigate('/delivery_operations');
     } catch (err) {
-      toast.error(err.message || 'Failed to create', { id: toastId });
+      toast.error(err?.message || 'Failed to create', { id: toastId });
     }
   };
 
