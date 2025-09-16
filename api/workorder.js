@@ -708,8 +708,21 @@ export default async function handler(req, res) {
     return res.status(405).end(`Method ${method} Not Allowed`);
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
-    console.error('Workorder API error:', err);
-    return res.status(500).json({ error: 'Server error' });
+      const msg = String(err?.message || '');
+      // Surface specific inventory errors so the UI can toast them
+      if (/insufficient\s+stock/i.test(msg)) {
+        // 409 Conflict fits stock contention/availability problems
+        return res.status(409).json({ error: msg });
+      }
+      if (/product not found/i.test(msg)) {
+        return res.status(404).json({ error: msg });
+      }
+      if (/invalid stock math/i.test(msg)) {
+        return res.status(400).json({ error: msg });
+      }
+      // Fallback
+      console.error('Workorder API error:', err);
+      return res.status(500).json({ error: 'Server error' });
   } finally {
     client.release();
   }
