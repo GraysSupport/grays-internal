@@ -16,6 +16,24 @@ const useRowNav = (navigate) => {
   return go;
 };
 
+// Ignore row navigation if the click came from an interactive element,
+// or if the user is currently selecting text.
+function shouldBlockRowNav(e) {
+  if (!e) return false;
+  if (e.defaultPrevented) return true;
+  const t = e.target;
+  // any interactive element or opt‐out class
+  if (t.closest('input, textarea, select, button, a, [role="button"], [contenteditable="true"], .no-row-nav')) {
+    return true;
+  }
+  // if a text selection exists (drag highlight)
+  const sel = window.getSelection?.();
+  if (sel && sel.toString().length > 0) return true;
+
+  return false;
+}
+
+
 // Reusable props to stop row-level navigation from child controls
 const stopRowNav = {
   onClick: (e) => e.stopPropagation(),
@@ -620,7 +638,10 @@ export default function ToBeBookedDeliveriesPage() {
                     key={row.delivery_id}
                     className={`${rowCls} cursor-pointer hover:bg-gray-100 align-top`}
                     tabIndex={0}
-                    onClick={() => goWorkorder(row.workorder_id)}
+                    onClick={(e) => {
+                      if (shouldBlockRowNav(e)) return;
+                      goWorkorder(row.workorder_id);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                     }}
