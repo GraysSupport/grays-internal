@@ -246,7 +246,6 @@ export default function ActiveWorkordersPage() {
             ${thead}
             ${rowsHtml || `<tbody><tr><td colspan="${cols.length}">No active work orders.</td></tr></tbody>`}
         </table>
-        <div class="footer">Generated from Delivery Operations &middot; ${window.location.origin}</div>
         <script>window.onload = () => window.print();</script>
       </body>
       </html>`.trim();

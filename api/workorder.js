@@ -94,7 +94,9 @@ export default async function handler(req, res) {
           SELECT 
             wi.workorder_items_id, wi.workorder_id, wi.product_id,
             COALESCE(p.name, wi.product_id) AS product_name,
-            wi.quantity, wi.condition, wi.technician_id, wi.status
+            wi.quantity, wi.condition, wi.technician_id, wi.status,
+            wi.workshop_duration,            -- NEW
+            wi.item_sn                       -- NEW
           FROM workorder_items wi
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE wi.workorder_id = $1
@@ -319,8 +321,9 @@ export default async function handler(req, res) {
           await client.query(
             `
             INSERT INTO workorder_items (
-              workorder_id, product_id, quantity, condition, technician_id, status
-            ) VALUES ($1,$2,$3,$4,$5,$6)
+              workorder_id, product_id, quantity, condition, technician_id, status,
+              workshop_duration, item_sn                             -- NEW
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             `,
             [
               workorderId,
@@ -328,7 +331,9 @@ export default async function handler(req, res) {
               qty,
               item.condition,
               twoCharId(item.technician_id),
-              itmStatus
+              itmStatus,
+              item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
+              item.item_sn ?? null
             ]
           );
         }
@@ -357,8 +362,8 @@ export default async function handler(req, res) {
         outstanding_balance,
         estimated_completion,
         important_flag,                 // NEW
-        items,                          // [{ workorder_items_id, status, technician_id }]
-        add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status? }]
+        items,                          // [{ workorder_items_id, status, technician_id, workshop_duration?, item_sn? }]
+        add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status?, workshop_duration?, item_sn? }]
         delete_item_ids,                // NEW [id, id, ...]
         status                          // NEW: optional top-level workorder status override
       } = body || {};
@@ -423,14 +428,15 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2) Update existing items (status / technician)
+      // 2) Update existing items (status / technician / workshop_duration / item_sn)
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
-          const { workorder_items_id, status, technician_id } = row || {};
+          const { workorder_items_id, status, technician_id, workshop_duration, item_sn } = row || {};
           if (!workorder_items_id) continue;
 
           const cur = await client.query(
-            `SELECT workorder_items_id, status, technician_id, in_workshop, product_id, quantity
+            `SELECT workorder_items_id, status, technician_id, in_workshop, product_id, quantity,
+                    workshop_duration, item_sn
                FROM workorder_items WHERE workorder_items_id = $1 AND workorder_id = $2`,
             [workorder_items_id, id]
           );
@@ -461,8 +467,6 @@ export default async function handler(req, res) {
 
           if (status !== undefined && status !== before.status) {
             // INVENTORY: status transition side-effects
-            // - active -> Canceled : credit stock
-            // - Canceled -> active : debit stock
             if (status === 'Canceled' && before.status !== 'Canceled') {
               const delta = Number(before.quantity);
               await adjustProductStock(client, before.product_id, +delta);
@@ -497,6 +501,30 @@ export default async function handler(req, res) {
             });
           }
 
+          // NEW: workshop_duration
+          if (row.hasOwnProperty('workshop_duration')) {
+            const dur =
+              workshop_duration === '' || workshop_duration == null
+                ? null
+                : Number(workshop_duration);
+            const beforeDur =
+              before.workshop_duration == null ? null : Number(before.workshop_duration);
+            if (dur !== beforeDur) {
+              fields.push(`workshop_duration = $${i++}`);
+              vals.push(dur);
+            }
+          }
+
+          // NEW: item_sn (serial number) – free text; allow null/empty to clear
+          if (row.hasOwnProperty('item_sn')) {
+            const sn = (item_sn == null || String(item_sn).trim() === '') ? null : String(item_sn).trim();
+            const beforeSn = before.item_sn == null ? null : String(before.item_sn);
+            if (sn !== beforeSn) {
+              fields.push(`item_sn = $${i++}`);
+              vals.push(sn);
+            }
+          }
+
           if (fields.length) {
             vals.push(workorder_items_id);
             await client.query(
@@ -507,7 +535,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2b) Add new items
+      // 2b) Add new items (support duration + serial)
       if (Array.isArray(add_items) && add_items.length) {
         for (const item of add_items) {
           if (!item?.product_id || !item?.quantity || !item?.condition) continue;
@@ -529,8 +557,9 @@ export default async function handler(req, res) {
           const ins = await client.query(
             `
             INSERT INTO workorder_items (
-              workorder_id, product_id, quantity, condition, technician_id, status
-            ) VALUES ($1,$2,$3,$4,$5,$6)
+              workorder_id, product_id, quantity, condition, technician_id, status,
+              workshop_duration, item_sn
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             RETURNING workorder_items_id
             `,
             [
@@ -539,7 +568,9 @@ export default async function handler(req, res) {
               qty,
               item.condition,
               twoCharId(item.technician_id),
-              itmStatus
+              itmStatus,
+              item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
+              item.item_sn ?? null
             ]
           );
 
@@ -623,9 +654,7 @@ export default async function handler(req, res) {
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
         }
 
-        // Create delivery ONLY if:
-        //   a) items transitioned to all-completed in this request, OR
-        //   b) caller explicitly changed WO status from not Completed -> Completed
+        // Create delivery ONLY if transitioned this request or explicit override
         const explicitCompletedNow = (explicitStatusProvided && beforeWO.status !== 'Completed' && status === 'Completed');
         if (transitionedToCompletedViaItems || explicitCompletedNow) {
           const d = beforeWO;
