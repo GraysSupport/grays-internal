@@ -19,14 +19,16 @@ async function logEvent(client, {
   event_type,
   user_id = 'NA',
   item_status = null,
+  notes_log = null, 
 }) {
   await client.query(
     `INSERT INTO workorder_logs
-       (workorder_id, workorder_items_id, event_type, user_id, item_status)
-     VALUES ($1,$2,$3,$4,$5)`,
-    [workorder_id, workorder_items_id, event_type, twoCharId(user_id), item_status]
+       (workorder_id, workorder_items_id, event_type, user_id, item_status, notes_log)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [workorder_id, workorder_items_id, event_type, twoCharId(user_id), item_status, notes_log]
   );
 }
+
 
 /** =========================
  * INVENTORY HELPERS
@@ -115,7 +117,8 @@ export default async function handler(req, res) {
             l.user_id,
             l.workorder_items_id,
             COALESCE(p.name, wi.product_id) AS product_name,
-            l.item_status AS current_item_status
+            l.item_status AS current_item_status,
+            l.notes_log                                  
           FROM workorder_logs l
           LEFT JOIN workorder_items wi ON wi.workorder_items_id = l.workorder_items_id
           LEFT JOIN product p ON p.sku = wi.product_id
@@ -124,6 +127,7 @@ export default async function handler(req, res) {
           `,
           [id]
         );
+
 
         return res.status(200).json({
           ...wo.rows[0],
@@ -345,6 +349,16 @@ export default async function handler(req, res) {
         user_id: actorId
       });
 
+      // NEW: capture the initial notes value if present
+      if ((notes || '').trim()) {
+        await logEvent(client, {
+          workorder_id: workorderId,
+          event_type: 'NOTE_ADDED',
+          user_id: actorId,
+          notes_log: notes
+        });
+      }
+
       await client.query('COMMIT');
       return res.status(201).json({ message: 'Workorder created', workorder_id: workorderId });
     }
@@ -418,7 +432,12 @@ export default async function handler(req, res) {
         await client.query(`UPDATE workorder SET ${updates.join(', ')} WHERE workorder_id = $${p}`, params);
 
         if (notes !== undefined && (notes || '') !== (beforeWO.notes || '')) {
-          await logEvent(client, { workorder_id: id, event_type: 'NOTE_ADDED', user_id: actorId });
+          await logEvent(client, {
+            workorder_id: id,
+            event_type: 'NOTE_ADDED',
+            user_id: actorId,
+            notes_log: notes  
+          });
         }
         if (outstanding_balance !== undefined && Number(outstanding_balance) !== Number(beforeWO.outstanding_balance)) {
           await logEvent(client, { workorder_id: id, event_type: 'PAYMENT_UPDATED', user_id: actorId });
