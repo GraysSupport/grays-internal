@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
+import CreateCustomerModal from '../../../components/CreateCustomerModal';
 
 /** Utils **/
 function formatMoney(n) {
@@ -188,6 +189,29 @@ export default function WorkorderDetailPage() {
     } else {
       navigate('/delivery_operations');
     }
+  };
+
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [customerInitial, setCustomerInitial] = useState(null);
+
+  const openCustomerModal = async () => {
+    // Try to load full customer details when we have an id
+    const cid = wo.customer_id; // assuming your WO includes this; if not, keep create-only flow below.
+    if (cid) {
+      try {
+        const r = await fetch(`/api/customers?id=${encodeURIComponent(cid)}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || 'Failed to load customer');
+        setCustomerInitial(data);
+      } catch (e) {
+        // Fallback: at least seed the name if fetch fails
+        setCustomerInitial({ name: wo.customer_name || '' });
+      }
+    } else {
+      // No id on the WO — seed with the visible name so user can create
+      setCustomerInitial({ name: wo.customer_name || '' });
+    }
+    setShowCustomerModal(true);
   };
 
   // Load technicians & products once
@@ -426,10 +450,18 @@ export default function WorkorderDetailPage() {
       <main className="max-w-6xl mx-auto p-4">
         {/* Top summary */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-          <div className="rounded-lg border bg-white p-3">
-            <div className="text-xs text-gray-500">Customer Name:</div>
+          <button
+            type="button"
+            onClick={openCustomerModal}
+            className="rounded-lg border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            title="View / Edit customer contact"
+          >
+            <div className="text-xs text-gray-500 flex items-center justify-between">
+              <span>Customer</span>
+              <span className="text-[11px] text-blue-600 underline">View / Edit</span>
+            </div>
             <div className="font-semibold">{wo.customer_name}</div>
-          </div>
+          </button>
           <div className="rounded-lg border bg-white p-3">
             <div className="text-xs text-gray-500">Workorder Date:</div>
             <div className="font-semibold">{fmtDate(wo.date_created)}</div>
@@ -761,6 +793,22 @@ export default function WorkorderDetailPage() {
             </div>
           </div>
         </div>
+        {showCustomerModal && (
+          <CreateCustomerModal
+            // EDIT when we have an id, otherwise CREATE (keeps old usage working)
+            mode={wo.customer_id ? 'edit' : 'create'}
+            customerId={wo.customer_id || null}
+            initialForm={customerInitial}
+            onClose={() => setShowCustomerModal(false)}
+            onSuccess={(updated) => {
+              // Optimistically reflect any name change in the WO header
+              if (updated?.name) {
+                setWo((prev) => ({ ...prev, customer_name: updated.name, customer_id: updated.id ?? prev.customer_id }));
+              }
+              setShowCustomerModal(false);
+            }}
+          />
+        )}
       </main>
     </div>
   );

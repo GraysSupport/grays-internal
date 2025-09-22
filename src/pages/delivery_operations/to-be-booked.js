@@ -608,6 +608,7 @@ export default function ToBeBookedDeliveriesPage() {
           <table className="min-w-full table-fixed">
             <thead className="bg-gray-100">
               <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <th className="px-3 py-2 w-28">Invoice</th>
                 <th className="px-3 py-2 w-40">Name</th>
                 <th className="px-3 py-2 w-32">Suburb</th>
                 <th className="px-3 py-2 w-[40rem]">Items</th>
@@ -623,10 +624,10 @@ export default function ToBeBookedDeliveriesPage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && (
-                <tr><td colSpan={11} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={11} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
               )}
               {rows.map((row, idx) => {
                 const margin =
@@ -646,6 +647,7 @@ export default function ToBeBookedDeliveriesPage() {
                       if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                     }}
                   >
+                    <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">
