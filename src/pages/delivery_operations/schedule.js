@@ -583,6 +583,7 @@ export default function DeliverySchedulePage() {
           <table className="min-w-full table-fixed">
             <thead className="bg-gray-100">
               <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <th className="px-3 py-2 w-28">Invoice</th>
                 <th className="px-3 py-2 w-40">Name</th>
                 <th className="px-3 py-2 w-32">Suburb</th>
                 <th className="px-3 py-2 w-16">State</th>
@@ -599,10 +600,10 @@ export default function DeliverySchedulePage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
               {!loading && sorted.length === 0 && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
+                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
               )}
               {!loading && sorted.map((row, idx) => {
                 const margin =
@@ -632,6 +633,7 @@ export default function DeliverySchedulePage() {
                         if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                       }}
                     >
+                      <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
                       <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
@@ -665,6 +667,7 @@ export default function DeliverySchedulePage() {
           <table className="min-w-full table-fixed">
             <thead className="bg-gray-100">
               <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <th className="px-3 py-2 w-28">Invoice</th>
                 <th className="px-3 py-2 w-40">Name</th>
                 <th className="px-3 py-2 w-32">Suburb</th>
                 <th className="px-3 py-2 w-16">State</th>
@@ -681,10 +684,10 @@ export default function DeliverySchedulePage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
               {!loading && sorted.length === 0 && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
+                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
               )}
               {!loading && sorted.map((row, idx) => {
                 const margin =
@@ -703,6 +706,7 @@ export default function DeliverySchedulePage() {
                       if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                     }}
                   >
+                    <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>

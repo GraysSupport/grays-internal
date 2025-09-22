@@ -397,7 +397,7 @@ export default function CompletedDeliveriesPage() {
                 <table className="min-w-full table-fixed">
                   <thead className="bg-gray-100">
                     <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
-                      <th className="px-3 py-2 w-28">Invoice #</th>
+                      <th className="px-3 py-2 w-28">Invoice</th>
                       <th className="px-3 py-2 w-44">Name</th>
                       <th className="px-3 py-2 w-32">Suburb</th>
                       <th className="px-3 py-2 w-16">State</th>
