@@ -784,6 +784,16 @@ export default function DeliverySchedulePage() {
       });
   }, [filtered]);
 
+  const printableByCarrier = useMemo(() => {
+    const map = new Map();
+    for (const r of printableRows) {
+      const key = (r.carrier || '—').trim() || '—';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    // keep groups alphabetical by carrier name
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [printableRows]);
 
   return (
     <>
@@ -807,6 +817,9 @@ export default function DeliverySchedulePage() {
           .col-suburb { width: 80px; }
           .col-state  { width: 50px; }
           .col-items  { width: 320px; } /* expanded */
+          .carrier-block { break-inside: avoid; page-break-inside: avoid; margin-bottom: 12px; }
+          .carrier-title { font-weight: 600; margin: 6px 0; }
+          .carrier-meta { font-size: 11px; color: #374151; margin-bottom: 6px; }
         }
         .print-only { display: none; }
       `}</style>
@@ -888,7 +901,7 @@ export default function DeliverySchedulePage() {
         <DeliveryTabs />
       </div>
 
-      {/* ===== PRINT-ONLY FULL ROWS TABLE ===== */}
+      {/* ===== PRINT-ONLY FULL ROWS TABLES (grouped by carrier) ===== */}
       <div className="print-only">
         <div className="print-title">Delivery Schedule</div>
         <div className="print-meta">
@@ -897,38 +910,45 @@ export default function DeliverySchedulePage() {
           Total: {printableRows.length}
         </div>
 
-        <table className="print-table">
-          <thead>
-            <tr>
-              <th className='col-name'>Name</th>
-              <th className='col-suburb'>Suburb</th>
-              <th className='col-state'>State</th>
-              <th className='col-items'>Items</th>
-              <th>Delivery Date</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {printableRows.length === 0 ? (
-              <tr><td colSpan={12}>No deliveries</td></tr>
-            ) : (
-              printableRows.map(r => (
-                <tr key={r.id}>
-                  <td className='col-name'>{r.name}</td>
-                  <td className='col-suburb'>{r.suburb}</td>
-                  <td className='col-state'>{r.state}</td>
-                  <td className="col-items">
-                    {r.items.length === 0 ? '—' : r.items.map((it, idx) => (
-                      <div key={idx}>{it}</div>
-                    ))}
-                  </td>
-                  <td>{r.date}</td>
-                  <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+        {printableByCarrier.length === 0 ? (
+          <div>No deliveries</div>
+        ) : (
+          printableByCarrier.map(([carrierName, rows]) => (
+            <div key={carrierName} className="carrier-block">
+              <div className="carrier-title">Carrier: {carrierName}</div>
+              <div className="carrier-meta">Jobs: {rows.length}</div>
+
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th className='col-name'>Name</th>
+                    <th className='col-suburb'>Suburb</th>
+                    <th className='col-state'>State</th>
+                    <th className='col-items'>Items</th>
+                    <th>Delivery Date</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.id}>
+                      <td className='col-name'>{r.name}</td>
+                      <td className='col-suburb'>{r.suburb}</td>
+                      <td className='col-state'>{r.state}</td>
+                      <td className="col-items">
+                        {r.items.length === 0 ? '—' : r.items.map((it, idx) => (
+                          <div key={idx}>{it}</div>
+                        ))}
+                      </td>
+                      <td>{r.date}</td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
+        )}
       </div>
     </>
   );

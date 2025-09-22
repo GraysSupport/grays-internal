@@ -679,12 +679,22 @@ export default function WorkorderDetailPage() {
             <div className="font-semibold mb-2 text-center">Activity Log</div>
             <div className="h-72 overflow-y-auto border rounded p-2 text-sm font-mono bg-gray-50">
               {activity.length ? activity.map((l) => {
-                const itemLine = l.workorder_items_id
+                const isNote = l.event_type === 'NOTE_ADDED' && (l.notes_log || '').trim();
+                if (isNote) {
+                  return (
+                    <div key={l.id}>
+                      {`${l.ts}   NOTE_ADDED - ${l.user_id}`}{" "}
+                      <span className="italic text-gray-700">"{l.notes_log}"</span>
+                    </div>
+                  );
+                }
+
+                const base = l.workorder_items_id
                   ? `${l.ts}   ${l.product_name ?? '(Item)'} — ${l.event_type}${l.current_item_status ? `: ${l.current_item_status}` : ''} - ${l.user_id}`
                   : `${l.ts}   ${l.event_type} - ${l.user_id}`;
-                return <div key={l.id}>{itemLine}</div>;
+                return <div key={l.id}>{base}</div>;
               }) : <div className="text-gray-500">No activity yet.</div>}
-            </div>
+              </div>
           </div>
 
           <div className="rounded-xl border bg-white p-3">
