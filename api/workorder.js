@@ -95,7 +95,7 @@ export default async function handler(req, res) {
           `
           SELECT 
             wi.workorder_items_id, wi.workorder_id, wi.product_id,
-            COALESCE(p.name, wi.product_id) AS product_name,
+            COALESCE(wi.custom_description, p.name, wi.product_id) AS product_name,
             wi.quantity, wi.condition, wi.technician_id, wi.status,
             wi.workshop_duration,            -- NEW
             wi.item_sn                       -- NEW
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
             l.event_type,
             l.user_id,
             l.workorder_items_id,
-            COALESCE(p.name, wi.product_id) AS product_name,
+            COALESCE(wi.custom_description, p.name, wi.product_id) AS product_name,
             l.item_status AS current_item_status,
             l.notes_log                                  
           FROM workorder_logs l
@@ -185,7 +185,7 @@ export default async function handler(req, res) {
             json_agg(
               json_build_object(
                 'product_id',       wi.product_id,
-                'product_name',     COALESCE(p.name, wi.product_id),
+                'product_name',     COALESCE(wi.custom_description, p.name, wi.product_id),
                 'quantity',         wi.quantity,
                 'condition',        wi.condition,   
                 'technician_id',    wi.technician_id,
@@ -199,7 +199,7 @@ export default async function handler(req, res) {
           COALESCE(
             string_agg(
               (
-                wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id) ||
+                wi.quantity::text || ' × ' || COALESCE(wi.custom_description, p.name, wi.product_id) ||
                 ' (' || wi.condition::text || ')'     
               )::text,
               ', ' ORDER BY wi.workorder_items_id
@@ -318,26 +318,37 @@ export default async function handler(req, res) {
             : 'Not in Workshop';
 
           const qty = Number(item.quantity);
+          if (item.is_custom && !(item.custom_description && String(item.custom_description).trim())) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Custom items require a description.' });
+          }
 
           // INVENTORY: debit stock before inserting item
-          await adjustProductStock(client, item.product_id, -qty);
-
+          if (!item.is_custom) {
+            await adjustProductStock(client, item.product_id, -qty);
+          }
+          
           await client.query(
             `
             INSERT INTO workorder_items (
               workorder_id, product_id, quantity, condition, technician_id, status,
-              workshop_duration, item_sn                             -- NEW
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+              workshop_duration, item_sn, is_custom, custom_description, custom_unit_price
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             `,
             [
               workorderId,
               item.product_id,
               qty,
-              item.condition,
+              item.condition || 'NA',
               twoCharId(item.technician_id),
               itmStatus,
               item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
-              item.item_sn ?? null
+              item.item_sn ?? null,
+              !!item.is_custom,
+              item.is_custom ? (item.custom_description || null) : null,
+              item.is_custom && item.custom_unit_price != null && item.custom_unit_price !== ''
+                ? Number(item.custom_unit_price)
+                : null
             ]
           );
         }
@@ -375,11 +386,12 @@ export default async function handler(req, res) {
         delivery_charged,
         outstanding_balance,
         estimated_completion,
-        important_flag,                 // NEW
-        items,                          // [{ workorder_items_id, status, technician_id, workshop_duration?, item_sn? }]
-        add_items,                      // NEW [{ product_id, quantity, condition, technician_id, status?, workshop_duration?, item_sn? }]
-        delete_item_ids,                // NEW [id, id, ...]
-        status                          // NEW: optional top-level workorder status override
+        important_flag,                 
+        items,                          
+        add_items,                      
+        delete_item_ids,                
+        status,                         
+        salesperson                    
       } = body || {};
 
       await client.query('BEGIN');
@@ -426,6 +438,7 @@ export default async function handler(req, res) {
       if (outstanding_balance !== undefined) { updates.push(`outstanding_balance = $${p++}`); params.push(Number(outstanding_balance)); }
       if (estimated_completion !== undefined) { updates.push(`estimated_completion = $${p++}`); params.push(estimated_completion || beforeWO.estimated_completion); }
       if (important_flag !== undefined) { updates.push(`important_flag = $${p++}`); params.push(!!important_flag); }
+      if (salesperson !== undefined) { updates.push(`salesperson = $${p++}`); params.push(twoCharId(salesperson)); }
 
       if (updates.length) {
         params.push(id);
@@ -488,10 +501,12 @@ export default async function handler(req, res) {
             // INVENTORY: status transition side-effects
             if (status === 'Canceled' && before.status !== 'Canceled') {
               const delta = Number(before.quantity);
-              await adjustProductStock(client, before.product_id, +delta);
+              const isCustom = !!before.is_custom;
+              if (!isCustom) await adjustProductStock(client, before.product_id, +delta);
             } else if (status !== 'Canceled' && before.status === 'Canceled') {
               const delta = -Number(before.quantity);
-              await adjustProductStock(client, before.product_id, delta);
+              const isCustom = !!before.is_custom;
+              if (!isCustom) await adjustProductStock(client, before.product_id, delta);
             }
 
             if (status === 'In Workshop') {
@@ -571,25 +586,32 @@ export default async function handler(req, res) {
           const qty = Number(item.quantity);
 
           // INVENTORY: debit stock before insert
-          await adjustProductStock(client, item.product_id, -qty);
+          if (!item.is_custom){
+            await adjustProductStock(client, item.product_id, -qty);
+          }
 
           const ins = await client.query(
             `
             INSERT INTO workorder_items (
               workorder_id, product_id, quantity, condition, technician_id, status,
-              workshop_duration, item_sn
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                workshop_duration, item_sn, is_custom, custom_description, custom_unit_price
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             RETURNING workorder_items_id
             `,
             [
               id,
               item.product_id,
               qty,
-              item.condition,
+              item.condition || 'NA',
               twoCharId(item.technician_id),
               itmStatus,
               item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
-              item.item_sn ?? null
+              item.item_sn ?? null,
+              !!item.is_custom,
+              item.is_custom ? (item.custom_description || null) : null,
+              item.is_custom && item.custom_unit_price != null && item.custom_unit_price !== ''
+                ? Number(item.custom_unit_price)
+                : null
             ]
           );
 
@@ -625,8 +647,14 @@ export default async function handler(req, res) {
 
           if (row.status !== 'Canceled') {
             const delta = Number(row.quantity);
-            // INVENTORY: credit stock
-            await adjustProductStock(client, row.product_id, +delta);
+            // INVENTORY: credit stock only for non-custom
+            const { rows: chk } = await client.query(
+              `SELECT is_custom FROM workorder_items WHERE workorder_items_id = $1`,
+              [row.workorder_items_id]
+            );
+            if (chk.rows.length && !chk.rows[0].is_custom) {
+              await adjustProductStock(client, row.product_id, +delta);
+            }
           }
         }
 

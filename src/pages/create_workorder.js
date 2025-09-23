@@ -35,9 +35,10 @@ export default function CreateWorkorderPage() {
     notes: '',
     status: 'Work Ordered',
     outstanding_balance: '',
-    important: false, // <-- NEW: important flag
+    important: false,
     items: [
-      { product_id: '', quantity: '', condition: '', technician_id: '', status: 'Not in Workshop' }
+      { product_id: '', quantity: '', condition: '', technician_id: '', status: 'Not in Workshop',
+        is_custom: false, custom_description: '', custom_unit_price: '' }
     ]
   });
 
@@ -102,13 +103,13 @@ export default function CreateWorkorderPage() {
     }
   };
 
-  useEffect(() => { 
+  useEffect(() => {
     const stored = localStorage.getItem('user');
     if (!stored) {
       navigate('/');
       return;
     }
-    fetchData(); 
+    fetchData();
   }, [navigate]);
 
   useEffect(() => {
@@ -137,12 +138,13 @@ export default function CreateWorkorderPage() {
     return m;
   }, [products]);
 
-  // --- UPDATED: Product search logic similar to Products page ---
+  // Product search logic
   const productListForRow = (idx) => {
     const q = (productSearch[idx] || '').trim().toLowerCase();
     const keywords = q.split(' ').filter(Boolean);
     return products
       .filter((p) => {
+        if (String(p.sku).toUpperCase() === 'OTHER') return false; // hide sentinel
         const productText = `${p.sku} ${p.name} ${p.brand || ''}`.toLowerCase();
         return keywords.every((kw) => productText.includes(kw));
       })
@@ -157,7 +159,19 @@ export default function CreateWorkorderPage() {
   const addItemRow = () => {
     setForm((f) => ({
       ...f,
-      items: [...f.items, { product_id: '', quantity: '', condition: '', technician_id: '', status: 'Not in Workshop' }],
+      items: [
+        ...f.items,
+        {
+          product_id: '',
+          quantity: '',
+          condition: '',
+          technician_id: '',
+          status: 'Not in Workshop',
+          is_custom: false,
+          custom_description: '',
+          custom_unit_price: ''
+        }
+      ],
     }));
   };
 
@@ -183,7 +197,7 @@ export default function CreateWorkorderPage() {
     }
     const toastId = toast.loading('Creating workorder...');
     try {
-      // --- NEW: drop completely empty item rows before mapping ---
+      // Normalize and keep rows that have content OR are explicitly custom
       const cleanedItems = form.items
         .map((it) => ({
           ...it,
@@ -191,6 +205,7 @@ export default function CreateWorkorderPage() {
         }))
         .filter((it) => {
           const hasAny =
+            it.is_custom ||
             (it.product_id && String(it.product_id).trim() !== '') ||
             it.quantity !== null ||
             (it.condition && String(it.condition).trim() !== '') ||
@@ -202,6 +217,20 @@ export default function CreateWorkorderPage() {
           status: it.status && String(it.status).trim() ? it.status : 'Not in Workshop',
         }));
 
+      // Validate custom rows: must have description
+      for (const it of cleanedItems) {
+        if (it.is_custom) {
+          if (!String(it.custom_description || '').trim()) {
+            toast.error('Custom items require a description.');
+            return;
+          }
+          // If they flipped to custom and forgot a condition, default to NA on submit
+          if (!it.condition) it.condition = 'NA';
+          // Ensure product_id is set to OTHER for custom items
+          if (!it.product_id) it.product_id = 'OTHER';
+        }
+      }
+
       const payload = {
         ...form,
         items: cleanedItems,
@@ -209,6 +238,10 @@ export default function CreateWorkorderPage() {
         outstanding_balance: Number(form.outstanding_balance),
       };
       if (!payload.estimated_completion) delete payload.estimated_completion;
+
+      // Map UI flag name to API field
+      payload.important_flag = !!form.important;
+      delete payload.important;
 
       const res = await fetch('/api/workorder', {
         method: 'POST',
@@ -221,8 +254,8 @@ export default function CreateWorkorderPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = String(data?.error || '').trim();
-        if(/insufficient\s+stock/i.test(msg)){
-          toast.error(msg.replace(/^Error:\s*/, ''), {id: toastId});
+        if (/insufficient\s+stock/i.test(msg)) {
+          toast.error(msg.replace(/^Error:\s*/, ''), { id: toastId });
           return;
         }
         throw new Error(msg || 'Creation failed');
@@ -262,7 +295,7 @@ export default function CreateWorkorderPage() {
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-xl font-bold text-center flex-1">New Workorder</h2>
-            {/* NEW: Important toggle button */}
+            {/* Important toggle button */}
             <button
               type="button"
               onClick={() => setForm((f) => ({ ...f, important: !f.important }))}
@@ -436,36 +469,101 @@ export default function CreateWorkorderPage() {
                   <div key={index} className="grid grid-cols-5 gap-2 mb-2">
                     {/* Product */}
                     <div className="relative col-span-2">
-                      <input
-                        type="text"
-                        className="border p-2 rounded w-full"
-                        placeholder="Search product..."
-                        value={
-                          openProductDropdownIdx === index
-                            ? (productSearch[index] ?? '')
-                            : selectedDisplay
-                        }
-                        onFocus={() => { setOpenProductDropdownIdx(index); setProductSearch((s) => ({ ...s, [index]: '' })); }}
-                        onChange={(e) => setProductSearch((s) => ({ ...s, [index]: e.target.value }))}
-                      />
-                      {openProductDropdownIdx === index && (
-                        <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
-                          {productListForRow(index).map((p) => (
-                            <div
-                              key={p.sku}
-                              className="cursor-pointer px-2 py-1 hover:bg-gray-100"
-                              onMouseDown={() => {
-                                updateItem(index, 'product_id', p.sku);
-                                setOpenProductDropdownIdx(null);
-                                setProductSearch((s) => ({ ...s, [index]: '' }));
+                      {!item.is_custom ? (
+                        <>
+                          <input
+                            type="text"
+                            className="border p-2 rounded w-full"
+                            placeholder="Search product..."
+                            value={
+                              openProductDropdownIdx === index
+                                ? (productSearch[index] ?? '')
+                                : selectedDisplay
+                            }
+                            onFocus={() => {
+                              setOpenProductDropdownIdx(index);
+                              setProductSearch((s) => ({ ...s, [index]: '' }));
+                            }}
+                            onChange={(e) =>
+                              setProductSearch((s) => ({ ...s, [index]: e.target.value }))
+                            }
+                          />
+                          {openProductDropdownIdx === index && (
+                            <div className="dropdown-portal absolute z-10 bg-white border rounded w-full max-h-48 overflow-y-auto shadow">
+                              {productListForRow(index).map((p) => (
+                                <div
+                                  key={p.sku}
+                                  className="cursor-pointer px-2 py-1 hover:bg-gray-100"
+                                  onMouseDown={() => {
+                                    updateItem(index, 'product_id', p.sku);
+                                    updateItem(index, 'is_custom', false);
+                                    setOpenProductDropdownIdx(null);
+                                    setProductSearch((s) => ({ ...s, [index]: '' }));
+                                  }}
+                                >
+                                  {p.sku} — {p.name} {p.brand ? `(${p.brand})` : ''}
+                                </div>
+                              ))}
+                              <div className="border-t my-1" />
+                              {/* OTHER — Custom item */}
+                              <div
+                                className="cursor-pointer px-2 py-1 hover:bg-gray-100"
+                                onMouseDown={() => {
+                                  updateItem(index, 'product_id', 'OTHER');
+                                  updateItem(index, 'is_custom', true);
+                                  if (!item.condition) updateItem(index, 'condition', 'NA'); // default NA if empty
+                                  setOpenProductDropdownIdx(null);
+                                  setProductSearch((s) => ({ ...s, [index]: '' }));
+                                }}
+                              >
+                                OTHER — Custom item
+                              </div>
+
+                              {!productListForRow(index).length && (
+                                <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        // CUSTOM MODE
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              className="border p-2 rounded w-full"
+                              placeholder="Custom description *"
+                              value={item.custom_description || ''}
+                              onChange={(e) =>
+                                updateItem(index, 'custom_description', e.target.value)
+                              }
+                              required
+                            />
+                            <button
+                              type="button"
+                              className="px-2 py-1 rounded border text-sm"
+                              title="Switch back to catalog product"
+                              onClick={() => {
+                                updateItem(index, 'is_custom', false);
+                                updateItem(index, 'product_id', '');
+                                updateItem(index, 'custom_description', '');
+                                updateItem(index, 'custom_unit_price', '');
                               }}
                             >
-                              {p.sku} — {p.name} {p.brand ? `(${p.brand})` : ''}
-                            </div>
-                          ))}
-                          {!productListForRow(index).length && (
-                            <div className="px-2 py-2 text-gray-500 text-sm">No matches</div>
-                          )}
+                              Use Catalog
+                            </button>
+                          </div>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="border p-2 rounded w-full"
+                            placeholder="Unit price (optional)"
+                            value={item.custom_unit_price || ''}
+                            onChange={(e) =>
+                              updateItem(index, 'custom_unit_price', e.target.value)
+                            }
+                          />
+                          <div className="text-xs text-gray-500">SKU: OTHER (custom item)</div>
                         </div>
                       )}
                     </div>
@@ -492,6 +590,8 @@ export default function CreateWorkorderPage() {
                       <option value="CS">CS</option>
                       <option value="AT">AT</option>
                       <option value="CCG">CCG</option>
+                      {/* NEW: NA for custom */}
+                      <option value="NA">NA</option>
                     </select>
 
                     {/* Technician */}
