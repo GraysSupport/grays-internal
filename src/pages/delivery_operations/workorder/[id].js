@@ -16,6 +16,15 @@ function fmtDate(iso) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
+function toISODate(v) {
+  if (!v) return '';
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // already YYYY-MM-DD
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
 /** Stop row toggle helper for inner controls */
 function stop(e){ e.stopPropagation(); }
 
@@ -61,9 +70,10 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
   const filtered = useMemo(() => {
     if (!Array.isArray(products)) return [];
     const t = term.trim().toLowerCase();
-    if (!t) return products.slice(0, 50);
+    const base = products.filter((p) => String(p.sku).toUpperCase() !== 'OTHER'); // hide sentinel in normal list
+    if (!t) return base.slice(0, 50);
     const keywords = t.split(' ').filter(Boolean);
-    return products.filter((p) => {
+    return base.filter((p) => {
       const txt = `${p.sku} ${p.name} ${p.brand}`.toLowerCase();
       return keywords.every((k) => txt.includes(k));
     }).slice(0, 50);
@@ -75,12 +85,15 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
 
   return (
     <>
-      <div ref={anchorRef} className="flex items-center gap-2 border rounded px-2 py-1 bg-white cursor-text"
-           onClick={(e)=>{ stop(e); setOpen(true); }}>
+      <div
+        ref={anchorRef}
+        className="flex items-center gap-2 border rounded px-2 py-1 bg-white cursor-text"
+        onClick={(e)=>{ stop(e); setOpen(true); }}
+      >
         <input
           className="flex-1 outline-none"
           placeholder={placeholder}
-          value={open ? term : (current ? `${current.sku} — ${current.name}` : '')}
+          value={open ? term : (current ? `${current.sku} — ${current.name}` : (value === 'OTHER' ? 'OTHER — Custom item' : ''))}
           onChange={(e) => setTerm(e.target.value)}
           onFocus={() => setOpen(true)}
           onClick={stop}
@@ -124,7 +137,7 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
               }}
               title={`${p.name} (${p.brand || '—'})`}
             >
-             <div className="font-mono">{p.sku}</div>
+              <div className="font-mono">{p.sku}</div>
               <div className="text-xs text-gray-600 truncate">
                 {p.name}{p.brand ? ` — ${p.brand}` : ''}
               </div>
@@ -132,6 +145,23 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
           )) : (
             <div className="px-2 py-2 text-sm text-gray-500">No matches.</div>
           )}
+
+          {/* Divider */}
+          <div className="border-t my-1" />
+
+          {/* OTHER — Custom item option */}
+          <div
+            className="px-2 py-1 text-sm hover:bg-gray-100 cursor-pointer"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange('OTHER'); // parent will flip to custom mode
+              setOpen(false);
+              setTerm('');
+            }}
+          >
+            OTHER — Custom item
+          </div>
         </div>,
         document.body
       )}
@@ -155,23 +185,29 @@ export default function WorkorderDetailPage() {
 
   const [activity, setActivity] = useState([]);
   const [techs, setTechs] = useState([]);
+  const [users, setUsers] = useState([]);           // for salesperson dropdown
+  const [editEstimated, setEditEstimated] = useState(false);
+  const [editSalesperson, setEditSalesperson] = useState(false);
+  const [estimatedCompletion, setEstimatedCompletion] = useState('');
+  const [salesperson, setSalesperson] = useState('');
 
-  // NEW: important flag
+  // important flag
   const [important, setImportant] = useState(false);
 
-  // NEW: products for dropdown
+  // products for dropdown
   const [products, setProducts] = useState([]);
 
-  // NEW: pending new rows for add
-  const [pendingNewItems, setPendingNewItems] = useState([]); // [{tempId, product_id, quantity, condition, technician_id, workshop_duration?, item_sn?}]
+  // pending new rows for add (now supports custom)
+  // {tempId, product_id, quantity, condition, technician_id, is_custom?, custom_description?, custom_unit_price?, workshop_duration?, item_sn?}
+  const [pendingNewItems, setPendingNewItems] = useState([]);
 
   // deleting existing rows
-  const [toDelete, setToDelete] = useState([]); // [workorder_items_id]
+  const [toDelete, setToDelete] = useState([]);
 
-  // NEW: workorder status (for top-level WO)
-  const [woStatus, setWoStatus] = useState(''); // e.g., 'Work Ordered' | 'Completed' | etc.
+  // workorder status (for top-level WO)
+  const [woStatus, setWoStatus] = useState('');
 
-  // NEW: which existing row is expanded for Serial Number editing
+  // which existing row is expanded for Serial Number editing
   const [expandedId, setExpandedId] = useState(null);
 
   const userId = useMemo(() => {
@@ -195,8 +231,7 @@ export default function WorkorderDetailPage() {
   const [customerInitial, setCustomerInitial] = useState(null);
 
   const openCustomerModal = async () => {
-    // Try to load full customer details when we have an id
-    const cid = wo.customer_id; // assuming your WO includes this; if not, keep create-only flow below.
+    const cid = wo.customer_id;
     if (cid) {
       try {
         const r = await fetch(`/api/customers?id=${encodeURIComponent(cid)}`);
@@ -204,11 +239,9 @@ export default function WorkorderDetailPage() {
         if (!r.ok) throw new Error(data?.error || 'Failed to load customer');
         setCustomerInitial(data);
       } catch (e) {
-        // Fallback: at least seed the name if fetch fails
         setCustomerInitial({ name: wo.customer_name || '' });
       }
     } else {
-      // No id on the WO — seed with the visible name so user can create
       setCustomerInitial({ name: wo.customer_name || '' });
     }
     setShowCustomerModal(true);
@@ -227,6 +260,12 @@ export default function WorkorderDetailPage() {
         const res = await fetch('/api/products');
         const data = await res.json();
         if (res.ok) setProducts(Array.isArray(data) ? data : []);
+      } catch {}
+
+      try {
+        const u = await fetch('/api/users');
+        const uData = await u.json();
+        if (u.ok) setUsers(Array.isArray(uData) ? uData : []);
       } catch {}
     })();
   }, []);
@@ -247,14 +286,15 @@ export default function WorkorderDetailPage() {
         if (!r.ok) throw new Error(data?.error || 'Failed to load workorder');
 
         setWo(data);
-        // items now include workshop_duration and item_sn
         setItems((data.items || []).filter(it => it.status !== 'Canceled'));
         setNotes(data.notes || '');
         setDeliveryCharged(data.delivery_charged ?? '');
         setOutstandingBalance(data.outstanding_balance ?? '');
         setActivity(data.activity || []);
         setImportant(!!data.important_flag);
-        setWoStatus(data.status || ''); // NEW: capture WO status from API
+        setWoStatus(data.status || '');
+        setEstimatedCompletion(toISODate(data.estimated_completion));
+        setSalesperson(data.salesperson || '');
       } catch (e) {
         toast.error(e.message || 'Failed to load');
       } finally {
@@ -286,8 +326,11 @@ export default function WorkorderDetailPage() {
         quantity: 1,
         condition: 'New',
         technician_id: '',
-        workshop_duration: '',   // NEW
-        item_sn: ''              // NEW (optional at add time)
+        is_custom: false,
+        custom_description: '',
+        custom_unit_price: '',
+        workshop_duration: '',
+        item_sn: ''
       }
     ]);
   };
@@ -299,11 +342,21 @@ export default function WorkorderDetailPage() {
   const handleSave = async () => {
     if (!wo) return;
 
-    // Validate pending rows minimally
+    // Validate pending rows (catalog + custom)
     for (const row of pendingNewItems) {
-      if (!row.product_id) {
-        toast.error('Please select a product for all new rows.');
-        return;
+      // If custom, require description; else require product_id
+      if (row.is_custom) {
+        if (!String(row.custom_description || '').trim()) {
+          toast.error('Custom items require a description.');
+          return;
+        }
+        if (!row.condition) row.condition = 'NA';
+        if (!row.product_id) row.product_id = 'OTHER';
+      } else {
+        if (!row.product_id) {
+          toast.error('Please select a product for all new rows.');
+          return;
+        }
       }
       if (!row.quantity || Number(row.quantity) <= 0) {
         toast.error('Quantity must be at least 1.');
@@ -317,13 +370,16 @@ export default function WorkorderDetailPage() {
         toast.error('Workshop duration must be a number.');
         return;
       }
+      if (row.custom_unit_price !== '' && Number.isNaN(Number(row.custom_unit_price))) {
+        toast.error('Unit price must be a number.');
+        return;
+      }
     }
 
     setSaving(true);
     const toastId = toast.loading('Saving changes...');
     try {
       const payload = {
-        // NEW: include top-level workorder status
         status: woStatus || wo.status,
         notes,
         delivery_charged:
@@ -333,21 +389,29 @@ export default function WorkorderDetailPage() {
             ? wo.outstanding_balance
             : Number(outstandingBalance),
         important_flag: important,
+        estimated_completion: estimatedCompletion || wo.estimated_completion,
+        salesperson: salesperson || wo.salesperson,
         items: items.map((it) => ({
           workorder_items_id: it.workorder_items_id,
           status: it.status,
           technician_id: it.technician_id,
-          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration), // NEW
-          item_sn: it.item_sn ?? null, // NEW
+          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration),
+          item_sn: it.item_sn ?? null,
         })),
         add_items: pendingNewItems.map((it) => ({
-          product_id: it.product_id,
+          product_id: it.is_custom ? 'OTHER' : it.product_id,
           quantity: Number(it.quantity) || 1,
-          condition: it.condition,
+          condition: it.is_custom ? (it.condition || 'NA') : it.condition,
           technician_id: it.technician_id || null,
           status: 'Not in Workshop',
-          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration), // NEW
-          item_sn: (it.item_sn == null || String(it.item_sn).trim() === '') ? null : String(it.item_sn).trim() // NEW
+          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration),
+          item_sn: (it.item_sn == null || String(it.item_sn).trim() === '') ? null : String(it.item_sn).trim(),
+          // NEW custom fields
+          is_custom: !!it.is_custom,
+          custom_description: it.is_custom ? (it.custom_description || null) : null,
+          custom_unit_price: it.is_custom && it.custom_unit_price !== '' && it.custom_unit_price != null
+            ? Number(it.custom_unit_price)
+            : null
         })),
         delete_item_ids: toDelete
       };
@@ -370,7 +434,7 @@ export default function WorkorderDetailPage() {
           toast.error(msg.replace(/^Error:\s*/, ''), {id: toastId});
           return;
         }
-        throw new Error(msg || 'Creation failed');
+        throw new Error(msg || 'Save failed');
       }
 
       // Refresh from response (API returns updated resource)
@@ -381,7 +445,7 @@ export default function WorkorderDetailPage() {
       setOutstandingBalance(data.outstanding_balance ?? '');
       setActivity(data.activity || []);
       setImportant(!!data.important_flag);
-      setWoStatus(data.status || woStatus); // NEW: refresh local status
+      setWoStatus(data.status || woStatus);
 
       // Clear queued adds/deletes
       setPendingNewItems([]);
@@ -466,13 +530,45 @@ export default function WorkorderDetailPage() {
             <div className="text-xs text-gray-500">Workorder Date:</div>
             <div className="font-semibold">{fmtDate(wo.date_created)}</div>
           </div>
-          <div className="rounded-lg border bg-white p-3">
+          <div
+            className="rounded-lg border bg-white p-3 cursor-pointer"
+            onClick={() => setEditEstimated(true)}
+            title="Click to edit"
+          >
             <div className="text-xs text-gray-500">Expected Completion Date:</div>
-            <div className="font-semibold">{fmtDate(wo.estimated_completion)}</div>
+            {!editEstimated ? (
+              <div className="font-semibold">{fmtDate(estimatedCompletion || wo.estimated_completion)}</div>
+            ) : (
+              <input
+                type="date"
+                className="mt-1 border rounded px-2 py-1"
+                value={estimatedCompletion}
+                onChange={(e) => setEstimatedCompletion(e.target.value)}
+                onClick={(e)=>e.stopPropagation()}
+              />
+            )}
           </div>
-          <div className="rounded-lg border bg-white p-3">
+          <div
+            className="rounded-lg border bg-white p-3 cursor-pointer"
+            onClick={() => setEditSalesperson(true)}
+            title="Click to change salesperson"
+          >
             <div className="text-xs text-gray-500">Salesperson:</div>
-            <div className="font-semibold">{wo.salesperson}</div>
+            {!editSalesperson ? (
+              <div className="font-semibold">{salesperson || wo.salesperson}</div>
+            ) : (
+              <select
+                className="mt-1 border rounded px-2 py-1"
+                value={salesperson || ''}
+                onChange={(e) => setSalesperson(e.target.value)}
+                onClick={(e)=>e.stopPropagation()}
+              >
+                <option value="" disabled>Select Salesperson</option>
+                {users.map((u)=>(
+                  <option key={u.id} value={u.id}>{u.id} — {u.name}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="rounded-lg border bg-white p-3">
             <div className="text-xs text-gray-500">Payment Status:</div>
@@ -517,100 +613,101 @@ export default function WorkorderDetailPage() {
               <tbody className="divide-y divide-gray-100">
                 {/* Existing items */}
                 {items
-                .filter(it => it.status !== 'Canceled')
-                .map((it, idx) => {
-                  const isExpanded = expandedId === it.workorder_items_id;
-                  return (
-                    <>
-                      <tr
-                        className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${toDelete.includes(it.workorder_items_id) ? 'opacity-60 line-through' : ''} cursor-pointer`}
-                        onClick={() => setExpandedId(isExpanded ? null : it.workorder_items_id)}
-                        title="Click row to edit Serial Number"
-                      >
-                        <td className="px-4 py-3 text-sm">{Number(it.quantity)}</td>
-                        <td className="px-4 py-3 text-sm font-mono">{it.product_id}</td>
-                        <td className="px-4 py-3 text-sm">{it.product_name}</td>
-                        <td className="px-4 py-3 text-sm">{it.condition}</td>
-                        <td className="px-4 py-3 text-sm" onClick={stop}>
-                          <select
-                            className="border rounded px-2 py-1 w-full"
-                            value={it.technician_id || ''}
-                            onChange={(e) => setItemField(idx, 'technician_id', e.target.value)}
-                          >
-                            <option value="" disabled>Select tech</option>
-                            {techs.map((t) => (
-                              <option key={t.id} value={t.id}>{t.id} — {t.name}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-4 py-3 text-sm" onClick={stop}>
-                          <select
-                            className="border rounded px-2 py-1 w-full"
-                            value={it.status}
-                            onChange={(e) => setItemField(idx, 'status', e.target.value)}
-                          >
-                            <option>Not in Workshop</option>
-                            <option>In Workshop</option>
-                            <option>Completed</option>
-                            <option>Canceled</option>
-                          </select>
-                        </td>
-                        <td className="px-4 py-3 text-sm" onClick={stop}>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            className="border rounded px-2 py-1 w-full"
-                            value={it.workshop_duration ?? ''}
-                            placeholder="e.g. 1.5"
-                            onChange={(e) => setItemField(idx, 'workshop_duration', e.target.value)}
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-sm" onClick={stop}>
-                          <button
-                            onClick={() => {
-                              setToDelete((arr) => arr.includes(it.workorder_items_id)
-                                ? arr.filter((x) => x !== it.workorder_items_id)
-                                : [...arr, it.workorder_items_id]
-                              );
-                            }}
-                            className={`rounded border px-2 py-1 text-xs ${toDelete.includes(it.workorder_items_id) ? 'bg-red-50 border-red-300 text-red-700' : 'hover:bg-gray-50'}`}
-                          >
-                            {toDelete.includes(it.workorder_items_id) ? 'Undo Cancel' : 'Cancel'}
-                          </button>
-                        </td>
-                      </tr>
-
-                      {/* Inline expandable panel for Serial Number */}
-                      {isExpanded && (
-                        <tr className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'}`}>
-                          <td colSpan={8} className="px-6 pb-4">
-                            <div className="mt-1 border rounded-md p-3 bg-gray-50">
-                              <div className="text-sm font-medium mb-2">Serial Number</div>
-                              <input
-                                type="text"
-                                className="border rounded px-2 py-1 w-full"
-                                value={it.item_sn ?? ''}
-                                placeholder="Enter serial number"
-                                onChange={(e) => setItemField(idx, 'item_sn', e.target.value)}
-                                onClick={stop}
-                              />
-                              <div className="text-xs text-gray-600 mt-2">
-                                Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
-                              </div>
-                            </div>
+                  .filter(it => it.status !== 'Canceled')
+                  .map((it, idx) => {
+                    const isExpanded = expandedId === it.workorder_items_id;
+                    return (
+                      <>
+                        <tr
+                          className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${toDelete.includes(it.workorder_items_id) ? 'opacity-60 line-through' : ''} cursor-pointer`}
+                          onClick={() => setExpandedId(isExpanded ? null : it.workorder_items_id)}
+                          title="Click row to edit Serial Number"
+                        >
+                          <td className="px-4 py-3 text-sm">{Number(it.quantity)}</td>
+                          <td className="px-4 py-3 text-sm font-mono">{it.product_id}</td>
+                          <td className="px-4 py-3 text-sm">{it.product_name}</td>
+                          <td className="px-4 py-3 text-sm">{it.condition}</td>
+                          <td className="px-4 py-3 text-sm" onClick={stop}>
+                            <select
+                              className="border rounded px-2 py-1 w-full"
+                              value={it.technician_id || ''}
+                              onChange={(e) => setItemField(idx, 'technician_id', e.target.value)}
+                            >
+                              <option value="" disabled>Select tech</option>
+                              {techs.map((t) => (
+                                <option key={t.id} value={t.id}>{t.id} — {t.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-4 py-3 text-sm" onClick={stop}>
+                            <select
+                              className="border rounded px-2 py-1 w-full"
+                              value={it.status}
+                              onChange={(e) => setItemField(idx, 'status', e.target.value)}
+                            >
+                              <option>Not in Workshop</option>
+                              <option>In Workshop</option>
+                              <option>Completed</option>
+                              <option>Canceled</option>
+                            </select>
+                          </td>
+                          <td className="px-4 py-3 text-sm" onClick={stop}>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="border rounded px-2 py-1 w-full"
+                              value={it.workshop_duration ?? ''}
+                              placeholder="e.g. 1.5"
+                              onChange={(e) => setItemField(idx, 'workshop_duration', e.target.value)}
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-sm" onClick={stop}>
+                            <button
+                              onClick={() => {
+                                setToDelete((arr) => arr.includes(it.workorder_items_id)
+                                  ? arr.filter((x) => x !== it.workorder_items_id)
+                                  : [...arr, it.workorder_items_id]
+                                );
+                              }}
+                              className={`rounded border px-2 py-1 text-xs ${toDelete.includes(it.workorder_items_id) ? 'bg-red-50 border-red-300 text-red-700' : 'hover:bg-gray-50'}`}
+                            >
+                              {toDelete.includes(it.workorder_items_id) ? 'Undo Cancel' : 'Cancel'}
+                            </button>
                           </td>
                         </tr>
-                      )}
-                    </>
-                  );
-                })}
+
+                        {/* Inline expandable panel for Serial Number */}
+                        {isExpanded && (
+                          <tr className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'}`}>
+                            <td colSpan={8} className="px-6 pb-4">
+                              <div className="mt-1 border rounded-md p-3 bg-gray-50">
+                                <div className="text-sm font-medium mb-2">Serial Number</div>
+                                <input
+                                  type="text"
+                                  className="border rounded px-2 py-1 w-full"
+                                  value={it.item_sn ?? ''}
+                                  placeholder="Enter serial number"
+                                  onChange={(e) => setItemField(idx, 'item_sn', e.target.value)}
+                                  onClick={stop}
+                                />
+                                <div className="text-xs text-gray-600 mt-2">
+                                  Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
 
                 {/* Pending new rows */}
                 {pendingNewItems.map((row) => {
                   const selected = products.find((p) => p.sku === row.product_id);
+                  const isCustom = !!row.is_custom || row.product_id === 'OTHER';
                   return (
-                    <tr key={row.tempId} className="bg-white">
+                    <tr key={row.tempId} className="bg-white align-top">
                       <td className="px-4 py-3 text-sm">
                         <input
                           type="number"
@@ -627,12 +724,55 @@ export default function WorkorderDetailPage() {
                         <ProductSelect
                           products={products}
                           value={row.product_id}
-                          onChange={(sku) => setPendingField(row.tempId, 'product_id', sku)}
+                          onChange={(sku) => {
+                            if (sku === 'OTHER') {
+                              setPendingField(row.tempId, 'product_id', 'OTHER');
+                              setPendingField(row.tempId, 'is_custom', true);
+                              if (!row.condition) setPendingField(row.tempId, 'condition', 'NA');
+                            } else {
+                              setPendingField(row.tempId, 'product_id', sku);
+                              setPendingField(row.tempId, 'is_custom', false);
+                            }
+                          }}
                         />
                       </td>
 
                       <td className="px-4 py-3 text-sm text-gray-700">
-                        {selected ? selected.name : <span className="text-gray-400">—</span>}
+                        {!isCustom ? (
+                          selected ? selected.name : <span className="text-gray-400">—</span>
+                        ) : (
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-1 w-full"
+                              placeholder="Custom description *"
+                              value={row.custom_description || ''}
+                              onChange={(e) => setPendingField(row.tempId, 'custom_description', e.target.value)}
+                            />
+                            <input
+                              type="number"
+                              step="0.01"
+                              className="border rounded px-2 py-1 w-full"
+                              placeholder="Unit price (optional)"
+                              value={row.custom_unit_price || ''}
+                              onChange={(e) => setPendingField(row.tempId, 'custom_unit_price', e.target.value)}
+                            />
+                            <div className="text-xs text-gray-500">SKU: OTHER (custom item)</div>
+                            <button
+                              type="button"
+                              className="mt-1 rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                              onClick={() => {
+                                // switch back to catalog
+                                setPendingField(row.tempId, 'is_custom', false);
+                                setPendingField(row.tempId, 'product_id', '');
+                                setPendingField(row.tempId, 'custom_description', '');
+                                setPendingField(row.tempId, 'custom_unit_price', '');
+                              }}
+                            >
+                              Use Catalog
+                            </button>
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-4 py-3 text-sm" onClick={stop}>
@@ -646,6 +786,7 @@ export default function WorkorderDetailPage() {
                           <option>AT</option>
                           <option>CS</option>
                           <option>CCG</option>
+                          <option>NA</option>{/* allow NA for custom */}
                         </select>
                       </td>
 
@@ -664,7 +805,7 @@ export default function WorkorderDetailPage() {
 
                       <td className="px-4 py-3 text-sm text-gray-500">Not in Workshop</td>
 
-                      {/* NEW: Workshop duration for new row */}
+                      {/* Workshop duration for new row */}
                       <td className="px-4 py-3 text-sm" onClick={stop}>
                         <input
                           type="number"
@@ -762,7 +903,7 @@ export default function WorkorderDetailPage() {
               />
             </div>
 
-            {/* NEW: Workorder status change UI (only when current WO is Completed) */}
+            {/* Workorder status change UI (only when current WO is Completed) */}
             {String(woStatus) === 'Completed' && (
               <div className="mt-4 border rounded p-3 bg-amber-50">
                 <div className="text-sm font-medium mb-2">Workorder Status</div>
@@ -795,13 +936,11 @@ export default function WorkorderDetailPage() {
         </div>
         {showCustomerModal && (
           <CreateCustomerModal
-            // EDIT when we have an id, otherwise CREATE (keeps old usage working)
             mode={wo.customer_id ? 'edit' : 'create'}
             customerId={wo.customer_id || null}
             initialForm={customerInitial}
             onClose={() => setShowCustomerModal(false)}
             onSuccess={(updated) => {
-              // Optimistically reflect any name change in the WO header
               if (updated?.name) {
                 setWo((prev) => ({ ...prev, customer_name: updated.name, customer_id: updated.id ?? prev.customer_id }));
               }
