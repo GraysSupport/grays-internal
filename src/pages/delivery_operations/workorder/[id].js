@@ -607,7 +607,6 @@ export default function WorkorderDetailPage() {
                   <th className="px-4 py-3 w-40">Tech Assigned</th>
                   <th className="px-4 py-3 w-48">Status</th>
                   <th className="px-4 py-3 w-25">Workshop Duration</th>
-                  <th className="px-4 py-3 w-24">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -661,19 +660,6 @@ export default function WorkorderDetailPage() {
                               placeholder="e.g. 1.5"
                               onChange={(e) => setItemField(idx, 'workshop_duration', e.target.value)}
                             />
-                          </td>
-                          <td className="px-4 py-3 text-sm" onClick={stop}>
-                            <button
-                              onClick={() => {
-                                setToDelete((arr) => arr.includes(it.workorder_items_id)
-                                  ? arr.filter((x) => x !== it.workorder_items_id)
-                                  : [...arr, it.workorder_items_id]
-                                );
-                              }}
-                              className={`rounded border px-2 py-1 text-xs ${toDelete.includes(it.workorder_items_id) ? 'bg-red-50 border-red-300 text-red-700' : 'hover:bg-gray-50'}`}
-                            >
-                              {toDelete.includes(it.workorder_items_id) ? 'Undo Cancel' : 'Cancel'}
-                            </button>
                           </td>
                         </tr>
 

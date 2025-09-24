@@ -22,6 +22,35 @@ const stopRowNav = {
   onKeyDown: (e) => e.stopPropagation(),
 };
 
+const CARRIER_COLOR_RULES = [
+  { like: 'moving soon', color: '#F4B084' },
+  { like: 'dtl', color: '#BDD7EE' },
+  { like: 'coastal', color: '#FDCDFE' }, // Coastal Breeze
+  { like: 'bnl', color: '#92D050' },
+  { like: 'bass strait', color: '#FEFF43' },
+  { like: 'rjd', color: '#FFFF00' },     // fixed hex: #FFFF00
+  { like: 'iron armour', color: '#CCCCFF' },
+  { like: 'chris watkins', color: '#6767ff' },
+  { like: 'ej shaws', color: '#ff5555' },
+  { like: 'a grade', color: '#e9ff63' },
+  { like: 'slingshot', color: '#92d050' },
+  { like: 'sa removals', color: '#66ccff' },
+  { like: 'first transport', color: '#99ffcc' },
+  { like: 'big post', color: '#99ffcc' },
+  { like: 'allied', color: '#99ffcc' },
+  { like: 'customer collect', color: '#9ec2e3' },
+  { like: 'eastside', color: '#9efe9c' },
+  { like: 'thompson', color: '#ff9999' },
+  { like: 'brs', color: '#d0cece' },
+];
+
+// Resolve a background color based on LIKE/substring match
+function carrierColor(name) {
+  const s = (name || '').toLowerCase();
+  const rule = CARRIER_COLOR_RULES.find(r => s.includes(r.like));
+  return rule?.color || null;
+}
+
 // fmt helpers
 function fmtMoney(n) {
   if (n == null || n === '') return '—';
@@ -443,7 +472,22 @@ export default function CompletedDeliveriesPage() {
                           <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">
                             {row.items_text || '—'}
                           </td>
-                          <td className="px-3 py-2 text-sm">{row.removalist_name || '—'}</td>
+                          <td className="px-3 py-2 text-sm">
+                            {(row.removalist_name && row.removalist_name.trim()) ? (
+                              (() => {
+                                const bg = carrierColor(row.removalist_name);
+                                return (
+                                  <span
+                                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset"
+                                    style={bg ? { backgroundColor: bg, borderColor: 'rgba(0,0,0,0.08)' } : undefined}
+                                    title={row.removalist_name}
+                                  >
+                                    {row.removalist_name}
+                                  </span>
+                                );
+                              })()
+                            ) : '—'}
+                          </td>
                           <td className="px-3 py-2 text-sm text-center"><PaymentBadge outstanding={row.outstanding_balance} /></td>
                           <td className="px-3 py-2 text-sm">{formatDate(row.delivery_date) || '—'}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>
