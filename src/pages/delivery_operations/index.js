@@ -33,6 +33,17 @@ function formatTechnicians(techs) {
   return techs.map((t) => t?.name || '').filter(Boolean).join(', ');
 }
 
+const TECH_BADGE_COLORS = {
+  Joe: '#F4B084',
+  Eden: '#FFFFCF',
+  Toby: '#FEFE41',
+  Lino: '#BDD7EE',
+  Brett: '#CDCFD0',
+};
+function techColor(name) {
+  return TECH_BADGE_COLORS[name] || '#E5E7EB'; // default light gray
+}
+
 export default function ActiveWorkordersPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -423,7 +434,6 @@ export default function ActiveWorkordersPage() {
                     )}
                     {!loading && filtered.map((w, idx) => {
                       const itemsStr = formatItemsFromItems(w.items);
-                      const techsStr = formatTechnicians(w.technicians);
                       const hasDue = w.outstanding_balance != null && Number(w.outstanding_balance) > 0;
                       const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
 
@@ -466,8 +476,25 @@ export default function ActiveWorkordersPage() {
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-sm w-28 whitespace-pre-wrap break-words">
-                            {techsStr}
+                          <td className="px-3 py-2 text-sm w-28">
+                            {(w.technicians && w.technicians.length) ? (
+                              <div className="flex flex-wrap gap-1">
+                                {w.technicians.map((t) => {
+                                  const name = t?.name || '';
+                                  const bg = techColor(name);
+                                  return (
+                                    <span
+                                      key={name}
+                                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset"
+                                      style={{ backgroundColor: bg, color: '#111', borderColor: 'rgba(0,0,0,0.08)' }}
+                                      title={name}
+                                    >
+                                      {name}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : '—'}
                           </td>
                           <td className="px-3 py-2 text-sm w-28">{formatDate(w.estimated_completion)}</td>
                           <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words w-40">{w.notes || '—'}</td>

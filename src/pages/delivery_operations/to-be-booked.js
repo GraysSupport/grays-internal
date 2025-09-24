@@ -16,6 +16,35 @@ const useRowNav = (navigate) => {
   return go;
 };
 
+const CARRIER_COLOR_RULES = [
+  { like: 'moving soon', color: '#F4B084' },
+  { like: 'dtl', color: '#BDD7EE' },
+  { like: 'coastal', color: '#FDCDFE' }, // Coastal Breeze
+  { like: 'bnl', color: '#92D050' },
+  { like: 'bass strait', color: '#FEFF43' },
+  { like: 'rjd', color: '#FFFF00' },     // fixed hex: #FFFF00
+  { like: 'iron armour', color: '#CCCCFF' },
+  { like: 'chris watkins', color: '#6767ff' },
+  { like: 'ej shaws', color: '#ff5555' },
+  { like: 'a grade', color: '#e9ff63' },
+  { like: 'slingshot', color: '#92d050' },
+  { like: 'sa removals', color: '#66ccff' },
+  { like: 'first transport', color: '#99ffcc' },
+  { like: 'big post', color: '#99ffcc' },
+  { like: 'allied', color: '#99ffcc' },
+  { like: 'customer collect', color: '#9ec2e3' },
+  { like: 'eastside', color: '#9efe9c' },
+  { like: 'thompson', color: '#ff9999' },
+  { like: 'brs', color: '#d0cece' },
+];
+
+// Resolve a background color based on LIKE/substring match
+function carrierColor(name) {
+  const s = (name || '').toLowerCase();
+  const rule = CARRIER_COLOR_RULES.find(r => s.includes(r.like));
+  return rule?.color || null;
+}
+
 // Ignore row navigation if the click came from an interactive element,
 // or if the user is currently selecting text.
 function shouldBlockRowNav(e) {
@@ -378,17 +407,21 @@ export default function ToBeBookedDeliveriesPage() {
         style={{ position: 'fixed', top: rect.top, left: rect.left, width: rect.width, zIndex: 1000 }}
         className="max-h-60 overflow-auto rounded-lg border bg-white shadow-xl"
       >
-        {options.length ? options.map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            className="block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-gray-50"
-            onMouseDown={() => onPick(r)}
-          >
-            <div className="font-medium">{r.name}</div>
-            <div className="text-xs text-gray-500">ID: {r.id}</div>
-          </button>
-        )) : (
+        {options.length ? options.map((r) => {
+          const bg = carrierColor(r.name);
+          return (
+            <button
+              key={r.id}
+              type="button"
+              className="block w-full cursor-pointer px-3 py-2 text-left text-sm"
+              style={bg ? { backgroundColor: bg } : undefined}
+              onMouseDown={() => onPick(r)}
+            >
+              <div className="font-medium">{r.name}</div>
+              <div className="text-xs text-gray-500">ID: {r.id}</div>
+            </button>
+          );
+        }) : (
           <div className="px-3 py-3 text-sm text-gray-500">No carriers</div>
         )}
       </div>,
@@ -402,7 +435,7 @@ export default function ToBeBookedDeliveriesPage() {
     const [open, setOpen] = useState(false);
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
-
+    
     // derive display name directly (no useMemo so no ESLint warning)
     const displayName =
       (row.removalist_name && row.removalist_name.trim())
@@ -411,6 +444,9 @@ export default function ToBeBookedDeliveriesPage() {
             ? (removalists.find(r => Number(r.id) === Number(row.removalist_id))?.name || '')
             : ''
           );
+
+    const colorHex = carrierColor(displayName);
+    const inputStyle = colorHex ? { backgroundColor: colorHex } : undefined;
 
     // keep input text synced with latest prop when dropdown is closed
     useEffect(() => {
@@ -432,6 +468,7 @@ export default function ToBeBookedDeliveriesPage() {
           onFocus={() => setOpen(true)}
           onChange={(e) => setSearchText(e.target.value)}
           disabled={isSaving}
+          style={inputStyle}
           {...stopRowNav}
         />
         <CarrierDropdownPortal
