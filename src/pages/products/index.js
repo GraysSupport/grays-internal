@@ -65,6 +65,53 @@ export default function ProductsPage() {
     }
   };
 
+  const escapeCsv = (val) => {
+    if (val === null || val === undefined) return '""';
+    const s = String(val).replace(/"/g, '""');
+    return `"${s}"`; // always-quote for safety
+  };
+
+  const exportToCsv = () => {
+    // Use the filtered (but unpaginated) list
+    const rows = filteredProducts;
+
+    if (!rows.length) {
+      toast.error('No products to export.');
+      return;
+    }
+
+    const headers = ['SKU', 'Name', 'Brand', 'Stock', 'Price'];
+    const lines = [headers.map(escapeCsv).join(',')];
+
+    for (const p of rows) {
+      const line = [
+        escapeCsv(p.sku),
+        escapeCsv(p.name),
+        escapeCsv(p.brand),
+        escapeCsv(p.stock ?? ''),
+        // keep numeric to 2dp (handles strings too)
+        escapeCsv(
+          Number.isFinite(Number(p.price)) ? Number(p.price).toFixed(2) : (p.price ?? '')
+        ),
+      ].join(',');
+      lines.push(line);
+    }
+
+    const csv = lines.join('\r\n');
+    const bom = '\uFEFF'; // helps Excel open UTF-8 correctly
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('CSV downloaded.');
+  };
+
   return (
     <>
       <div className="fixed top-4 left-6 z-50 flex gap-2">
@@ -84,7 +131,14 @@ export default function ProductsPage() {
           <div className="flex-1 text-center">
             <h2 className="text-xl font-bold">Products</h2>
           </div>
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex gap-2">
+            <button
+              onClick={exportToCsv}
+              disabled={filteredProducts.length === 0}
+              className="bg-gray-200 text-gray-900 px-4 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
+            >
+              Export CSV
+            </button>
             <button
               onClick={() => setShowModal(true)}
               className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
