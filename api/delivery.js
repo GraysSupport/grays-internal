@@ -34,7 +34,7 @@ export default async function handler(req, res) {
                 string_agg(
                   (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
                   ', ' ORDER BY wi.workorder_items_id
-                ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+                ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Canceled'),
                 '—'
               ) AS items_text
             FROM workorder_items wi
@@ -91,7 +91,7 @@ export default async function handler(req, res) {
               string_agg(
                 (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
                 ', ' ORDER BY wi.workorder_items_id
-              ) FILTER (WHERE wi.workorder_items_id IS NOT NULL),
+              ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Canceled'),
               '—'
             ) AS items_text
           FROM workorder_items wi
@@ -121,6 +121,13 @@ export default async function handler(req, res) {
         LEFT JOIN removalist r ON r.id = d.removalist_id
         LEFT JOIN workorder   w ON w.workorder_id = d.workorder_id
         LEFT JOIN wo_items    i ON i.workorder_id = d.workorder_id
+        WHERE d.workorder_id IS NULL
+        OR EXISTS (
+              SELECT 1
+                FROM workorder_items wi
+              WHERE wi.workorder_id = d.workorder_id
+                AND wi.status <> 'Canceled'
+            )
         ORDER BY d.date_created DESC, d.delivery_id DESC
 
         `

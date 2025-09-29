@@ -7,6 +7,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState([]);
   const [waitlist, setWaitlist] = useState([]);
+  //const [workorders, setWorkorders] = useState([]);     
+  //const [deliveries, setDeliveries] = useState([]);     
+  //const [collections, setCollections] = useState([]);   
   const navigate = useNavigate();
 
   // --- helpers ---
@@ -29,12 +32,18 @@ export default function Dashboard() {
       const load = Promise.all([
         fetch('/api/products', { method: 'GET' }),
         fetch('/api/waitlist', { method: 'GET' }),
+        //fetch('api/workorder', {method: 'GET'}),
+        //fetch('api/delivery', {method: 'GET'}),
+        //fetch('/api/collections?completed=false', {method: 'GET'})
       ])
-        .then(async ([productsRes, waitlistRes]) => {
+        .then(async ([productsRes, waitlistRes/*, woRes, delRes, colRes*/]) => {
           // Parse bodies first
-          const [productsData, waitlistData] = await Promise.all([
+          const [productsData, waitlistData/*, woData, delData, colData*/] = await Promise.all([
             productsRes.json().catch(() => null),
             waitlistRes.json().catch(() => null),
+            //woRes.json().catch(() => null),
+            //delRes.json().catch(() => null),
+            //colRes.json().catch(() => null),
           ]);
 
           // Validate status codes
@@ -46,13 +55,31 @@ export default function Dashboard() {
             console.error('Waitlist API error:', waitlistData);
             throw new Error(waitlistData?.error || `Waitlist HTTP ${waitlistRes.status}`);
           }
+          /*if (!woRes.ok) {
+            console.error('Workorder API error:', woData);
+            throw new Error(woData?.error || `Workorder HTTP ${woRes.status}`);
+          }
+          if (!delRes.ok) {
+            console.error('Delivery API error:', delData);
+            throw new Error(delData?.error || `Delivery HTTP ${delRes.status}`);
+          }
+          if (!colRes.ok) {
+            console.error('Collections API error:', colData);
+            throw new Error(colData?.error || `Collections HTTP ${colRes.status}`);
+          }*/
 
           // Shape check + normalize to arrays
           const safeProducts = ensureArray(productsData);
           const safeWaitlist = ensureArray(waitlistData);
+          /*const safeWOs = ensureArray(woData);      
+          const safeDeliveries = ensureArray(delData); 
+          const safeCollections = ensureArray(colData); */
 
           setProducts(safeProducts);
           setWaitlist(safeWaitlist);
+          /*setWorkorders(safeWOs);        
+          setDeliveries(safeDeliveries); 
+          setCollections(safeCollections);*/ 
         });
 
       await toast.promise(load, {
@@ -63,6 +90,9 @@ export default function Dashboard() {
         // Keep state as arrays to avoid render crashes
         setProducts([]);
         setWaitlist([]);
+        /*setWorkorders([]);    
+        setDeliveries([]);    
+        setCollections([]);   */
       });
     };
 
@@ -202,7 +232,6 @@ export default function Dashboard() {
 
           <div className="bg-white p-6 rounded shadow-md">
             <h2 className="text-xl font-bold mb-4">Workshop Analytics</h2>
-            <h3 className='italic'>Under construction...</h3>
           </div>
         </main>
       </div>
