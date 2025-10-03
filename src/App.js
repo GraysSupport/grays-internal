@@ -27,6 +27,7 @@ import CompletedDeliveriesPage from './pages/delivery_operations/completed-deliv
 
 import CurrentCollectionsPage from './pages/delivery_operations/current-collections';
 import CompletedCollectionsPage from './pages/delivery_operations/completed-collections';
+import EditCollectionPage from './pages/delivery_operations/collections/[id]';
 
 function App() {
   const navigate = useNavigate();
@@ -114,6 +115,7 @@ function App() {
         
         <Route path="delivery_operations/current-collections" element={<CurrentCollectionsPage />} />
         <Route path="delivery_operations/completed-collections" element={<CompletedCollectionsPage />} />
+        <Route path="delivery_operations/collections/:id" element={<EditCollectionPage />} />
 
       </Routes>
     </>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // ⬅️ add this
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
 import DeliveryTabs from '../../components/DeliveryTabs';
@@ -16,6 +17,8 @@ export default function CurrentCollectionsPage() {
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
+
+  const navigate = useNavigate(); // ⬅️ init
 
   const load = async () => {
     setLoading(true);
@@ -55,6 +58,12 @@ export default function CurrentCollectionsPage() {
       return String(a.name || '').localeCompare(String(b.name || ''));
     });
   }, [rows, search]);
+
+  // helper to navigate to edit page
+  const goEdit = (id) => {
+    if (!id) return;
+    navigate(`/delivery_operations/collections/${id}`);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
@@ -117,7 +126,14 @@ export default function CurrentCollectionsPage() {
                   )}
 
                   {!loading && filtered.map((r) => (
-                    <tr key={r.id} className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100">
+                    <tr
+                      key={r.id}
+                      className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                      onClick={() => goEdit(r.id)}               // ⬅️ row click navigates
+                      tabIndex={0}                                 // ⬅️ keyboard focusable
+                      onKeyDown={(e) => { if (e.key === 'Enter') goEdit(r.id); }} // ⬅️ enter to open
+                      role="button"                                // ⬅️ accessibility hint
+                    >
                       <td className="px-4 py-3 text-sm w-40">{r.name}</td>
                       <td className="px-4 py-3 text-sm w-28">{r.suburb || '—'}</td>
                       <td className="px-4 py-3 text-sm w-20">{r.state || '—'}</td>
@@ -129,7 +145,7 @@ export default function CurrentCollectionsPage() {
                       <td className="px-4 py-3 text-sm w-24">
                         <button
                           className="rounded-md border px-3 py-1 hover:bg-gray-50"
-                          onClick={() => { setEditRow(r); setModalOpen(true); }}
+                          onClick={(e) => { e.stopPropagation(); setEditRow(r); setModalOpen(true); }} // ⬅️ prevent row nav
                         >
                           Edit
                         </button>
