@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
 import DeliveryTabs from '../../components/DeliveryTabs';
@@ -10,7 +11,24 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
+// Treat clicks on interactive elements as "do not navigate"
+const isInteractive = (el) => {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (['A','BUTTON','INPUT','TEXTAREA','SELECT','LABEL'].includes(tag)) return true;
+  // allow opting out with a data attribute anywhere up the tree
+  if (el.closest?.('[data-no-rownav="true"]')) return true;
+  return false;
+};
+
+const makeRowClick = (navigate) => (id) => (e) => {
+  // Ignore if the click started on an interactive control
+  if (isInteractive(e.target)) return;
+  navigate(`/delivery_operations/collections/${id}`);
+};
+
 export default function CurrentCollectionsPage() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -117,7 +135,10 @@ export default function CurrentCollectionsPage() {
                   )}
 
                   {!loading && filtered.map((r) => (
-                    <tr key={r.id} className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100">
+                    <tr key={r.id}
+                    onClick={makeRowClick(navigate)(r.id)}
+                    className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
+                    >
                       <td className="px-4 py-3 text-sm w-40">{r.name}</td>
                       <td className="px-4 py-3 text-sm w-28">{r.suburb || '—'}</td>
                       <td className="px-4 py-3 text-sm w-20">{r.state || '—'}</td>
@@ -128,8 +149,10 @@ export default function CurrentCollectionsPage() {
                       <td className="px-4 py-3 text-sm w-28">{r.status}</td>
                       <td className="px-4 py-3 text-sm w-24">
                         <button
+                          data-no-rownav="true"
+                          type="button"
                           className="rounded-md border px-3 py-1 hover:bg-gray-50"
-                          onClick={() => { setEditRow(r); setModalOpen(true); }}
+                          onClick={(e) => { e.stopPropagation(); setEditRow(r); setModalOpen(true); }}
                         >
                           Edit
                         </button>
