@@ -341,7 +341,7 @@ export default function Dashboard() {
 
           {/* Workshop / Ops Analytics */}
           <div className="bg-white p-6 rounded shadow-md">
-            <h2 className="text-xl font-bold mb-4">Workshop & Ops Analytics</h2>
+            <h2 className="text-xl font-bold mb-4">Delivery & Operations Analytics</h2>
 
             {/* KPI grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
