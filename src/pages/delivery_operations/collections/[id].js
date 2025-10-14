@@ -98,6 +98,18 @@ export default function CollectionDetailPage() {
     }
   }
 
+  // ---- NEW: refresh only the products list (avoid wiping local items/form) ----
+  async function fetchProductsOnly() {
+    try {
+      const res = await fetch('/api/products');
+      const data = await res.json().catch(() => []);
+      if (!res.ok) throw new Error(data?.error || 'Failed to load products');
+      setProducts(ensureArray(data));
+    } catch (err) {
+      toast.error(err.message || 'Failed to load products');
+    }
+  }
+
   // ----------------- Product Dropdown -----------------
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
@@ -194,25 +206,20 @@ export default function CollectionDetailPage() {
       <div className="fixed top-4 left-6 z-50 flex gap-2">
         <HomeButton />
         <BackButton />
+        {/* Single instance of CreateProductModal */}
         <CreateProductModal
           isOpen={showCreateProductModal}
           onClose={() => setShowCreateProductModal(false)}
           onCreated={async () => {
-            await fetchAll();             // refresh products
+            // Only refresh the products list so we don't wipe local items/form
+            await fetchProductsOnly();
             setShowCreateProductModal(false);
+            // Re-open dropdown and focus for a smooth flow
+            setOpenProductDropdown(true);
+            setTimeout(() => productInputRef.current?.focus(), 0);
           }}
         />
       </div>
-
-      {showCreateProductModal && (
-        <CreateProductModal
-          onClose={() => setShowCreateProductModal(false)}
-          onSuccess={async () => {
-            await fetchAll();
-            setShowCreateProductModal(false);
-          }}
-        />
-      )}
 
       <div className="min-h-screen bg-gray-100 flex justify-center items-start p-6">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl space-y-6">
@@ -292,7 +299,7 @@ export default function CollectionDetailPage() {
             <div className="grid md:grid-cols-12 gap-3 items-start" ref={productDropdownRef}>
               <div className="md:col-span-6">
                 <div className="text-xs text-gray-500 mb-1">
-                  Can&apos;t find a product?{" "}
+                  Can&apos;t find a product?{' '}
                   <button
                     type="button"
                     className="p-0 m-0 bg-transparent border-0 text-blue-700 hover:underline cursor-pointer align-baseline"
@@ -494,7 +501,7 @@ export default function CollectionDetailPage() {
                     throw new Error(data?.error || 'Failed to save');
                   }
                   toast.success('Collection saved', { id: toastId });
-                  await fetchAll();
+                  await fetchAll(); // full reload after a save is OK
                 } catch (err) {
                   toast.error(err.message, { id: toastId });
                 }
