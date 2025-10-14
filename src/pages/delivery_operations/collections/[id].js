@@ -143,7 +143,8 @@ export default function CollectionDetailPage() {
 
     if (!sku) return toast.error('Select a product first');
     if (qty <= 0) return toast.error('Quantity must be >= 1');
-    if (price <= 0) return toast.error('Price must be > 0');
+    // Allow price to be exactly 0; only block negative values
+    if (price < 0) return toast.error('Price cannot be negative');
     if (isOther(sku) && !String(form.custom_description || '').trim()) {
       return toast.error('Please enter a description for OTHER item.');
     }
@@ -376,7 +377,9 @@ export default function CollectionDetailPage() {
               </div>
 
               <div className="md:col-span-3">
-                <label className="block text-xs uppercase text-gray-600 mb-1">Purchase Price</label>
+                <label className="block text-xs uppercase text-gray-600 mb-1">
+                  Purchase Price <span className="text-xs text-gray-400">(can be 0)</span>
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -484,7 +487,7 @@ export default function CollectionDetailPage() {
                   const payloadItems = items.map((it) => ({
                     product_sku: it.product_sku,
                     quantity: Number(it.quantity || 0),
-                    purchase_price: Number(it.purchase_price || 0),
+                    purchase_price: Number(it.purchase_price || 0), // 0 allowed
                     custom_description: isOther(it.product_sku) ? (it.custom_description || '') : null,
                   }));
                   const res = await fetch(`/api/collections?id=${id}`, {
