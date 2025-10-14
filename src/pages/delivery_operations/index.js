@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
 import DeliveryTabs from '../../components/DeliveryTabs';
@@ -23,7 +23,7 @@ function formatItemsFromItems(items) {
     .map((it) => {
       const qty = formatQty(it.quantity);
       const name = it.product_name || it.product_id || '';
-      const cond = it.condition || ''; // enum direct from DB (New, Reco, CS, AT, CCG)
+      const cond = it.condition || '';
       return `${qty} × ${name}${cond ? ` (${cond})` : ''}`;
     })
     .join(', ');
@@ -33,33 +33,30 @@ function formatTechnicians(techs) {
   return techs.map((t) => t?.name || '').filter(Boolean).join(', ');
 }
 
-const TECH_BADGE_COLORS = {
-  Joe: '#F4B084',
-  Eden: '#FFFFCF',
-  Toby: '#FEFE41',
-  Lino: '#BDD7EE',
-  Brett: '#CDCFD0',
-};
-function techColor(name) {
-  return TECH_BADGE_COLORS[name] || '#E5E7EB'; // default light gray
-}
+const TECH_BADGE_COLORS = { Joe: '#F4B084', Eden: '#FFFFCF', Toby: '#FEFE41', Lino: '#BDD7EE', Brett: '#CDCFD0' };
+function techColor(name) { return TECH_BADGE_COLORS[name] || '#E5E7EB'; }
 
 export default function ActiveWorkordersPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({
-    state: '',
-    salesperson: '',
-    payment: '',
-    technicians: [] // multiple selected
-  });
+  const [filters, setFilters] = useState({ state: '', salesperson: '', payment: '', technicians: [] });
   const [technicians, setTechnicians] = useState([]);
   const [salespeople, setSalespeople] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
   const navigate = useNavigate();
 
-  // Fetch technicians for filter
+  // URL filter support
+  const location = useLocation();
+  const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const routerFilter = urlParams.get('filter'); // "past-target" | "important" | null
+
+  // today helper
+  const today = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -72,13 +69,9 @@ export default function ActiveWorkordersPage() {
     })();
   }, []);
 
-  // Fetch workorders
   useEffect(() => {
     const stored = localStorage.getItem('user');
-    if (!stored) {
-      navigate('/');
-      return;
-    }
+    if (!stored) { navigate('/'); return; }
 
     let mounted = true;
     (async () => {
@@ -92,8 +85,6 @@ export default function ActiveWorkordersPage() {
         if (!res.ok) throw new Error(data?.error || 'Failed to load work orders');
         if (mounted) {
           setRows(data);
-
-          // Extract unique salespeople for dropdown
           const uniqueSales = [...new Set(data.map(w => w.salesperson).filter(Boolean))].sort();
           setSalespeople(uniqueSales);
         }
@@ -109,7 +100,6 @@ export default function ActiveWorkordersPage() {
     return () => { mounted = false; };
   }, [navigate]);
 
-  // Apply filters client-side
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
@@ -124,54 +114,54 @@ export default function ActiveWorkordersPage() {
         w.notes ?? '',
         itemsStr,
       ].join(' ').toLowerCase();
-
       return !q || haystack.includes(q);
     });
 
-    if (filters.state) {
-      base = base.filter(w => w.delivery_state === filters.state);
-    }
-    if (filters.salesperson) {
-      base = base.filter(w => w.salesperson === filters.salesperson);
-    }
-    if (filters.payment === 'Paid') {
-      base = base.filter(w => Number(w.outstanding_balance) <= 0);
-    } else if (filters.payment === 'Outstanding') {
-      base = base.filter(w => Number(w.outstanding_balance) > 0);
-    }
+    if (filters.state) base = base.filter(w => w.delivery_state === filters.state);
+    if (filters.salesperson) base = base.filter(w => w.salesperson === filters.salesperson);
+    if (filters.payment === 'Paid') base = base.filter(w => Number(w.outstanding_balance) <= 0);
+    else if (filters.payment === 'Outstanding') base = base.filter(w => Number(w.outstanding_balance) > 0);
     if (filters.technicians.length > 0) {
-      base = base.filter(w =>
-        (w.technicians || []).some(t => filters.technicians.includes(String(t.id)))
-      );
+      base = base.filter(w => (w.technicians || []).some(t => filters.technicians.includes(String(t.id))));
     }
 
+    // sort
     const toTime = (d) => {
       if (!d) return Number.POSITIVE_INFINITY;
       const t = new Date(d).getTime();
       return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
     };
-
-    return [...base].sort((a, b) => {
+    let out = [...base].sort((a, b) => {
       const targetDiff = toTime(a.estimated_completion) - toTime(b.estimated_completion);
       if (targetDiff !== 0) return targetDiff;
       return toTime(a.date_created) - toTime(b.date_created);
     });
-  }, [rows, search, filters]);
 
-  // NEW: detect whether any filters/search are active
+    // URL router filter
+    if (routerFilter === 'past-target') {
+      out = out.filter((wo) => {
+        const d = wo?.estimated_completion ? new Date(wo.estimated_completion) : null;
+        return d && d < today;
+      });
+    } else if (routerFilter === 'important') {
+      out = out.filter((wo) => !!wo?.important_flag);
+    }
+
+    return out;
+  }, [rows, search, filters, routerFilter, today]);
+
   const filtersActive = useMemo(() => {
     return Boolean(
       search.trim() ||
       filters.state ||
       filters.salesperson ||
       filters.payment ||
-      (filters.technicians && filters.technicians.length > 0)
+      (filters.technicians && filters.technicians.length > 0) ||
+      routerFilter
     );
-  }, [search, filters]);
+  }, [search, filters, routerFilter]);
 
-  // NEW: printing helper
   const handlePrint = () => {
-    // Choose columns based on filtersActive
     const fullCols = [
       { key: 'invoice', header: 'Invoice', get: (w) => w.invoice_id ?? '—' },
       { key: 'woDate', header: 'WO Date', get: (w) => formatDate(w.date_created) },
@@ -181,8 +171,7 @@ export default function ActiveWorkordersPage() {
       { key: 'items', header: 'Items', get: (w) => formatItemsFromItems(w.items) },
       { key: 'sales', header: 'Sales', get: (w) => w.salesperson ?? '—' },
       {
-        key: 'payment',
-        header: 'Payment',
+        key: 'payment', header: 'Payment',
         get: (w) => {
           const due = Number(w.outstanding_balance);
           if (isNaN(due)) return '—';
@@ -198,8 +187,8 @@ export default function ActiveWorkordersPage() {
       { key: 'invoice', header: 'Invoice', get: (w) => w.invoice_id ?? '—' },
       { key: 'woDate', header: 'WO Date', get: (w) => formatDate(w.date_created) },
       { key: 'name', header: 'Name', get: (w) => w.customer_name ?? '—' },
-      { key: 'suburb', header: 'Suburb', get: (w) => w.delivery_suburb ?? '—' }, // ⬅ added
-      { key: 'state', header: 'State', get: (w) => w.delivery_state ?? '—' },     // ⬅ added
+      { key: 'suburb', header: 'Suburb', get: (w) => w.delivery_suburb ?? '—' },
+      { key: 'state', header: 'State', get: (w) => w.delivery_state ?? '—' },
       { key: 'items', header: 'Items', get: (w) => formatItemsFromItems(w.items) },
       { key: 'sales', header: 'Sales', get: (w) => w.salesperson ?? '—' },
       { key: 'techs', header: 'Technicians', get: (w) => formatTechnicians(w.technicians) },
@@ -221,7 +210,7 @@ export default function ActiveWorkordersPage() {
     const thead = `<thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>`;
 
     const now = new Date();
-    const meta = `${now.toLocaleString()}${filtersActive ? buildFilterSummary(filters, search) : ''}`;
+    const meta = `${now.toLocaleString()}${buildFilterSummary(filters, search)}${routerFilter ? ` • Filter=${routerFilter}` : ''}`;
 
     const html = `
       <!doctype html>
@@ -230,24 +219,20 @@ export default function ActiveWorkordersPage() {
       <meta charset="utf-8" />
       <title>${title}</title>
       <style>
-        @media print {
-          @page { size: A4 landscape; margin: 5mm; }
-        }
-        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111; }
-        h1 { margin: 0 0 4px; font-size: 18px; }
-        .meta { margin: 0 0 12px; font-size: 11px; color: #555; }
+        @media print { @page { size: A4 landscape; margin: 5mm; } }
+        body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#111; }
+        h1 { margin:0 0 4px; font-size:18px; }
+        .meta { margin:0 0 12px; font-size:11px; color:#555; }
         table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; vertical-align: top; }
-        th { background: #f3f4f6; text-align: left; }
-        tr:nth-child(even) td { background: #fafafa; }
+        th, td { border:1px solid #ddd; padding:6px 8px; font-size:13px; vertical-align:top; }
+        th { background:#f3f4f6; text-align:left; }
+        tr:nth-child(even) td { background:#fafafa; }
         thead { display: table-header-group; }
         tfoot { display: table-footer-group; }
         tbody { break-inside: avoid-page; page-break-inside: avoid; }
         tr, th, td { break-inside: avoid-page; page-break-inside: avoid; }
-        .footer { margin-top: 8px; font-size: 10px; color: #777; }
-
-        /* Highlight important rows in print */
-        tbody.row-important td { background: #eee !important; }
+        .footer { margin-top: 8px; font-size:10px; color:#777; }
+        tbody.row-important td { background:#eee !important; }
       </style>
       </head>
       <body>
@@ -268,14 +253,9 @@ export default function ActiveWorkordersPage() {
     win.document.close();
   };
 
-  // NEW: small helpers for printing
   function escapeHtml(s) {
-    return s
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#039;');
+    return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+      .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   }
   function buildFilterSummary(f, q) {
     const parts = [];
@@ -292,9 +272,7 @@ export default function ActiveWorkordersPage() {
       {/* Header */}
       <header className="border-b bg-white">
         <div className="py-4 px-4 flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Delivery Operations
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
           <button
             onClick={() => setShowFilters(f => !f)}
             className="rounded-lg border px-3 py-2 hover:bg-gray-50 flex items-center gap-1"
@@ -325,7 +303,6 @@ export default function ActiveWorkordersPage() {
                 + Create New Work Order
               </Link>
 
-              {/* NEW: Print button */}
               <button
                 onClick={handlePrint}
                 className="inline-flex items-center rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
@@ -354,16 +331,14 @@ export default function ActiveWorkordersPage() {
                   <option value="NT">NT</option>
                 </select>
 
-                {/* Salesperson dropdown */}
+                {/* Salesperson */}
                 <select
                   value={filters.salesperson}
                   onChange={(e) => setFilters(f => ({ ...f, salesperson: e.target.value }))}
                   className="rounded-lg border px-3 py-2"
                 >
                   <option value="">All Salespeople</option>
-                  {salespeople.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                  {salespeople.map(s => (<option key={s} value={s}>{s}</option>))}
                 </select>
 
                 {/* Payment */}
@@ -377,7 +352,7 @@ export default function ActiveWorkordersPage() {
                   <option value="Outstanding">Outstanding</option>
                 </select>
 
-                {/* Technicians checkboxes */}
+                {/* Technicians */}
                 <div className="border rounded-lg p-2">
                   <div className="font-medium text-sm mb-1">Technicians</div>
                   <div className="max-h-28 overflow-y-auto space-y-1">
@@ -436,12 +411,8 @@ export default function ActiveWorkordersPage() {
                       const itemsStr = formatItemsFromItems(w.items);
                       const hasDue = w.outstanding_balance != null && Number(w.outstanding_balance) > 0;
                       const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
-
-                      // NEW: flag + overlay color
                       const isImportant = !!w.important_flag;
-                      const overlayStyle = isImportant
-                        ? { boxShadow: 'inset 0 0 0 9999px rgba(251, 191, 36, 0.25)' }
-                        : undefined;
+                      const overlayStyle = isImportant ? { boxShadow: 'inset 0 0 0 9999px rgba(251,191,36,0.25)' } : undefined;
 
                       return (
                         <tr
@@ -509,7 +480,6 @@ export default function ActiveWorkordersPage() {
         </main>
       </div>
 
-      {/* Reusable bottom tabs */}
       <DeliveryTabs />
     </div>
   );

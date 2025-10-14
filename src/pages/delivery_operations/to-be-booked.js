@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
 
@@ -22,7 +22,7 @@ const CARRIER_COLOR_RULES = [
   { like: 'coastal', color: '#FDCDFE' }, // Coastal Breeze
   { like: 'bnl', color: '#92D050' },
   { like: 'bass strait', color: '#FEFF43' },
-  { like: 'rjd', color: '#FFFF00' },     // fixed hex: #FFFF00
+  { like: 'rjd', color: '#FFFF00' },
   { like: 'iron armour', color: '#CCCCFF' },
   { like: 'chris watkins', color: '#6767ff' },
   { like: 'ej shaws', color: '#ff5555' },
@@ -38,32 +38,24 @@ const CARRIER_COLOR_RULES = [
   { like: 'brs', color: '#d0cece' },
 ];
 
-// Resolve a background color based on LIKE/substring match
 function carrierColor(name) {
   const s = (name || '').toLowerCase();
   const rule = CARRIER_COLOR_RULES.find(r => s.includes(r.like));
   return rule?.color || null;
 }
 
-// Ignore row navigation if the click came from an interactive element,
-// or if the user is currently selecting text.
 function shouldBlockRowNav(e) {
   if (!e) return false;
   if (e.defaultPrevented) return true;
   const t = e.target;
-  // any interactive element or opt‐out class
   if (t.closest('input, textarea, select, button, a, [role="button"], [contenteditable="true"], .no-row-nav')) {
     return true;
   }
-  // if a text selection exists (drag highlight)
   const sel = window.getSelection?.();
   if (sel && sel.toString().length > 0) return true;
-
   return false;
 }
 
-
-// Reusable props to stop row-level navigation from child controls
 const stopRowNav = {
   onClick: (e) => e.stopPropagation(),
   onMouseDown: (e) => e.stopPropagation(),
@@ -87,17 +79,13 @@ function itemsTextFromWorkorderItems(items) {
   return items.map((it) => `${formatQty(it.quantity)} × ${it.product_name || it.product_id || ''}`).join(', ');
 }
 
-/* =======================
-   DATE HELPERS (TZ-SAFE)
-   ======================= */
-// Normalize any incoming value to 'YYYY-MM-DD' (string). If a time/TZ is present, keep only first 10.
+/* ======= DATE HELPERS (TZ-SAFE) ======= */
 function asYMD(x) {
   if (!x) return '';
   if (typeof x === 'string') {
     const m = x.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   }
-  // Fallback: try parse, but read in UTC to avoid AU/Sydney shift
   const d = new Date(x);
   if (!Number.isFinite(d.getTime())) return '';
   const y = d.getUTCFullYear();
@@ -105,18 +93,10 @@ function asYMD(x) {
   const dd = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 }
-/* ======================= */
+/* ===================================== */
 
-/** Simple $-prefixed number input, right-aligned */
-function CompactMoneyInput({
-  value,
-  onChange,
-  onBlur,
-  placeholder = '0.00',
-  widthClass = 'w-20',
-  inputRef,
-  disabled,
-}) {
+/** $-prefixed number input */
+function CompactMoneyInput({ value, onChange, onBlur, placeholder = '0.00', widthClass = 'w-20', inputRef, disabled }) {
   return (
     <div className={`inline-flex items-center rounded border bg-white ${widthClass} ${disabled ? 'opacity-60' : ''}`}>
       <span className="px-2 text-gray-500 select-none">$</span>
@@ -138,6 +118,10 @@ function CompactMoneyInput({
 
 export default function ToBeBookedDeliveriesPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const stateParam = (urlParams.get('state') || '').toUpperCase(); // <-- NEW: deep-link state filter
+
   const goWorkorder = useRowNav(navigate);
 
   const [loading, setLoading] = useState(true);
@@ -147,7 +131,6 @@ export default function ToBeBookedDeliveriesPage() {
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
 
-  // --- current user id (2-chars) from localStorage ---
   const currentUserId = useMemo(() => {
     try {
       const raw = localStorage.getItem('user');
@@ -155,12 +138,9 @@ export default function ToBeBookedDeliveriesPage() {
       const id = (u?.user_id ?? u?.id ?? u?.code ?? '').toString().toUpperCase();
       const trimmed = id.slice(0, 2);
       return trimmed && trimmed.length === 2 ? trimmed : 'NA';
-    } catch {
-      return 'NA';
-    }
+    } catch { return 'NA'; }
   }, []);
 
-  // toast helpers
   function startToast(prefix, key) {
     const id = `${prefix}-${key}-${Date.now()}`;
     toast.loading('Updating…', { id });
@@ -208,16 +188,10 @@ export default function ToBeBookedDeliveriesPage() {
         const rows = raw.map((d) => {
           const wo = d.workorder_id ? woMap[d.workorder_id] : null;
 
-          // --- ITEMS TEXT (force UI formatting to avoid 1.00 etc) ---
           let itemsText = '—';
-          if (wo?.items?.length) {
-            itemsText = itemsTextFromWorkorderItems(wo.items);
-          } else if (Array.isArray(d.items) && d.items.length) {
-            itemsText = itemsTextFromWorkorderItems(d.items);
-          } else if (typeof d.items_text === 'string') {
-            // last resort: normalize plain text so "1.00" -> "1" for whole numbers
-            itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
-          }
+          if (wo?.items?.length) itemsText = itemsTextFromWorkorderItems(wo.items);
+          else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
+          else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
           const outstanding =
             d.outstanding_balance != null ? Number(d.outstanding_balance)
@@ -228,7 +202,6 @@ export default function ToBeBookedDeliveriesPage() {
             rems.find((r) => Number(r.id) === Number(d.removalist_id))?.name ||
             '';
 
-          // ⬅ normalize date to a stable YYYY-MM-DD string
           const dateYMD = asYMD(d.delivery_date);
 
           return {
@@ -254,10 +227,16 @@ export default function ToBeBookedDeliveriesPage() {
     return () => { mounted = false; };
   }, [navigate]);
 
+  // Text search
   const filtered = useMemo(() => {
+    let list = deliveries;
+    // URL state filter first (if present)
+    if (stateParam) {
+      list = list.filter((d) => (d.delivery_state || '').toUpperCase() === stateParam);
+    }
     const q = search.trim().toLowerCase();
-    if (!q) return deliveries;
-    return deliveries.filter((d) =>
+    if (!q) return list;
+    return list.filter((d) =>
       [
         d.customer_name ?? '',
         d.delivery_suburb ?? '',
@@ -266,21 +245,23 @@ export default function ToBeBookedDeliveriesPage() {
         d.invoice_id ?? '',
       ].join(' ').toLowerCase().includes(q)
     );
-  }, [deliveries, search]);
+  }, [deliveries, search, stateParam]);
 
+  // Group by state
   const groupByState = useMemo(() => {
     const groups = new Map();
     for (const d of filtered) {
-      const st = d.delivery_state || 'Other';
+      const st = (d.delivery_state || 'Other').toUpperCase();
       if (!groups.has(st)) groups.set(st, []);
       groups.get(st).push(d);
     }
     return groups;
   }, [filtered]);
 
+  const AVAILABLE_STATES = useMemo(() => [...groupByState.keys()], [groupByState]);
   const OTHER_STATES = useMemo(
-    () => [...groupByState.keys()].filter((s) => !ORDERED_STATES.includes(s)),
-    [groupByState]
+    () => AVAILABLE_STATES.filter((s) => !ORDERED_STATES.includes(s)),
+    [AVAILABLE_STATES]
   );
 
   const stateLabel = useCallback((code) => {
@@ -297,7 +278,7 @@ export default function ToBeBookedDeliveriesPage() {
     }
   }, []);
 
-  // Save helpers (with toasts) — always send 2-char user_id
+  // Save helpers
   const saveDelivery = useCallback(async (deliveryId, patch) => {
     if (!deliveryId || !patch || typeof patch !== 'object') return;
     const toastId = startToast('saveDelivery', deliveryId);
@@ -312,13 +293,13 @@ export default function ToBeBookedDeliveriesPage() {
       if (!res.ok) throw new Error(data?.error || 'Save failed');
 
       setDeliveries((list) => {
-        // If status changed and no longer matches this page, drop it
         if ('delivery_status' in patch && patch.delivery_status !== 'To Be Booked') {
           return list.filter((r) => r.delivery_id !== deliveryId);
         }
-        // Otherwise just patch the row
         return list.map((row) =>
-          row.delivery_id === deliveryId ? { ...row, ...patch, delivery_date: asYMD(patch.delivery_date ?? row.delivery_date) } : row
+          row.delivery_id === deliveryId
+            ? { ...row, ...patch, delivery_date: asYMD(patch.delivery_date ?? row.delivery_date) }
+            : row
         );
       });
       resolveToast(toastId, true, 'Saved');
@@ -363,7 +344,7 @@ export default function ToBeBookedDeliveriesPage() {
     }
   }, [currentUserId]);
 
-  // ===== Carrier dropdown via portal (escapes table overflow) =====
+  // Dropdown via portal
   function CarrierDropdownPortal({ anchorRef, options, onPick, onClose, open }) {
     const [rect, setRect] = useState(null);
     const menuRef = useRef(null);
@@ -388,10 +369,7 @@ export default function ToBeBookedDeliveriesPage() {
     useEffect(() => {
       if (!open) return;
       const handleClick = (e) => {
-        if (
-          !menuRef.current?.contains(e.target) &&
-          !anchorRef.current?.contains(e.target)
-        ) {
+        if (!menuRef.current?.contains(e.target) && !anchorRef.current?.contains(e.target)) {
           onClose?.();
         }
       };
@@ -429,14 +407,12 @@ export default function ToBeBookedDeliveriesPage() {
     );
   }
 
-  // ===== Cell components =====
   const CarrierCell = ({ row }) => {
     const [searchText, setSearchText] = useState(row.removalist_name || '');
     const [open, setOpen] = useState(false);
     const inputRef = useRef(null);
     const isSaving = savingIds.has(row.delivery_id);
-    
-    // derive display name directly (no useMemo so no ESLint warning)
+
     const displayName =
       (row.removalist_name && row.removalist_name.trim())
         ? row.removalist_name
@@ -448,10 +424,7 @@ export default function ToBeBookedDeliveriesPage() {
     const colorHex = carrierColor(displayName);
     const inputStyle = colorHex ? { backgroundColor: colorHex } : undefined;
 
-    // keep input text synced with latest prop when dropdown is closed
-    useEffect(() => {
-      if (!open) setSearchText(displayName || '');
-    }, [displayName, open]);
+    useEffect(() => { if (!open) setSearchText(displayName || ''); }, [displayName, open]);
 
     const q = (searchText || '').toLowerCase().trim();
     const list = !q
@@ -482,7 +455,7 @@ export default function ToBeBookedDeliveriesPage() {
             if (Number(row.removalist_id) !== Number(r.id)) {
               await saveDelivery(row.delivery_id, {
                 removalist_id: Number(r.id),
-                removalist_name: r.name, // optimistic patch so UI updates immediately
+                removalist_name: r.name,
               });
             }
           }}
@@ -491,11 +464,9 @@ export default function ToBeBookedDeliveriesPage() {
     );
   };
 
-  // New: Date cell (HTML5 date picker) — bind to stable YYYY-MM-DD
   const DateCell = ({ row }) => {
     const [val, setVal] = useState(() => asYMD(row.delivery_date));
     useEffect(() => { setVal(asYMD(row.delivery_date)); }, [row.delivery_date]);
-
     const busy = savingIds.has(row.delivery_id);
     return (
       <input
@@ -566,11 +537,7 @@ export default function ToBeBookedDeliveriesPage() {
           }}
           disabled={busy}
         />
-        {busy ? (
-          <span className="text-xs text-gray-400">Saving…</span>
-        ) : (
-          <div className="w-full flex justify-center">{label}</div>
-        )}
+        {busy ? <span className="text-xs text-gray-400">Saving…</span> : <div className="w-full flex justify-center">{label}</div>}
       </div>
     );
   };
@@ -597,50 +564,39 @@ export default function ToBeBookedDeliveriesPage() {
   };
 
   const StatusCell = ({ row }) => {
-    // Allow booking without a date ONLY when carrier id === 15 (Customer Collect)
     const isCustomerCollect = Number(row.removalist_id) === 15;
-
     return (
       <select
         className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
         value={row.delivery_status}
         onChange={(e) => {
           const v = e.target.value;
-
           if (v === 'Booked for Delivery') {
-            // Must have a carrier selected in all cases
-            if (!row.removalist_id) {
-              toast.error('Set Carrier before booking for delivery');
-              return;
-            }
-            // Date required unless carrier id is 15 (Customer Collect)
+            if (!row.removalist_id) { toast.error('Set Carrier before booking for delivery'); return; }
             if (!row.delivery_date && !isCustomerCollect) {
               toast.error('Set Delivery Date before booking for delivery');
               return;
             }
           }
-
-          if (v !== row.delivery_status) {
-            saveDelivery(row.delivery_id, { delivery_status: v });
-          }
+          if (v !== row.delivery_status) saveDelivery(row.delivery_id, { delivery_status: v });
         }}
         disabled={savingIds.has(row.delivery_id)}
         {...stopRowNav}
       >
-        {EDITABLE_STATUSES.map((s) => (
-          <option key={s} value={s}>{s}</option>
-        ))}
+        {EDITABLE_STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
       </select>
     );
   };
 
-
-  // ===== Section renderer (State column removed; Date column added) =====
+  // Section renderer
   const renderSection = (code) => {
     const rows = (groupByState.get(code) || []).map(r => ({ ...r, delivery_date: asYMD(r.delivery_date) }));
     return (
       <section key={code} className="rounded-xl border bg-white">
-        <div className="p-3 text-center text-lg font-semibold">{stateLabel(code)}</div>
+        <div className="p-3 flex items-center justify-between">
+          <div className="text-lg font-semibold">{stateLabel(code)}</div>
+          <div className="text-sm text-gray-500">Jobs: {rows.length}</div>
+        </div>
         <div className="overflow-x-auto">
           <table className="min-w-full table-fixed">
             <thead className="bg-gray-100">
@@ -660,12 +616,8 @@ export default function ToBeBookedDeliveriesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
-              )}
-              {!loading && rows.length === 0 && (
-                <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
-              )}
+              {loading && <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>}
               {rows.map((row, idx) => {
                 const margin =
                   (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
@@ -676,13 +628,8 @@ export default function ToBeBookedDeliveriesPage() {
                     key={row.delivery_id}
                     className={`${rowCls} cursor-pointer hover:bg-gray-100 align-top`}
                     tabIndex={0}
-                    onClick={(e) => {
-                      if (shouldBlockRowNav(e)) return;
-                      goWorkorder(row.workorder_id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
-                    }}
+                    onClick={(e) => { if (!shouldBlockRowNav(e)) goWorkorder(row.workorder_id); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id); }}
                   >
                     <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
@@ -708,51 +655,74 @@ export default function ToBeBookedDeliveriesPage() {
     );
   };
 
-  const renderOther = () =>
-    [...OTHER_STATES].sort().map((code) => (
-      <div key={code} className="mt-6">{renderSection(code)}</div>
-    ));
+  // Which sections to render?
+  const orderedToShow = stateParam
+    ? ORDERED_STATES.filter((s) => AVAILABLE_STATES.includes(s) && s === stateParam)
+    : ORDERED_STATES.filter((s) => AVAILABLE_STATES.includes(s));
+
+  const otherToShow = stateParam
+    ? OTHER_STATES.filter((s) => s === stateParam)
+    : [...OTHER_STATES].sort();
+
+  const nothingForState = stateParam && !AVAILABLE_STATES.includes(stateParam);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       <header className="border-b bg-white">
-        <div className="py-4 px-4 flex items-center justify-center">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Delivery Operations
-          </h1>
+        <div className="py-4 px-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-semibold tracking-tight">Delivery Operations</h1>
+
+          <div className="flex items-center gap-3">
+            {stateParam && (
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-sm text-blue-700 ring-1 ring-inset ring-blue-200">
+                State: {stateParam}
+                <button
+                  className="text-blue-700 hover:underline"
+                  onClick={() => navigate('/delivery_operations/to-be-booked')}
+                >
+                  clear
+                </button>
+              </span>
+            )}
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search deliveries or items…"
+              className="w-56 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+            />
+          </div>
         </div>
       </header>
 
       <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
-        {/* Main */}
         <main className="col-span-12">
           <div className="rounded-xl border bg-white">
-            <div className="border-b p-4 grid gap-3 grid-cols-1 sm:grid-cols-3 items-center">
-              <div className="w-full sm:max-w-xs">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search deliveries or items…"
-                  className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
-                />
-              </div>
-              <div className="hidden sm:flex justify-center">
-                <h2 className="text-lg font-semibold">Deliveries to be Booked</h2>
-              </div>
-              <div className="sm:hidden">
-                <h2 className="text-lg font-semibold text-center">Deliveries to be Booked</h2>
-              </div>
-              <div />
+            <div className="border-b p-4">
+              <h2 className="text-lg font-semibold text-center sm:text-left">Deliveries to be Booked</h2>
+              {stateParam && nothingForState && (
+                <div className="mt-2 text-sm text-red-600">
+                  No “To Be Booked” deliveries in {stateParam}.
+                </div>
+              )}
             </div>
 
             <div className="space-y-6 p-4">
-              {ORDERED_STATES.map((code) => renderSection(code))}
-              {renderOther()}
+              {orderedToShow.map((code) => renderSection(code))}
+              {otherToShow.map((code) => (
+                <div key={code} className="mt-6">{renderSection(code)}</div>
+              ))}
+
+              {!loading && AVAILABLE_STATES.length === 0 && (
+                <div className="text-center text-sm text-gray-600 py-8">
+                  No “To Be Booked” deliveries.
+                </div>
+              )}
             </div>
           </div>
         </main>
       </div>
+
       <DeliveryTabs />
     </div>
   );
