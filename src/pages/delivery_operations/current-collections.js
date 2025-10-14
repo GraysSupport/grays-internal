@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
 import DeliveryTabs from '../../components/DeliveryTabs';
@@ -11,29 +11,54 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-// Treat clicks on interactive elements as "do not navigate"
 const isInteractive = (el) => {
   if (!el) return false;
   const tag = el.tagName;
   if (['A','BUTTON','INPUT','TEXTAREA','SELECT','LABEL'].includes(tag)) return true;
-  // allow opting out with a data attribute anywhere up the tree
   if (el.closest?.('[data-no-rownav="true"]')) return true;
   return false;
 };
 
 const makeRowClick = (navigate) => (id) => (e) => {
-  // Ignore if the click started on an interactive control
   if (isInteractive(e.target)) return;
   navigate(`/delivery_operations/collections/${id}`);
 };
 
 export default function CurrentCollectionsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const when = params.get('when'); // "this-week" | "next-week" | null
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
+
+  // date helpers
+  const today = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, []);
+  const thisWeek = useMemo(() => {
+    const d = new Date(today);
+    const day = (d.getDay() + 6) % 7;
+    const start = new Date(d); start.setDate(d.getDate() - day);
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    return { start, end };
+  }, [today]);
+  const nextWeek = useMemo(() => {
+    const start = new Date(thisWeek.end);
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    return { start, end };
+  }, [thisWeek]);
+  const inRange = (iso, { start, end }) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= start && d < end;
+  };
 
   const load = async () => {
     setLoading(true);
@@ -54,14 +79,18 @@ export default function CurrentCollectionsPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const base = q
+    let base = q
       ? rows.filter((r) =>
           [r.name, r.suburb, r.state, r.description, r.removalist_name, r.notes, r.status]
             .filter(Boolean).join(' ').toLowerCase().includes(q)
         )
       : rows;
 
-    // ASC by collection_date (nulls last), then name
+    // URL week filter
+    if (when === 'this-week') base = base.filter((r) => inRange(r.collection_date, thisWeek));
+    else if (when === 'next-week') base = base.filter((r) => inRange(r.collection_date, nextWeek));
+
+    // sort: collection_date asc (nulls last), then name
     const toTime = (d) => {
       if (!d) return Number.POSITIVE_INFINITY;
       const t = new Date(d).getTime();
@@ -72,7 +101,7 @@ export default function CurrentCollectionsPage() {
       if (dt !== 0) return dt;
       return String(a.name || '').localeCompare(String(b.name || ''));
     });
-  }, [rows, search]);
+  }, [rows, search, when, thisWeek, nextWeek]);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
@@ -136,8 +165,8 @@ export default function CurrentCollectionsPage() {
 
                   {!loading && filtered.map((r) => (
                     <tr key={r.id}
-                    onClick={makeRowClick(navigate)(r.id)}
-                    className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
+                      onClick={makeRowClick(navigate)(r.id)}
+                      className="align-top odd:bg-white even:bg-gray-50 hover:bg-gray-100"
                     >
                       <td className="px-4 py-3 text-sm w-40">{r.name}</td>
                       <td className="px-4 py-3 text-sm w-28">{r.suburb || '—'}</td>

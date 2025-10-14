@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
 
@@ -122,6 +122,11 @@ export default function DeliverySchedulePage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
 
+  const location = useLocation();
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const when = params.get('when');      // "today" | "this-week" | null
+  const filter = params.get('filter');  // "customer-collect" | null
+
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [removalists, setRemovalists] = useState([]);
@@ -139,6 +144,25 @@ export default function DeliverySchedulePage() {
       return id || 'NA';
     } catch { return 'NA'; }
   }, []);
+
+  // today + week bounds for URL filters
+  const today = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, []);
+  const weekBounds = useMemo(() => {
+    const d = new Date(today);
+    const day = (d.getDay() + 6) % 7;
+    const start = new Date(d); start.setDate(d.getDate() - day);
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    return { start, end };
+  }, [today]);
+  const ymdOnly = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
 
   function startToast(prefix, key) {
     const id = `${prefix}-${key}-${Date.now()}`;
@@ -230,6 +254,23 @@ export default function DeliverySchedulePage() {
   const filtered = useMemo(() => {
     let list = rows;
 
+    // URL-based filters
+    if (when === 'today') {
+      list = list.filter((d) => {
+        const dt = ymdOnly(d.delivery_date);
+        return dt && dt.getTime() === today.getTime();
+      });
+    } else if (when === 'this-week') {
+      list = list.filter((d) => {
+        const dt = ymdOnly(d.delivery_date);
+        return dt && dt >= weekBounds.start && dt < weekBounds.end;
+      });
+    }
+    if (filter === 'customer-collect') {
+      list = list.filter((d) => isCustomerCollect(d));
+    }
+
+    // Existing search filter
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((d) =>
@@ -244,17 +285,15 @@ export default function DeliverySchedulePage() {
       );
     }
 
-    if (filterDate) {
-      list = list.filter(d => ymd(d.delivery_date) === filterDate);
-    }
-
+    // Existing date/removalist dropdown filters
+    if (filterDate) list = list.filter(d => ymd(d.delivery_date) === filterDate);
     if (filterRemovalist) {
       const target = filterRemovalist.trim().toLowerCase();
       list = list.filter(d => (d.removalist_name || '').trim().toLowerCase() === target);
     }
 
     return list;
-  }, [rows, search, filterDate, filterRemovalist]);
+  }, [rows, when, filter, search, filterDate, filterRemovalist, today, weekBounds, isCustomerCollect]);
 
   // Split rows into Customer Collect vs non-CC
   const { customerCollectRows, nonCustomerCollectRows } = useMemo(() => {
