@@ -322,8 +322,9 @@ export default function ActiveWorkordersPage() {
                   className="rounded-lg border px-3 py-2"
                 >
                   <option value="">All States</option>
-                  <option value="NSW">NSW</option>
                   <option value="VIC">VIC</option>
+                  <option value="NSW">NSW</option>
+                  <option value="ACT">ACT</option>
                   <option value="QLD">QLD</option>
                   <option value="SA">SA</option>
                   <option value="WA">WA</option>
