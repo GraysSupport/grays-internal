@@ -90,6 +90,49 @@ function formatDate(iso) {
     .replace(' ', '-');
 }
 
+/** --- Reusable compact $ input (same feel as schedule page) --- */
+function CompactMoneyInput({ value, onChange, onBlur, placeholder = '0.00', widthClass = 'w-20', disabled }) {
+  return (
+    <div className={`inline-flex items-center rounded border bg-white ${widthClass} ${disabled ? 'opacity-60' : ''}`}>
+      <span className="px-2 text-gray-500 select-none">$</span>
+      <input
+        type="number"
+        step="0.01"
+        className="w-full min-w-0 appearance-none border-0 px-2 py-1 text-right font-mono text-sm focus:outline-none"
+        style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
+        value={value ?? ''}
+        placeholder={placeholder}
+        onChange={onChange}
+        onBlur={onBlur}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
+/** Money cell wrapper to PATCH on blur */
+function MoneyCell({ row, field, savingIds, saveDelivery }) {
+  const [val, setVal] = useState(row[field] ?? '');
+  useEffect(() => { setVal(row[field] ?? ''); }, [row, field]);
+  const busy = savingIds.has(row.delivery_id);
+
+  return (
+    <div {...stopRowNav}>
+      <CompactMoneyInput
+        widthClass="w-20"
+        value={val ?? ''}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={() => {
+          const num = val === '' ? null : Number(val);
+          const orig = row[field] == null ? null : Number(row[field]);
+          if (num !== orig) saveDelivery(row.delivery_id, { [field]: num });
+        }}
+        disabled={busy}
+      />
+    </div>
+  );
+}
+
 export default function CompletedDeliveriesPage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
@@ -206,7 +249,7 @@ export default function CompletedDeliveriesPage() {
       }
     })();
 
-    return () => { mounted = false; };
+  return () => { mounted = false; };
   }, [navigate]);
 
   // SEARCH then paginate
@@ -491,8 +534,27 @@ export default function CompletedDeliveriesPage() {
                           <td className="px-3 py-2 text-sm text-center"><PaymentBadge outstanding={row.outstanding_balance} /></td>
                           <td className="px-3 py-2 text-sm">{formatDate(row.delivery_date) || '—'}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>
-                          <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_charged)}</td>
-                          <td className="px-3 py-2 text-sm">{fmtMoney(row.delivery_quoted)}</td>
+
+                          {/* ✅ EDITABLE: Delivery Charged */}
+                          <td className="px-3 py-2 text-sm" {...stopRowNav}>
+                            <MoneyCell
+                              row={row}
+                              field="delivery_charged"
+                              savingIds={savingIds}
+                              saveDelivery={saveDelivery}
+                            />
+                          </td>
+
+                          {/* ✅ EDITABLE: Delivery Quoted */}
+                          <td className="px-3 py-2 text-sm" {...stopRowNav}>
+                            <MoneyCell
+                              row={row}
+                              field="delivery_quoted"
+                              savingIds={savingIds}
+                              saveDelivery={saveDelivery}
+                            />
+                          </td>
+
                           <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><StatusCell row={row} /></td>
                         </tr>
