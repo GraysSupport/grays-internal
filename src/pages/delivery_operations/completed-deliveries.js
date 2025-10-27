@@ -42,6 +42,7 @@ const CARRIER_COLOR_RULES = [
   { like: 'eastside', color: '#9efe9c' },
   { like: 'thompson', color: '#ff9999' },
   { like: 'brs', color: '#d0cece' },
+  { like: 'grays', color: '#bfd6ebff' },
 ];
 
 // Resolve a background color based on LIKE/substring match
