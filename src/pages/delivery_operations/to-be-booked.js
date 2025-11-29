@@ -77,8 +77,16 @@ function formatQty(q) {
 }
 function itemsTextFromWorkorderItems(items) {
   if (!Array.isArray(items) || !items.length) return '—';
-  return items.map((it) => `${formatQty(it.quantity)} × ${it.product_name || it.product_id || ''}`).join(', ');
+  return items
+    .map((it) => {
+      const qty = formatQty(it.quantity);
+      const name = it.product_name || it.product_id || '';
+      const cond = it.condition || '';
+      return `${qty} × ${name}${cond ? ` (${cond})` : ''}`;
+    })
+    .join(', ');
 }
+
 
 /* ======= DATE HELPERS (TZ-SAFE) ======= */
 function asYMD(x) {

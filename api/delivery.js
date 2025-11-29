@@ -32,7 +32,15 @@ export default async function handler(req, res) {
               wi.workorder_id,
               COALESCE(
                 string_agg(
-                  (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
+                  (
+                    wi.quantity::text || ' × ' ||
+                    COALESCE(wi.custom_description, p.name, wi.product_id) ||
+                    CASE
+                      WHEN wi.condition IS NOT NULL THEN
+                        ' (' || wi.condition::text || ')'
+                      ELSE ''
+                    END
+                  )::text,
                   ', ' ORDER BY wi.workorder_items_id
                 ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Canceled'),
                 '—'
@@ -89,7 +97,15 @@ export default async function handler(req, res) {
             wi.workorder_id,
             COALESCE(
               string_agg(
-                (wi.quantity::text || ' × ' || COALESCE(p.name, wi.product_id))::text,
+                (
+                  wi.quantity::text || ' × ' ||
+                  COALESCE(wi.custom_description, p.name, wi.product_id) ||
+                  CASE
+                    WHEN wi.condition IS NOT NULL THEN
+                      ' (' || wi.condition::text || ')'
+                    ELSE ''
+                  END
+                )::text,
                 ', ' ORDER BY wi.workorder_items_id
               ) FILTER (WHERE wi.workorder_items_id IS NOT NULL AND wi.status <> 'Canceled'),
               '—'
@@ -163,20 +179,20 @@ export default async function handler(req, res) {
 
       // If creating directly as "Booked for Delivery", require date+carrier unless customer collect
       if (delivery_status === 'Booked for Delivery') {
-      const rid = removalist_id == null || removalist_id === '' ? null : Number(removalist_id);
-      const isCC = rid === CUSTOMER_COLLECT_ID;
-      const hasDate = !!(delivery_date && String(delivery_date).trim() !== '');
-      if (!rid) {
-        return res.status(400).json({
-          error: "Cannot set status to 'Booked for Delivery' without Carrier",
-        });
+        const rid = removalist_id == null || removalist_id === '' ? null : Number(removalist_id);
+        const isCC = rid === CUSTOMER_COLLECT_ID;
+        const hasDate = !!(delivery_date && String(delivery_date).trim() !== '');
+        if (!rid) {
+          return res.status(400).json({
+            error: "Cannot set status to 'Booked for Delivery' without Carrier",
+          });
+        }
+        if (!isCC && !hasDate) {
+          return res.status(400).json({
+            error: "Cannot set status to 'Booked for Delivery' without Delivery Date",
+          });
+        }
       }
-      if (!isCC && !hasDate) {
-        return res.status(400).json({
-          error: "Cannot set status to 'Booked for Delivery' without Delivery Date",
-        });
-      }
-    }
 
       const actorId = twoCharId(req.headers['x-user-id'] || body?.user_id);
 
@@ -290,7 +306,6 @@ export default async function handler(req, res) {
           });
         }
       }
-
 
       const sets = [];
       const vals = [];
