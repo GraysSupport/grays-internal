@@ -12,15 +12,26 @@ function twoCharId(x) {
   return (s || 'NA').slice(0, 2);
 }
 
+/** Get access for current user (used to gate selling_price) **/
+async function getUserAccess(client, userId2) {
+  const id2 = twoCharId(userId2 || '');
+  if (!id2) return null;
+  const r = await client.query(`SELECT access FROM users WHERE id = $1 LIMIT 1`, [id2]);
+  return r.rowCount ? r.rows[0].access : null;
+}
+
 /** Centralized logger **/
-async function logEvent(client, {
-  workorder_id,
-  workorder_items_id = null,
-  event_type,
-  user_id = 'NA',
-  item_status = null,
-  notes_log = null, 
-}) {
+async function logEvent(
+  client,
+  {
+    workorder_id,
+    workorder_items_id = null,
+    event_type,
+    user_id = 'NA',
+    item_status = null,
+    notes_log = null,
+  }
+) {
   await client.query(
     `INSERT INTO workorder_logs
        (workorder_id, workorder_items_id, event_type, user_id, item_status, notes_log)
@@ -29,17 +40,13 @@ async function logEvent(client, {
   );
 }
 
-
 /** =========================
  * INVENTORY HELPERS
  * ========================== */
 
 /** Atomic stock adjust with row lock and no-negative guard */
 async function adjustProductStock(client, sku, delta) {
-  const r = await client.query(
-    `SELECT stock FROM product WHERE sku = $1 FOR UPDATE`,
-    [sku]
-  );
+  const r = await client.query(`SELECT stock FROM product WHERE sku = $1 FOR UPDATE`, [sku]);
   if (!r.rowCount) throw new Error(`Product not found: ${sku}`);
 
   const current = Number(r.rows[0].stock ?? 0);
@@ -55,7 +62,12 @@ async function adjustProductStock(client, sku, delta) {
 }
 
 export default async function handler(req, res) {
-  const { method, query: { id }, body } = req;
+  const {
+    method,
+    query: { id },
+    body,
+  } = req;
+
   const client = await getClientWithTimezone();
 
   try {
@@ -91,14 +103,19 @@ export default async function handler(req, res) {
 
         if (!wo.rows.length) return res.status(404).json({ error: 'Workorder not found' });
 
+        // gate selling_price by user access (superadmin only)
+        const actorId = twoCharId(req.headers?.['x-user-id'] || '');
+        const actorAccess = await getUserAccess(client, actorId);
+        const canSeeSellingPrice = actorAccess === 'superadmin';
+
         const items = await client.query(
           `
           SELECT 
             wi.workorder_items_id, wi.workorder_id, wi.product_id,
             COALESCE(wi.custom_description, p.name, wi.product_id) AS product_name,
             wi.quantity, wi.condition, wi.technician_id, wi.status,
-            wi.workshop_duration,            -- NEW
-            wi.item_sn                       -- NEW
+            wi.item_sn
+            ${canSeeSellingPrice ? `, wi.selling_price` : ``}
           FROM workorder_items wi
           LEFT JOIN product p ON p.sku = wi.product_id
           WHERE wi.workorder_id = $1
@@ -128,11 +145,10 @@ export default async function handler(req, res) {
           [id]
         );
 
-
         return res.status(200).json({
           ...wo.rows[0],
           items: items.rows,
-          activity: logs.rows
+          activity: logs.rows,
         });
       }
 
@@ -147,22 +163,32 @@ export default async function handler(req, res) {
 
       // For item aggregates:
       const itemStatusPredicate =
-        statusFilter === 'Completed'
-          ? `wi.status = 'Completed'`
-          : `wi.status <> 'Completed'`;
+        statusFilter === 'Completed' ? `wi.status = 'Completed'` : `wi.status <> 'Completed'`;
 
       let conditions = [];
       let params = [];
       let i = 1;
 
-      if (statusFilter) { conditions.push(`wo.status = $${i++}`); params.push(statusFilter); }
-      if (state) { conditions.push(`wo.delivery_state = $${i++}`); params.push(state); }
-      if (salesperson) { conditions.push(`wo.salesperson = $${i++}`); params.push(salesperson); }
-      if (payment) { 
+      if (statusFilter) {
+        conditions.push(`wo.status = $${i++}`);
+        params.push(statusFilter);
+      }
+      if (state) {
+        conditions.push(`wo.delivery_state = $${i++}`);
+        params.push(state);
+      }
+      if (salesperson) {
+        conditions.push(`wo.salesperson = $${i++}`);
+        params.push(salesperson);
+      }
+      if (payment) {
         if (payment.toLowerCase() === 'paid') conditions.push(`wo.outstanding_balance = 0`);
         else if (payment.toLowerCase() === 'due') conditions.push(`wo.outstanding_balance > 0`);
       }
-      if (technician) { conditions.push(`wi.technician_id = $${i++}`); params.push(technician); }
+      if (technician) {
+        conditions.push(`wi.technician_id = $${i++}`);
+        params.push(technician);
+      }
 
       const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -179,6 +205,7 @@ export default async function handler(req, res) {
           wo.estimated_completion,
           wo.notes,
           wo.important_flag,
+          wo.ecommerce,               -- ✅ NEW
           c.name AS customer_name,
 
           COALESCE(
@@ -237,7 +264,6 @@ export default async function handler(req, res) {
       return res.status(200).json(list.rows);
     }
 
-
     /** =========================
      * POST  (Create workorder)
      * ========================== */
@@ -255,14 +281,23 @@ export default async function handler(req, res) {
         status,
         outstanding_balance,
         items,
-        important_flag
+        important_flag,
       } = body || {};
 
-      if (!invoice_id || !customer_id || !salesperson || !delivery_state || !lead_time || outstanding_balance == null) {
+      if (
+        !invoice_id ||
+        !customer_id ||
+        !salesperson ||
+        !delivery_state ||
+        !lead_time ||
+        outstanding_balance == null
+      ) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const actorId = twoCharId(req.headers['x-user-id'] || salesperson);
+      const actorId = twoCharId(req.headers?.['x-user-id'] || salesperson);
+      const actorAccess = await getUserAccess(client, actorId);
+      const canEditSellingPrice = actorAccess === 'superadmin';
 
       await client.query('BEGIN');
 
@@ -300,7 +335,7 @@ export default async function handler(req, res) {
           notes || null,
           status || 'Work Ordered',
           Number(outstanding_balance),
-          important_flag == null ? false : !!important_flag
+          important_flag == null ? false : !!important_flag,
         ]
       );
       const workorderId = woRes.rows[0].workorder_id;
@@ -313,9 +348,7 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Technician is required for each item.' });
           }
 
-          const itmStatus = item.status && String(item.status).trim()
-            ? item.status
-            : 'Not in Workshop';
+          const itmStatus = item.status && String(item.status).trim() ? item.status : 'Not in Workshop';
 
           const qty = Number(item.quantity);
           if (item.is_custom && !(item.custom_description && String(item.custom_description).trim())) {
@@ -327,12 +360,12 @@ export default async function handler(req, res) {
           if (!item.is_custom) {
             await adjustProductStock(client, item.product_id, -qty);
           }
-          
+
           await client.query(
             `
             INSERT INTO workorder_items (
               workorder_id, product_id, quantity, condition, technician_id, status,
-              workshop_duration, item_sn, is_custom, custom_description, custom_unit_price
+              item_sn, is_custom, custom_description, custom_unit_price, selling_price
             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             `,
             [
@@ -342,13 +375,15 @@ export default async function handler(req, res) {
               item.condition || 'NA',
               twoCharId(item.technician_id),
               itmStatus,
-              item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
               item.item_sn ?? null,
               !!item.is_custom,
-              item.is_custom ? (item.custom_description || null) : null,
+              item.is_custom ? item.custom_description || null : null,
               item.is_custom && item.custom_unit_price != null && item.custom_unit_price !== ''
                 ? Number(item.custom_unit_price)
-                : null
+                : null,
+              canEditSellingPrice && item.selling_price != null && item.selling_price !== ''
+                ? Number(item.selling_price)
+                : null,
             ]
           );
         }
@@ -357,16 +392,16 @@ export default async function handler(req, res) {
       await logEvent(client, {
         workorder_id: workorderId,
         event_type: 'WORKORDER_CREATED',
-        user_id: actorId
+        user_id: actorId,
       });
 
-      // NEW: capture the initial notes value if present
+      // capture the initial notes value if present
       if ((notes || '').trim()) {
         await logEvent(client, {
           workorder_id: workorderId,
           event_type: 'NOTE_ADDED',
           user_id: actorId,
-          notes_log: notes
+          notes_log: notes,
         });
       }
 
@@ -379,28 +414,28 @@ export default async function handler(req, res) {
      * ========================== */
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing workorder_id' });
-      const actorId = twoCharId(req.headers['x-user-id'] || body?.user_id || '');
+      const actorId = twoCharId(req.headers?.['x-user-id'] || body?.user_id || '');
+      const actorAccess = await getUserAccess(client, actorId);
+      const canEditSellingPrice = actorAccess === 'superadmin';
 
       const {
         notes,
         delivery_charged,
         outstanding_balance,
         estimated_completion,
-        important_flag,                 
-        items,                          
-        add_items,                      
-        delete_item_ids,                
-        status,                         
-        salesperson                    
+        important_flag,
+        ecommerce,            // ✅ NEW (GS only)
+        items,
+        add_items,
+        delete_item_ids,
+        status,
+        salesperson,
       } = body || {};
 
       await client.query('BEGIN');
 
       // Load WO for comparisons
-      const currentWO = await client.query(
-        `SELECT * FROM workorder WHERE workorder_id = $1`,
-        [id]
-      );
+      const currentWO = await client.query(`SELECT * FROM workorder WHERE workorder_id = $1`, [id]);
       if (!currentWO.rows.length) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'Workorder not found' });
@@ -428,17 +463,41 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid workorder status' });
       }
 
-      // 1) Update WO-level fields (excluding top-level status here; applied later if it truly changes)
+      // 1) Update WO-level fields
       const updates = [];
       const params = [];
       let p = 1;
 
-      if (notes !== undefined) { updates.push(`notes = $${p++}`); params.push(notes || null); }
-      if (delivery_charged !== undefined) { updates.push(`delivery_charged = $${p++}`); params.push(delivery_charged === null || delivery_charged === '' ? null : Number(delivery_charged)); }
-      if (outstanding_balance !== undefined) { updates.push(`outstanding_balance = $${p++}`); params.push(Number(outstanding_balance)); }
-      if (estimated_completion !== undefined) { updates.push(`estimated_completion = $${p++}`); params.push(estimated_completion || beforeWO.estimated_completion); }
-      if (important_flag !== undefined) { updates.push(`important_flag = $${p++}`); params.push(!!important_flag); }
-      if (salesperson !== undefined) { updates.push(`salesperson = $${p++}`); params.push(twoCharId(salesperson)); }
+      if (notes !== undefined) {
+        updates.push(`notes = $${p++}`);
+        params.push(notes || null);
+      }
+      if (delivery_charged !== undefined) {
+        updates.push(`delivery_charged = $${p++}`);
+        params.push(delivery_charged === null || delivery_charged === '' ? null : Number(delivery_charged));
+      }
+      if (outstanding_balance !== undefined) {
+        updates.push(`outstanding_balance = $${p++}`);
+        params.push(Number(outstanding_balance));
+      }
+      if (estimated_completion !== undefined) {
+        updates.push(`estimated_completion = $${p++}`);
+        params.push(estimated_completion || beforeWO.estimated_completion);
+      }
+      if (important_flag !== undefined) {
+        updates.push(`important_flag = $${p++}`);
+        params.push(!!important_flag);
+      }
+      if (salesperson !== undefined) {
+        updates.push(`salesperson = $${p++}`);
+        params.push(twoCharId(salesperson));
+      }
+
+      // ✅ GS-only ecommerce flag (no logging)
+      if (typeof ecommerce !== 'undefined' && actorId === 'GS') {
+        updates.push(`ecommerce = $${p++}`);
+        params.push(!!ecommerce);
+      }
 
       if (updates.length) {
         params.push(id);
@@ -449,7 +508,7 @@ export default async function handler(req, res) {
             workorder_id: id,
             event_type: 'NOTE_ADDED',
             user_id: actorId,
-            notes_log: notes  
+            notes_log: notes,
           });
         }
         if (outstanding_balance !== undefined && Number(outstanding_balance) !== Number(beforeWO.outstanding_balance)) {
@@ -460,16 +519,17 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2) Update existing items (status / technician / workshop_duration / item_sn)
+      // 2) Update existing items (status / technician / item_sn / selling_price(superadmin))
       if (Array.isArray(items) && items.length) {
         for (const row of items) {
-          const { workorder_items_id, status, technician_id, workshop_duration, item_sn } = row || {};
+          const { workorder_items_id, status, technician_id, item_sn, selling_price } = row || {};
           if (!workorder_items_id) continue;
 
           const cur = await client.query(
             `SELECT workorder_items_id, status, technician_id, in_workshop, product_id, quantity,
-                    workshop_duration, item_sn
-               FROM workorder_items WHERE workorder_items_id = $1 AND workorder_id = $2`,
+                    item_sn, selling_price, is_custom
+               FROM workorder_items
+              WHERE workorder_items_id = $1 AND workorder_id = $2`,
             [workorder_items_id, id]
           );
           if (!cur.rows.length) continue;
@@ -480,9 +540,7 @@ export default async function handler(req, res) {
           let i = 1;
 
           if (technician_id !== undefined) {
-            const tech = (technician_id === '' || technician_id == null)
-              ? null
-              : twoCharId(technician_id);
+            const tech = technician_id === '' || technician_id == null ? null : twoCharId(technician_id);
 
             // Disallow clearing technician (DB column is NOT NULL)
             if (tech === null) {
@@ -518,9 +576,6 @@ export default async function handler(req, res) {
             } else if (status === 'Not in Workshop') {
               fields.push(`status = $${i++}`, `in_workshop = NULL`);
               vals.push(status);
-            } else if (status === 'Canceled') {
-              fields.push(`status = $${i++}`);
-              vals.push(status);
             } else {
               fields.push(`status = $${i++}`);
               vals.push(status);
@@ -531,31 +586,27 @@ export default async function handler(req, res) {
               workorder_items_id,
               event_type: 'ITEM_STATUS_CHANGED',
               user_id: actorId,
-              item_status: status
+              item_status: status,
             });
           }
 
-          // NEW: workshop_duration
-          if (row.hasOwnProperty('workshop_duration')) {
-            const dur =
-              workshop_duration === '' || workshop_duration == null
-                ? null
-                : Number(workshop_duration);
-            const beforeDur =
-              before.workshop_duration == null ? null : Number(before.workshop_duration);
-            if (dur !== beforeDur) {
-              fields.push(`workshop_duration = $${i++}`);
-              vals.push(dur);
-            }
-          }
-
-          // NEW: item_sn (serial number) – free text; allow null/empty to clear
+          // item_sn – free text; allow null/empty to clear
           if (row.hasOwnProperty('item_sn')) {
-            const sn = (item_sn == null || String(item_sn).trim() === '') ? null : String(item_sn).trim();
+            const sn = item_sn == null || String(item_sn).trim() === '' ? null : String(item_sn).trim();
             const beforeSn = before.item_sn == null ? null : String(before.item_sn);
             if (sn !== beforeSn) {
               fields.push(`item_sn = $${i++}`);
               vals.push(sn);
+            }
+          }
+
+          // selling_price – superadmin only
+          if (canEditSellingPrice && row.hasOwnProperty('selling_price')) {
+            const sp = selling_price === '' || selling_price == null ? null : Number(selling_price);
+            const beforeSp = before.selling_price == null ? null : Number(before.selling_price);
+            if (sp !== beforeSp) {
+              fields.push(`selling_price = $${i++}`);
+              vals.push(sp);
             }
           }
 
@@ -569,24 +620,22 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2b) Add new items (support duration + serial)
+      // 2b) Add new items (supports serial + selling_price(superadmin))
       if (Array.isArray(add_items) && add_items.length) {
         for (const item of add_items) {
           if (!item?.product_id || !item?.quantity || !item?.condition) continue;
+
           // Enforce technician is required when adding items later
           if (!item?.technician_id || String(item.technician_id).trim() === '') {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Technician is required for each new item.' });
           }
 
-          const itmStatus = item.status && String(item.status).trim()
-            ? item.status
-            : 'Not in Workshop';
-
+          const itmStatus = item.status && String(item.status).trim() ? item.status : 'Not in Workshop';
           const qty = Number(item.quantity);
 
           // INVENTORY: debit stock before insert
-          if (!item.is_custom){
+          if (!item.is_custom) {
             await adjustProductStock(client, item.product_id, -qty);
           }
 
@@ -594,8 +643,8 @@ export default async function handler(req, res) {
             `
             INSERT INTO workorder_items (
               workorder_id, product_id, quantity, condition, technician_id, status,
-                workshop_duration, item_sn, is_custom, custom_description, custom_unit_price
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+              item_sn, is_custom, custom_description, custom_unit_price, selling_price
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             RETURNING workorder_items_id
             `,
             [
@@ -605,13 +654,15 @@ export default async function handler(req, res) {
               item.condition || 'NA',
               twoCharId(item.technician_id),
               itmStatus,
-              item.workshop_duration == null || item.workshop_duration === '' ? null : Number(item.workshop_duration),
               item.item_sn ?? null,
               !!item.is_custom,
-              item.is_custom ? (item.custom_description || null) : null,
+              item.is_custom ? item.custom_description || null : null,
               item.is_custom && item.custom_unit_price != null && item.custom_unit_price !== ''
                 ? Number(item.custom_unit_price)
-                : null
+                : null,
+              canEditSellingPrice && item.selling_price != null && item.selling_price !== ''
+                ? Number(item.selling_price)
+                : null,
             ]
           );
 
@@ -622,7 +673,7 @@ export default async function handler(req, res) {
             workorder_items_id: newItemId,
             event_type: 'ITEM_ADDED',
             user_id: actorId,
-            item_status: itmStatus
+            item_status: itmStatus,
           });
         }
       }
@@ -642,12 +693,11 @@ export default async function handler(req, res) {
             workorder_id: id,
             workorder_items_id: row.workorder_items_id,
             event_type: 'ITEM_REMOVED',
-            user_id: actorId
+            user_id: actorId,
           });
 
           if (row.status !== 'Canceled') {
             const delta = Number(row.quantity);
-            // INVENTORY: credit stock only for non-custom
             const { rows: chk } = await client.query(
               `SELECT is_custom FROM workorder_items WHERE workorder_items_id = $1`,
               [row.workorder_items_id]
@@ -685,24 +735,18 @@ export default async function handler(req, res) {
 
       // 3) Auto-complete workorder on transition; do not create delivery for edits that don't cause transition
       if (allCompletedAfter) {
-        const curStatus = await client.query(
-          `SELECT status FROM workorder WHERE workorder_id = $1`,
-          [id]
-        );
+        const curStatus = await client.query(`SELECT status FROM workorder WHERE workorder_id = $1`, [id]);
         const isCompletedNow = curStatus.rows.length && curStatus.rows[0].status === 'Completed';
 
-        // If not already completed, set to Completed now
         if (!isCompletedNow) {
-          await client.query(
-            `UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`,
-            [id]
-          );
+          await client.query(`UPDATE workorder SET status = 'Completed' WHERE workorder_id = $1`, [id]);
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_STATUS_CHANGED', user_id: actorId });
           await logEvent(client, { workorder_id: id, event_type: 'WORKORDER_COMPLETED', user_id: actorId });
         }
 
         // Create delivery ONLY if transitioned this request or explicit override
-        const explicitCompletedNow = (explicitStatusProvided && beforeWO.status !== 'Completed' && status === 'Completed');
+        const explicitCompletedNow =
+          explicitStatusProvided && beforeWO.status !== 'Completed' && status === 'Completed';
         if (transitionedToCompletedViaItems || explicitCompletedNow) {
           const d = beforeWO;
           await client.query(
@@ -721,7 +765,7 @@ export default async function handler(req, res) {
               d.delivery_suburb || null,
               d.delivery_state,
               d.delivery_charged == null ? null : Number(d.delivery_charged),
-              (d.notes ? `${d.notes}\n\n` : ''),
+              d.notes ? `${d.notes}\n\n` : '',
               Number(id),
             ]
           );
@@ -729,21 +773,18 @@ export default async function handler(req, res) {
           await logEvent(client, {
             workorder_id: id,
             event_type: 'DELIVERY_ORDER_CREATED',
-            user_id: actorId
+            user_id: actorId,
           });
         }
       }
 
       // 4) Apply explicit WO status only if it represents a change from the DB value at request start
       if (explicitStatusProvided && status !== beforeWO.status) {
-        await client.query(
-          `UPDATE workorder SET status = $1 WHERE workorder_id = $2`,
-          [status, id]
-        );
+        await client.query(`UPDATE workorder SET status = $1 WHERE workorder_id = $2`, [status, id]);
         await logEvent(client, {
           workorder_id: id,
           event_type: 'WORKORDER_STATUS_CHANGED',
-          user_id: actorId
+          user_id: actorId,
         });
       }
 
@@ -783,22 +824,18 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['GET', 'POST', 'PUT', 'DELETE']);
     return res.status(405).end(`Method ${method} Not Allowed`);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-      const msg = String(err?.message || '');
-      // Surface specific inventory errors so the UI can toast them
-      if (/insufficient\s+stock/i.test(msg)) {
-        // 409 Conflict fits stock contention/availability problems
-        return res.status(409).json({ error: msg });
-      }
-      if (/product not found/i.test(msg)) {
-        return res.status(404).json({ error: msg });
-      }
-      if (/invalid stock math/i.test(msg)) {
-        return res.status(400).json({ error: msg });
-      }
-      // Fallback
-      console.error('Workorder API error:', err);
-      return res.status(500).json({ error: 'Server error' });
+    try {
+      await client.query('ROLLBACK');
+    } catch {}
+
+    const msg = String(err?.message || '');
+
+    if (/insufficient\s+stock/i.test(msg)) return res.status(409).json({ error: msg });
+    if (/product not found/i.test(msg)) return res.status(404).json({ error: msg });
+    if (/invalid stock math/i.test(msg)) return res.status(400).json({ error: msg });
+
+    console.error('Workorder API error:', err);
+    return res.status(500).json({ error: 'Server error' });
   } finally {
     client.release();
   }

@@ -44,6 +44,12 @@ export default function ActiveWorkordersPage() {
   const [technicians, setTechnicians] = useState([]);
   const [salespeople, setSalespeople] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
+
+  // ✅ user + GS popup
+  const [user, setUser] = useState(null);
+  const isGS = user?.id === 'GS';
+  const [showEcomPopup, setShowEcomPopup] = useState(false);
+
   const navigate = useNavigate();
 
   // URL filter support
@@ -56,6 +62,17 @@ export default function ActiveWorkordersPage() {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }, []);
+
+  // Load user
+  useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) { navigate('/'); return; }
+    try {
+      setUser(JSON.parse(stored));
+    } catch {
+      navigate('/');
+    }
+  }, [navigate]);
 
   useEffect(() => {
     (async () => {
@@ -87,6 +104,12 @@ export default function ActiveWorkordersPage() {
           setRows(data);
           const uniqueSales = [...new Set(data.map(w => w.salesperson).filter(Boolean))].sort();
           setSalespeople(uniqueSales);
+
+          // ✅ GS-only auto popup if any ecommerce=false
+          if (isGS) {
+            const unChecked = (data || []).filter(w => w?.ecommerce === false);
+            if (unChecked.length > 0) setShowEcomPopup(true);
+          }
         }
 
         toast.success('Work orders loaded', { id: 'wo-load' });
@@ -98,7 +121,11 @@ export default function ActiveWorkordersPage() {
     })();
 
     return () => { mounted = false; };
-  }, [navigate]);
+  }, [navigate, isGS]);
+
+  const ecommerceUnchecked = useMemo(() => {
+    return (rows || []).filter(w => w?.ecommerce === false);
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -430,6 +457,11 @@ export default function ActiveWorkordersPage() {
                                 Important
                               </span>
                             )}
+                            {isGS && w?.ecommerce === false && (
+                              <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 ring-1 ring-inset ring-red-200 align-middle">
+                                Ecom Pending
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-sm w-28">{formatDate(w.date_created)}</td>
                           <td className="px-3 py-2 text-sm w-36">{w.customer_name ?? '—'}</td>
@@ -480,6 +512,75 @@ export default function ActiveWorkordersPage() {
           </div>
         </main>
       </div>
+
+      {/* ✅ GS popup for ecommerce=false */}
+      {isGS && showEcomPopup && ecommerceUnchecked.length > 0 && (
+        <div
+          className="fixed inset-0 z-[2000] bg-black/40 flex items-center justify-center p-4"
+          onMouseDown={() => setShowEcomPopup(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-xl bg-white shadow-lg border"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="border-b p-4 flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">Ecommerce checks pending</div>
+                <div className="text-sm text-gray-600">
+                  These workorders have <span className="font-mono">ecommerce = false</span> (not checked off).
+                </div>
+              </div>
+              <button
+                className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+                onClick={() => setShowEcomPopup(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-4 max-h-[60vh] overflow-auto">
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-100">
+                    <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                      <th className="px-3 py-2 w-28">Invoice</th>
+                      <th className="px-3 py-2">Customer</th>
+                      <th className="px-3 py-2 w-20">State</th>
+                      <th className="px-3 py-2 w-28">Target</th>
+                      <th className="px-3 py-2 w-24">Open</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ecommerceUnchecked.map((w) => (
+                      <tr key={w.workorder_id} className="bg-white">
+                        <td className="px-3 py-2 text-sm font-medium">{w.invoice_id ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm">{w.customer_name ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm">{w.delivery_state ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm">{formatDate(w.estimated_completion)}</td>
+                        <td className="px-3 py-2 text-sm">
+                          <button
+                            className="rounded-md bg-gray-900 px-3 py-1 text-white text-sm hover:bg-black/90"
+                            onClick={() => {
+                              setShowEcomPopup(false);
+                              navigate(`./workorder/${w.workorder_id}`);
+                            }}
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Tip: open each workorder and use the “Check Ecommerce” button to mark it off.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DeliveryTabs />
     </div>
