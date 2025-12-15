@@ -15,7 +15,6 @@ function fmtDate(iso) {
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
-
 function toISODate(v) {
   if (!v) return '';
   const s = String(v);
@@ -70,7 +69,7 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
   const filtered = useMemo(() => {
     if (!Array.isArray(products)) return [];
     const t = term.trim().toLowerCase();
-    const base = products.filter((p) => String(p.sku).toUpperCase() !== 'OTHER'); // hide sentinel in normal list
+    const base = products.filter((p) => String(p.sku).toUpperCase() !== 'OTHER'); // hide sentinel
     if (!t) return base.slice(0, 50);
     const keywords = t.split(' ').filter(Boolean);
     return base.filter((p) => {
@@ -127,7 +126,6 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
             <div
               key={p.sku}
               className="px-2 py-1 text-sm hover:bg-gray-100 cursor-pointer"
-              onClick={() => { onChange(p.sku); setOpen(false); setTerm(''); }}
               onMouseDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -146,16 +144,14 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
             <div className="px-2 py-2 text-sm text-gray-500">No matches.</div>
           )}
 
-          {/* Divider */}
           <div className="border-t my-1" />
 
-          {/* OTHER — Custom item option */}
           <div
             className="px-2 py-1 text-sm hover:bg-gray-100 cursor-pointer"
             onMouseDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onChange('OTHER'); // parent will flip to custom mode
+              onChange('OTHER');
               setOpen(false);
               setTerm('');
             }}
@@ -197,8 +193,7 @@ export default function WorkorderDetailPage() {
   // products for dropdown
   const [products, setProducts] = useState([]);
 
-  // pending new rows for add (now supports custom)
-  // {tempId, product_id, quantity, condition, technician_id, is_custom?, custom_description?, custom_unit_price?, workshop_duration?, item_sn?}
+  // pending new rows for add (supports custom + selling price for superadmin)
   const [pendingNewItems, setPendingNewItems] = useState([]);
 
   // deleting existing rows
@@ -210,6 +205,11 @@ export default function WorkorderDetailPage() {
   // which existing row is expanded for Serial Number editing
   const [expandedId, setExpandedId] = useState(null);
 
+  // user object
+  const [user, setUser] = useState(null);
+  const isSuperadmin = user?.access === 'superadmin';
+  const isGS = user?.id === 'GS';
+
   const userId = useMemo(() => {
     try {
       const u = JSON.parse(localStorage.getItem('user') || '{}');
@@ -219,12 +219,18 @@ export default function WorkorderDetailPage() {
     }
   }, []);
 
-  const handleBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1);
-    } else {
-      navigate('/delivery_operations');
+  useEffect(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || 'null');
+      setUser(u);
+    } catch {
+      setUser(null);
     }
+  }, []);
+
+  const handleBack = () => {
+    if (window.history.length > 1) navigate(-1);
+    else navigate('/delivery_operations');
   };
 
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -281,7 +287,9 @@ export default function WorkorderDetailPage() {
     (async () => {
       setLoading(true);
       try {
-        const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`);
+        const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
+          headers: { 'X-User-Id': userId || '' }
+        });
         const data = await r.json();
         if (!r.ok) throw new Error(data?.error || 'Failed to load workorder');
 
@@ -301,7 +309,7 @@ export default function WorkorderDetailPage() {
         setLoading(false);
       }
     })();
-  }, [id, navigate]);
+  }, [id, navigate, userId]);
 
   // Update local existing item field
   const setItemField = (idx, key, val) => {
@@ -329,8 +337,8 @@ export default function WorkorderDetailPage() {
         is_custom: false,
         custom_description: '',
         custom_unit_price: '',
-        workshop_duration: '',
-        item_sn: ''
+        item_sn: '',
+        selling_price: '',
       }
     ]);
   };
@@ -339,12 +347,42 @@ export default function WorkorderDetailPage() {
     setPendingNewItems((arr) => arr.filter((r) => r.tempId !== tempId));
   };
 
+  const toggleDelete = (workorder_items_id) => {
+    setToDelete((arr) => arr.includes(workorder_items_id)
+      ? arr.filter((x) => x !== workorder_items_id)
+      : [...arr, workorder_items_id]
+    );
+  };
+
+  const markEcommerceChecked = async () => {
+    if (!wo || !isGS) return;
+
+    const toastId = toast.loading('Marking ecommerce checked...');
+    try {
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': userId || '',
+        },
+        body: JSON.stringify({ ecommerce: true }),
+      });
+
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || 'Failed to update ecommerce flag');
+
+      setWo(data);
+      toast.success('Ecommerce checked off', { id: toastId });
+    } catch (e) {
+      toast.error(e.message || 'Failed', { id: toastId });
+    }
+  };
+
   const handleSave = async () => {
     if (!wo) return;
 
     // Validate pending rows (catalog + custom)
     for (const row of pendingNewItems) {
-      // If custom, require description; else require product_id
       if (row.is_custom) {
         if (!String(row.custom_description || '').trim()) {
           toast.error('Custom items require a description.');
@@ -358,20 +396,24 @@ export default function WorkorderDetailPage() {
           return;
         }
       }
+
       if (!row.quantity || Number(row.quantity) <= 0) {
         toast.error('Quantity must be at least 1.');
         return;
       }
+
       if (!row.technician_id || String(row.technician_id).trim() === '') {
         toast.error('Please select a technician for all new rows.');
         return;
       }
-      if (row.workshop_duration !== '' && Number.isNaN(Number(row.workshop_duration))) {
-        toast.error('Workshop duration must be a number.');
-        return;
-      }
+
       if (row.custom_unit_price !== '' && Number.isNaN(Number(row.custom_unit_price))) {
         toast.error('Unit price must be a number.');
+        return;
+      }
+
+      if (isSuperadmin && row.selling_price !== '' && Number.isNaN(Number(row.selling_price))) {
+        toast.error('Selling price must be a number.');
         return;
       }
     }
@@ -382,8 +424,7 @@ export default function WorkorderDetailPage() {
       const payload = {
         status: woStatus || wo.status,
         notes,
-        delivery_charged:
-          deliveryCharged === '' ? null : Number(deliveryCharged),
+        delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
         outstanding_balance:
           outstandingBalance === ''
             ? wo.outstanding_balance
@@ -391,42 +432,46 @@ export default function WorkorderDetailPage() {
         important_flag: important,
         estimated_completion: estimatedCompletion || wo.estimated_completion,
         salesperson: salesperson || wo.salesperson,
+
         items: items.map((it) => ({
           workorder_items_id: it.workorder_items_id,
           status: it.status,
           technician_id: it.technician_id,
-          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration),
           item_sn: it.item_sn ?? null,
+          ...(isSuperadmin ? { selling_price: it.selling_price ?? null } : {}),
         })),
+
         add_items: pendingNewItems.map((it) => ({
           product_id: it.is_custom ? 'OTHER' : it.product_id,
           quantity: Number(it.quantity) || 1,
           condition: it.is_custom ? (it.condition || 'NA') : it.condition,
           technician_id: it.technician_id || null,
           status: 'Not in Workshop',
-          workshop_duration: (it.workshop_duration === '' || it.workshop_duration == null) ? null : Number(it.workshop_duration),
           item_sn: (it.item_sn == null || String(it.item_sn).trim() === '') ? null : String(it.item_sn).trim(),
-          // NEW custom fields
+
           is_custom: !!it.is_custom,
           custom_description: it.is_custom ? (it.custom_description || null) : null,
           custom_unit_price: it.is_custom && it.custom_unit_price !== '' && it.custom_unit_price != null
             ? Number(it.custom_unit_price)
-            : null
+            : null,
+
+          ...(isSuperadmin ? {
+            selling_price: it.selling_price !== '' && it.selling_price != null ? Number(it.selling_price) : null
+          } : {}),
         })),
+
         delete_item_ids: toDelete
       };
 
-      const r = await fetch(
-        `/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Id': userId || '',
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': userId || '',
+        },
+        body: JSON.stringify(payload),
+      });
+
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         const msg = String(data?.error || '').trim();
@@ -471,12 +516,7 @@ export default function WorkorderDetailPage() {
     return (
       <div className="p-6">
         <div className="mb-4">
-          <button
-            onClick={handleBack}
-            className="text-blue-600 underline"
-          >
-            ← Back
-          </button>
+          <button onClick={handleBack} className="text-blue-600 underline">← Back</button>
         </div>
         <div className="text-red-600">Work order not found.</div>
       </div>
@@ -485,6 +525,7 @@ export default function WorkorderDetailPage() {
 
   const pendingAdds = pendingNewItems.length;
   const pendingDeletes = toDelete.length;
+  const colCount = 7 + (isSuperadmin ? 1 : 0); // Qty, SKU, Name, Condition, Tech, Status, Actions (+ Selling Price)
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -496,10 +537,12 @@ export default function WorkorderDetailPage() {
           >
             ← Back
           </button>
+
           <h1 className="text-2xl font-semibold tracking-tight text-center">
             Work Order Details: Invoice #{wo.invoice_id}
           </h1>
-          <div>
+
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setImportant((v) => !v)}
               className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 ${important ? 'text-amber-600 border-amber-300' : ''}`}
@@ -507,6 +550,19 @@ export default function WorkorderDetailPage() {
             >
               {important ? '★ Important' : '☆ Mark important'}
             </button>
+
+            {isGS && (
+              <button
+                onClick={markEcommerceChecked}
+                disabled={wo?.ecommerce === true}
+                className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 disabled:opacity-60 ${
+                  wo?.ecommerce === true ? 'text-green-700 border-green-200 bg-green-50' : ''
+                }`}
+                title={wo?.ecommerce === true ? 'Already checked off' : 'Mark this workorder as checked'}
+              >
+                {wo?.ecommerce === true ? 'Ecommerce ✓' : 'Check Ecommerce'}
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -526,10 +582,12 @@ export default function WorkorderDetailPage() {
             </div>
             <div className="font-semibold">{wo.customer_name}</div>
           </button>
+
           <div className="rounded-lg border bg-white p-3">
             <div className="text-xs text-gray-500">Workorder Date:</div>
             <div className="font-semibold">{fmtDate(wo.date_created)}</div>
           </div>
+
           <div
             className="rounded-lg border bg-white p-3 cursor-pointer"
             onClick={() => setEditEstimated(true)}
@@ -548,6 +606,7 @@ export default function WorkorderDetailPage() {
               />
             )}
           </div>
+
           <div
             className="rounded-lg border bg-white p-3 cursor-pointer"
             onClick={() => setEditSalesperson(true)}
@@ -570,6 +629,7 @@ export default function WorkorderDetailPage() {
               </select>
             )}
           </div>
+
           <div className="rounded-lg border bg-white p-3">
             <div className="text-xs text-gray-500">Payment Status:</div>
             <div className="font-semibold">
@@ -603,22 +663,28 @@ export default function WorkorderDetailPage() {
                   <th className="px-4 py-3 w-10">Qty</th>
                   <th className="px-4 py-3 w-28">SKU</th>
                   <th className="px-4 py-3">Equipment Name</th>
-                  <th className="px-4 py-3 w-15">Condition</th>
+                  <th className="px-4 py-3 w-20">Condition</th>
                   <th className="px-4 py-3 w-40">Tech Assigned</th>
                   <th className="px-4 py-3 w-48">Status</th>
-                  <th className="px-4 py-3 w-25">Workshop Duration</th>
+                  {isSuperadmin && (
+                    <th className="px-4 py-3 w-40">Selling Price</th>
+                  )}
+                  <th className="px-4 py-3 w-28">Actions</th>
                 </tr>
               </thead>
+
               <tbody className="divide-y divide-gray-100">
                 {/* Existing items */}
                 {items
                   .filter(it => it.status !== 'Canceled')
                   .map((it, idx) => {
                     const isExpanded = expandedId === it.workorder_items_id;
+                    const isRemoved = toDelete.includes(it.workorder_items_id);
+
                     return (
                       <>
                         <tr
-                          className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${toDelete.includes(it.workorder_items_id) ? 'opacity-60 line-through' : ''} cursor-pointer`}
+                          className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${isRemoved ? 'opacity-60 line-through' : ''} cursor-pointer`}
                           onClick={() => setExpandedId(isExpanded ? null : it.workorder_items_id)}
                           title="Click row to edit Serial Number"
                         >
@@ -626,6 +692,7 @@ export default function WorkorderDetailPage() {
                           <td className="px-4 py-3 text-sm font-mono">{it.product_id}</td>
                           <td className="px-4 py-3 text-sm">{it.product_name}</td>
                           <td className="px-4 py-3 text-sm">{it.condition}</td>
+
                           <td className="px-4 py-3 text-sm" onClick={stop}>
                             <select
                               className="border rounded px-2 py-1 w-full"
@@ -638,6 +705,7 @@ export default function WorkorderDetailPage() {
                               ))}
                             </select>
                           </td>
+
                           <td className="px-4 py-3 text-sm" onClick={stop}>
                             <select
                               className="border rounded px-2 py-1 w-full"
@@ -650,23 +718,37 @@ export default function WorkorderDetailPage() {
                               <option>Canceled</option>
                             </select>
                           </td>
+
+                          {isSuperadmin && (
+                            <td className="px-4 py-3 text-sm" onClick={stop}>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className="border rounded px-2 py-1 w-full"
+                                value={it.selling_price ?? ''}
+                                placeholder="e.g. 199.00"
+                                onChange={(e) => setItemField(idx, 'selling_price', e.target.value)}
+                              />
+                            </td>
+                          )}
+
                           <td className="px-4 py-3 text-sm" onClick={stop}>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              className="border rounded px-2 py-1 w-full"
-                              value={it.workshop_duration ?? ''}
-                              placeholder="e.g. 1.5"
-                              onChange={(e) => setItemField(idx, 'workshop_duration', e.target.value)}
-                            />
+                            <button
+                              type="button"
+                              className={`rounded border px-2 py-1 text-xs hover:bg-gray-50 ${isRemoved ? 'bg-red-50 border-red-200 text-red-700' : ''}`}
+                              onClick={() => toggleDelete(it.workorder_items_id)}
+                              title="Marks item as Canceled on Save"
+                            >
+                              {isRemoved ? 'Undo' : 'Remove'}
+                            </button>
                           </td>
                         </tr>
 
                         {/* Inline expandable panel for Serial Number */}
                         {isExpanded && (
                           <tr className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'}`}>
-                            <td colSpan={8} className="px-6 pb-4">
+                            <td colSpan={colCount} className="px-6 pb-4">
                               <div className="mt-1 border rounded-md p-3 bg-gray-50">
                                 <div className="text-sm font-medium mb-2">Serial Number</div>
                                 <input
@@ -692,6 +774,7 @@ export default function WorkorderDetailPage() {
                 {pendingNewItems.map((row) => {
                   const selected = products.find((p) => p.sku === row.product_id);
                   const isCustom = !!row.is_custom || row.product_id === 'OTHER';
+
                   return (
                     <tr key={row.tempId} className="bg-white align-top">
                       <td className="px-4 py-3 text-sm">
@@ -748,7 +831,6 @@ export default function WorkorderDetailPage() {
                               type="button"
                               className="mt-1 rounded border px-2 py-1 text-xs hover:bg-gray-50"
                               onClick={() => {
-                                // switch back to catalog
                                 setPendingField(row.tempId, 'is_custom', false);
                                 setPendingField(row.tempId, 'product_id', '');
                                 setPendingField(row.tempId, 'custom_description', '');
@@ -772,7 +854,7 @@ export default function WorkorderDetailPage() {
                           <option>AT</option>
                           <option>CS</option>
                           <option>CCG</option>
-                          <option>NA</option>{/* allow NA for custom */}
+                          <option>NA</option>
                         </select>
                       </td>
 
@@ -791,18 +873,19 @@ export default function WorkorderDetailPage() {
 
                       <td className="px-4 py-3 text-sm text-gray-500">Not in Workshop</td>
 
-                      {/* Workshop duration for new row */}
-                      <td className="px-4 py-3 text-sm" onClick={stop}>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="border rounded px-2 py-1 w-full"
-                          value={row.workshop_duration ?? ''}
-                          placeholder="hrs"
-                          onChange={(e) => setPendingField(row.tempId, 'workshop_duration', e.target.value)}
-                        />
-                      </td>
+                      {isSuperadmin && (
+                        <td className="px-4 py-3 text-sm" onClick={stop}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            className="border rounded px-2 py-1 w-full"
+                            value={row.selling_price ?? ''}
+                            placeholder="e.g. 199.00"
+                            onChange={(e) => setPendingField(row.tempId, 'selling_price', e.target.value)}
+                          />
+                        </td>
+                      )}
 
                       <td className="px-4 py-3 text-sm">
                         <button
@@ -817,7 +900,7 @@ export default function WorkorderDetailPage() {
                 })}
 
                 {!items.length && !pendingNewItems.length && (
-                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={8}>No items.</td></tr>
+                  <tr><td className="px-4 py-4 text-center text-sm text-gray-500" colSpan={colCount}>No items.</td></tr>
                 )}
               </tbody>
             </table>
@@ -828,7 +911,7 @@ export default function WorkorderDetailPage() {
         {(pendingAdds || pendingDeletes) ? (
           <div className="mt-3 text-sm text-gray-700">
             {pendingAdds ? <span className="mr-4">• {pendingAdds} item(s) queued to add</span> : null}
-            {pendingDeletes ? <span>• {pendingDeletes} item(s) marked for delete</span> : null}
+            {pendingDeletes ? <span>• {pendingDeletes} item(s) marked for remove</span> : null}
           </div>
         ) : null}
 
@@ -853,7 +936,7 @@ export default function WorkorderDetailPage() {
                   : `${l.ts}   ${l.event_type} - ${l.user_id}`;
                 return <div key={l.id}>{base}</div>;
               }) : <div className="text-gray-500">No activity yet.</div>}
-              </div>
+            </div>
           </div>
 
           <div className="rounded-xl border bg-white p-3">
@@ -889,7 +972,6 @@ export default function WorkorderDetailPage() {
               />
             </div>
 
-            {/* Workorder status change UI (only when current WO is Completed) */}
             {String(woStatus) === 'Completed' && (
               <div className="mt-4 border rounded p-3 bg-amber-50">
                 <div className="text-sm font-medium mb-2">Workorder Status</div>
@@ -920,6 +1002,7 @@ export default function WorkorderDetailPage() {
             </div>
           </div>
         </div>
+
         {showCustomerModal && (
           <CreateCustomerModal
             mode={wo.customer_id ? 'edit' : 'create'}

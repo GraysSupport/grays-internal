@@ -18,10 +18,10 @@ const useRowNav = (navigate) => {
 const CARRIER_COLOR_RULES = [
   { like: 'moving soon', color: '#F4B084' },
   { like: 'dtl', color: '#BDD7EE' },
-  { like: 'coastal', color: '#FDCDFE' }, // Coastal Breeze
+  { like: 'coastal', color: '#FDCDFE' },
   { like: 'bnl', color: '#92D050' },
   { like: 'bass strait', color: '#FEFF43' },
-  { like: 'rjd', color: '#FFFF00' },     // fixed hex: #FFFF00
+  { like: 'rjd', color: '#FFFF00' },    
   { like: 'iron armour', color: '#CCCCFF' },
   { like: 'chris watkins', color: '#6767ff' },
   { like: 'ej shaws', color: '#ff5555' },
