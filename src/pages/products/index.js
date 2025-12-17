@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import BackButton from '../../components/backbutton';
@@ -6,6 +6,11 @@ import HomeButton from '../../components/homebutton';
 import CreateProductModal from '../../components/CreateProductModal';
 
 export default function ProductsPage() {
+  const storedUser = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('user') || 'null'); }
+    catch { return null; }
+  }, []);
+  const isSuperadmin = String(storedUser?.access || '').toLowerCase() === 'superadmin';
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -18,19 +23,14 @@ export default function ProductsPage() {
 
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('user');
-    if (!stored) {
-      navigate('/');
-      return;
-    }
-    fetchProducts();
-  }, [navigate]);
-
-  const fetchProducts = async () => {
+  const fetchProducts = useCallback(async () => {
     toast.loading('Loading products...', { id: 'product-load' });
     try {
-      const res = await fetch('/api/products');
+      const res = await fetch('/api/products', {
+        headers: {
+          'x-user-access': String(storedUser?.access || ''),
+        },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setProducts(data);
@@ -38,7 +38,16 @@ export default function ProductsPage() {
     } catch (err) {
       toast.error(err.message, { id: 'product-load' });
     }
-  };
+  }, [storedUser?.access]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('user');
+    if (!stored) {
+      navigate('/');
+      return;
+    }
+    fetchProducts();
+  }, [navigate, fetchProducts]);
 
   const filteredProducts = products.filter((product) => {
     const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
@@ -80,7 +89,9 @@ export default function ProductsPage() {
       return;
     }
 
-    const headers = ['SKU', 'Name', 'Brand', 'Stock', 'Price'];
+    const headers = isSuperadmin
+      ? ['SKU', 'Name', 'Brand', 'Stock', 'Price', 'Cost']
+      : ['SKU', 'Name', 'Brand', 'Stock', 'Price'];
     const lines = [headers.map(escapeCsv).join(',')];
 
     for (const p of rows) {
@@ -89,12 +100,16 @@ export default function ProductsPage() {
         escapeCsv(p.name),
         escapeCsv(p.brand),
         escapeCsv(p.stock ?? ''),
-        // keep numeric to 2dp (handles strings too)
-        escapeCsv(
-          Number.isFinite(Number(p.price)) ? Number(p.price).toFixed(2) : (p.price ?? '')
-        ),
-      ].join(',');
-      lines.push(line);
+        escapeCsv(Number.isFinite(Number(p.price)) ? Number(p.price).toFixed(2) : (p.price ?? '')),
+      ];
+
+      if (isSuperadmin) {
+        line.push(
+          escapeCsv(Number.isFinite(Number(p.avg_cost)) ? Number(p.avg_cost).toFixed(2) : (p.avg_cost ?? ''))
+        );
+      }
+
+      lines.push(line.join(','));
     }
 
     const csv = lines.join('\r\n');
@@ -167,6 +182,7 @@ export default function ProductsPage() {
               <th className="border px-4 py-2">Brand</th>
               <th className="border px-4 py-2">Stock</th>
               <th className="border px-4 py-2">Price</th>
+              {isSuperadmin && <th className="border px-4 py-2">Cost</th>}
               <th className="border px-4 py-2">Actions</th>
             </tr>
           </thead>
@@ -178,6 +194,11 @@ export default function ProductsPage() {
                 <td className="border px-4 py-2">{p.brand}</td>
                 <td className="border px-4 py-2">{p.stock}</td>
                 <td className="border px-4 py-2">${p.price}</td>
+                {isSuperadmin && (
+                  <td className="border px-4 py-2">
+                    {p.avg_cost == null ? '—' : `$${Number(p.avg_cost).toFixed(2)}`}
+                  </td>
+                )}
                 <td className="border px-4 py-2 text-blue-600 underline text-center align-middle">
                   <Link to={`/products/${encodeURIComponent(p.sku)}/edit`}>Edit</Link>
                 </td>
@@ -185,7 +206,7 @@ export default function ProductsPage() {
             ))}
             {currentProducts.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center p-4 text-gray-500">
+                <td colSpan={isSuperadmin ? 7 : 6} className="text-center p-4 text-gray-500">
                   No products found.
                 </td>
               </tr>
