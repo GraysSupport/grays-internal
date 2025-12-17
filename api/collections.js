@@ -36,6 +36,35 @@ function computeAvgAfterAdding(prevAvg, price, qty) {
   return cur == null ? p : cur;
 }
 
+/**
+ * Superadmin guard
+ * NOTE: Update table/columns if your auth DB differs.
+ */
+async function requireSuperadmin(req, client) {
+  const userId = req.headers['x-user-id'];
+
+  if (!userId) {
+    return { ok: false, status: 401, error: 'Missing x-user-id' };
+  }
+
+  // ⚠️ Change this to match your DB schema if needed.
+  const u = await client.query(
+    `SELECT id, access
+       FROM users
+      WHERE id = $1`,
+    [userId]
+  );
+
+  const access = u.rows?.[0]?.access;
+  if (!access) return { ok: false, status: 401, error: 'Invalid user' };
+
+  if (String(access).toLowerCase() !== 'superadmin') {
+    return { ok: false, status: 403, error: 'Forbidden: superadmin only' };
+  }
+
+  return { ok: true, user: u.rows[0] };
+}
+
 export default async function handler(req, res) {
   const { method, query, body } = req;
   const client = await getClientWithTimezone();
@@ -110,8 +139,179 @@ export default async function handler(req, res) {
       return res.status(200).json(rows || []);
     }
 
-    // -------- CREATE --------
+    // -------- CREATE / ACTIONS --------
     if (method === 'POST') {
+      // POST /api/collections?resource=apply-inventory&id=123  (superadmin only)
+      if (query.resource === 'apply-inventory') {
+        const { id } = query;
+        if (!id) return res.status(400).json({ error: 'id is required' });
+
+        const auth = await requireSuperadmin(req, client);
+        if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+        await client.query('BEGIN');
+        try {
+          // Lock collection row to prevent concurrent applies
+          const collRes = await client.query(
+            `SELECT *
+               FROM collections
+              WHERE id = $1
+              FOR UPDATE`,
+            [id]
+          );
+          if (!collRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Not found' });
+          }
+
+          const coll = collRes.rows[0];
+
+          // Require Completed (optional but recommended)
+          if (coll.status !== 'Completed') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Collection must be Completed before applying inventory updates.' });
+          }
+
+          // Idempotency guard
+          if (coll.inventory_applied_at) {
+            await client.query('ROLLBACK');
+            return res.status(200).json({
+              success: true,
+              alreadyApplied: true,
+              inventory_applied_at: coll.inventory_applied_at,
+            });
+          }
+
+          // Compute allocation from DB items
+          const dbItemsRes = await client.query(
+            `SELECT product_sku, quantity, purchase_price
+               FROM collection_items
+              WHERE collection_id = $1`,
+            [id]
+          );
+          const dbItems = ensureArray(dbItemsRes.rows || []);
+
+          const est = Number(coll.est_extraction || 0);
+          const act = Number(coll.act_extraction || 0);
+          const diff = act - est;
+
+          const totalQtyExclOtherDB = dbItems
+            .filter((it) => !isOther(it.product_sku))
+            .reduce((a, b) => a + Number(b.quantity || 0), 0);
+
+          const perUnitAdjDB = totalQtyExclOtherDB > 0 ? diff / totalQtyExclOtherDB : 0;
+
+          // Build effective items for completion calculations (raw + per-unit allocation, OTHER excluded)
+          const itemsForCompletion = dbItems.map((it) =>
+            isOther(it.product_sku)
+              ? { ...it, purchase_price: Number(it.purchase_price || 0) }
+              : { ...it, purchase_price: Number(it.purchase_price || 0) + perUnitAdjDB }
+          );
+
+          // Lock affected products
+          const affectedSkus = [...new Set(
+            itemsForCompletion
+              .filter((it) => !isOther(it.product_sku))
+              .map((it) => String(it.product_sku).toUpperCase())
+          )];
+
+          if (affectedSkus.length) {
+            const lockRes = await client.query(
+              `SELECT sku, avg_cost, stock
+                 FROM product
+                WHERE sku = ANY($1)
+                FOR UPDATE`,
+              [affectedSkus]
+            );
+
+            const stats = new Map();
+            for (const r of lockRes.rows) {
+              stats.set(String(r.sku).toUpperCase(), {
+                avg_cost: r.avg_cost,
+                stock: r.stock,
+              });
+            }
+
+            // Apply avg/stock updates using effective prices
+            for (const it of itemsForCompletion) {
+              if (isOther(it.product_sku)) continue;
+
+              const sku = String(it.product_sku).toUpperCase();
+              const qty = Number(it.quantity || 0);
+              const price = Number(it.purchase_price || 0);
+
+              const cur = stats.get(sku) || { avg_cost: null, stock: 0 };
+              const nextAvg = computeAvgAfterAdding(cur.avg_cost, price, qty);
+              const nextStock = Number(cur.stock || 0) + qty;
+
+              await client.query(
+                `UPDATE product
+                    SET avg_cost = $1,
+                        stock = $2
+                  WHERE sku = $3`,
+                [nextAvg, nextStock, sku]
+              );
+            }
+          }
+
+          // Mark applied
+          const done = await client.query(
+            `UPDATE collections
+                SET inventory_applied_at = NOW()
+              WHERE id = $1
+            RETURNING inventory_applied_at`,
+            [id]
+          );
+
+          await client.query('COMMIT');
+          return res.status(200).json({
+            success: true,
+            inventory_applied_at: done.rows[0].inventory_applied_at,
+          });
+        } catch (e) {
+          try { await client.query('ROLLBACK'); } catch {}
+          throw e;
+        }
+      }
+
+      // POST /api/collections?resource=reset-inventory-apply&id=123  (superadmin only)
+      if (query.resource === 'reset-inventory-apply') {
+        const { id } = query;
+        if (!id) return res.status(400).json({ error: 'id is required' });
+
+        const auth = await requireSuperadmin(req, client);
+        if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+        await client.query('BEGIN');
+        try {
+          const cur = await client.query(
+            `SELECT id, inventory_applied_at
+               FROM collections
+              WHERE id = $1
+              FOR UPDATE`,
+            [id]
+          );
+          if (!cur.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Not found' });
+          }
+
+          const upd = await client.query(
+            `UPDATE collections
+                SET inventory_applied_at = NULL
+              WHERE id = $1
+            RETURNING id, inventory_applied_at`,
+            [id]
+          );
+
+          await client.query('COMMIT');
+          return res.status(200).json({ success: true, collection: upd.rows[0] });
+        } catch (e) {
+          try { await client.query('ROLLBACK'); } catch {}
+          throw e;
+        }
+      }
+
       // POST /api/collections?resource=item  (legacy: add a collection item; NO avg/stock updates here)
       if (query.resource === 'item') {
         const payload = {
@@ -129,7 +329,7 @@ export default async function handler(req, res) {
         }
         if (payload.quantity <= 0) return res.status(400).json({ error: 'quantity must be >= 1' });
 
-        // Insert only; do not update product avg/stock here (deferred until Completion)
+        // Insert only; do not update product avg/stock here (deferred to manual apply)
         const ins = await client.query(
           `INSERT INTO collection_items (collection_id, product_sku, quantity, purchase_price, custom_description)
            VALUES ($1,$2,$3,$4,$5)
@@ -186,7 +386,7 @@ export default async function handler(req, res) {
       return res.status(201).json(rows[0]);
     }
 
-    // -------- UPDATE (Bulk save + optional completion effects) --------
+    // -------- UPDATE (Bulk save; NO completion effects anymore) --------
     if (method === 'PATCH') {
       // PATCH /api/collections?resource=item  (not supported)
       if (query.resource === 'item') {
@@ -235,7 +435,7 @@ export default async function handler(req, res) {
       // Are items included in this PATCH?
       const hasItemsInBody = Object.prototype.hasOwnProperty.call(body, 'items');
 
-      // Normalize incoming items if provided (store RAW prices only; no allocation here)
+      // Normalize incoming items if provided (store RAW prices only; no allocation persisted)
       let rawItemsFromBody = null;
       if (hasItemsInBody) {
         rawItemsFromBody = ensureArray(body.items).map((it) => ({
@@ -272,83 +472,9 @@ export default async function handler(req, res) {
         }
       }
 
-      // --- DEFERRED EFFECTS: Only when transitioning to Completed do we update product avg_cost & stock ---
-      const isCompletingNow = prev.status !== 'Completed' && patch.status === 'Completed';
+      // ✅ NOTE: No automatic inventory updates here anymore.
 
-      if (isCompletingNow) {
-        // Always compute allocation from the DB's RAW items to avoid any double counting
-        const dbItemsRes = await client.query(
-          `SELECT product_sku, quantity, purchase_price
-            FROM collection_items
-            WHERE collection_id = $1`,
-          [id]
-        );
-        const dbItems = ensureArray(dbItemsRes.rows || []);
-
-        const est = Number(patch.est_extraction || 0);
-        const act = Number(patch.act_extraction || 0);
-        const diff = act - est;
-
-        const totalQtyExclOtherDB = dbItems
-          .filter((it) => !isOther(it.product_sku))
-          .reduce((a, b) => a + Number(b.quantity || 0), 0);
-
-        const perUnitAdjDB = totalQtyExclOtherDB > 0 ? diff / totalQtyExclOtherDB : 0;
-
-        // Build effective items for completion calculations (raw + per-unit allocation, OTHER excluded)
-        const itemsForCompletion = dbItems.map((it) =>
-          isOther(it.product_sku)
-            ? { ...it, purchase_price: Number(it.purchase_price || 0) }
-            : { ...it, purchase_price: Number(it.purchase_price || 0) + perUnitAdjDB }
-        );
-
-        // Lock all affected (non-OTHER) products
-        const affectedSkus = [...new Set(itemsForCompletion
-          .filter((it) => !isOther(it.product_sku))
-          .map((it) => String(it.product_sku).toUpperCase()))];
-
-        if (affectedSkus.length) {
-          const lockRes = await client.query(
-            `SELECT sku, avg_cost, stock
-              FROM product
-              WHERE sku = ANY($1)
-              FOR UPDATE`,
-            [affectedSkus]
-          );
-
-          const stats = new Map();
-          for (const r of lockRes.rows) {
-            stats.set(String(r.sku).toUpperCase(), {
-              avg_cost: r.avg_cost,
-              stock: r.stock,
-            });
-          }
-
-          // Apply avg/stock updates using effective prices
-          for (const it of itemsForCompletion) {
-            if (isOther(it.product_sku)) continue;
-
-            const sku = String(it.product_sku).toUpperCase();
-            const qty = Number(it.quantity || 0);
-            const price = Number(it.purchase_price || 0);
-
-            const cur = stats.get(sku) || { avg_cost: null, stock: 0 };
-            const nextAvg = computeAvgAfterAdding(cur.avg_cost, price, qty);
-            const nextStock = Number(cur.stock || 0) + qty;
-
-            await client.query(
-              `UPDATE product
-                  SET avg_cost = $1,
-                      stock = $2
-                WHERE sku = $3`,
-              [nextAvg, nextStock, sku]
-            );
-          }
-        }
-      }
-
-
-      // Finally, update the collection itself (also writes est/act extraction & status)
+      // Finally, update the collection itself (writes est/act extraction & status)
       const { rows } = await client.query(
         `UPDATE collections
             SET name=$1, suburb=$2, state=$3, description=$4,

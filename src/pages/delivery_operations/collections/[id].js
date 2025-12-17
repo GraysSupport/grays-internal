@@ -17,15 +17,12 @@ function formatAUSDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  // Avoid comma operator to satisfy eslint(no-sequences)
   const dtf = new Intl.DateTimeFormat('en-AU', {
     weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
   });
   const parts = dtf.formatToParts(d);
   const bag = {};
-  for (const p of parts) {
-    bag[p.type] = p.value;
-  }
+  for (const p of parts) bag[p.type] = p.value;
   return `${bag.weekday}, ${bag.day}-${bag.month}-${bag.year}`;
 }
 
@@ -34,6 +31,14 @@ const isOther = (sku) => String(sku || '').toUpperCase() === 'OTHER';
 export default function CollectionDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
+
+  // Logged in user (for superadmin UI + x-user-id header)
+  const me = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('user') || 'null'); }
+    catch { return null; }
+  }, []);
+  const isSuperadmin = String(me?.access || '').toLowerCase() === 'superadmin';
+  const userIdHeader = me?.id != null ? String(me.id) : '';
 
   // States
   const [loading, setLoading] = useState(true);
@@ -46,7 +51,7 @@ export default function CollectionDetailPage() {
   const [productSearch, setProductSearch] = useState('');
   const [showCreateProductModal, setShowCreateProductModal] = useState(false);
   const productInputRef = useRef(null);
-  const productDropdownRef = useRef(null); // for outside-click close
+  const productDropdownRef = useRef(null);
 
   const productBySku = useMemo(() => {
     const m = new Map();
@@ -143,7 +148,6 @@ export default function CollectionDetailPage() {
 
     if (!sku) return toast.error('Select a product first');
     if (qty <= 0) return toast.error('Quantity must be >= 1');
-    // Allow price to be exactly 0; only block negative values
     if (price < 0) return toast.error('Price cannot be negative');
     if (isOther(sku) && !String(form.custom_description || '').trim()) {
       return toast.error('Please enter a description for OTHER item.');
@@ -175,18 +179,16 @@ export default function CollectionDetailPage() {
     );
   }
 
-  // ----------------- Live extraction allocation (UI only; API also applies on save) -----------------
-  // Totals excl. OTHER to avoid the prior "unused var" and to drive the per-unit allocation
+  // ----------------- Live extraction allocation (UI only) -----------------
   const totalQtyExclOther = useMemo(
     () => items.filter((it) => !isOther(it.product_sku))
-              .reduce((a, b) => a + Number(b.quantity || 0), 0),
+      .reduce((a, b) => a + Number(b.quantity || 0), 0),
     [items]
   );
 
   const diff = Number(act || 0) - Number(est || 0);
   const perUnitAdj = totalQtyExclOther > 0 ? diff / totalQtyExclOther : 0;
 
-  // Effective totals with extraction distributed (excl. OTHER for allocation)
   const totalWithExtraction = useMemo(() => {
     return items.reduce((sum, it) => {
       const base = Number(it.purchase_price || 0);
@@ -202,20 +204,19 @@ export default function CollectionDetailPage() {
 
   const formattedDate = formatAUSDate(collection.collection_date);
 
+  const canApply = isSuperadmin && !collection.inventory_applied_at;
+
   return (
     <>
       <div className="fixed top-4 left-6 z-50 flex gap-2">
         <HomeButton />
         <BackButton />
-        {/* Single instance of CreateProductModal */}
         <CreateProductModal
           isOpen={showCreateProductModal}
           onClose={() => setShowCreateProductModal(false)}
           onCreated={async () => {
-            // Only refresh the products list so we don't wipe local items/form
             await fetchProductsOnly();
             setShowCreateProductModal(false);
-            // Re-open dropdown and focus for a smooth flow
             setOpenProductDropdown(true);
             setTimeout(() => productInputRef.current?.focus(), 0);
           }}
@@ -250,13 +251,23 @@ export default function CollectionDetailPage() {
               <div className="text-xs uppercase text-gray-500">Status</div>
               <div className="font-medium">{collection.status}</div>
             </div>
+
+            <div>
+              <div className="text-xs uppercase text-gray-500">Inventory Applied</div>
+              <div className="font-medium">
+                {collection.inventory_applied_at
+                  ? new Date(collection.inventory_applied_at).toLocaleString()
+                  : 'No'}
+              </div>
+            </div>
+
             <div className="md:col-span-3">
               <div className="text-xs uppercase text-gray-500">Notes</div>
               <div className="font-medium whitespace-pre-wrap">{collection.notes || '—'}</div>
             </div>
           </div>
 
-          {/* Extraction inputs (live UI calc; API will apply on save as well) */}
+          {/* Extraction inputs */}
           <div className="grid sm:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs uppercase text-gray-600 mb-1">Estimated Extraction</label>
@@ -389,7 +400,6 @@ export default function CollectionDetailPage() {
                 />
               </div>
 
-              {/* Custom description (shown only when OTHER selected) */}
               {isOther(form.product_sku) && (
                 <div className="md:col-span-12">
                   <label className="block text-xs uppercase text-gray-600 mb-1">Description (for OTHER)</label>
@@ -416,7 +426,7 @@ export default function CollectionDetailPage() {
             </div>
           </div>
 
-          {/* Items Table (live extraction allocation) */}
+          {/* Items Table */}
           <div>
             <h3 className="font-semibold mb-2">Items in Collection</h3>
             <table className="w-full border min-w-[900px]">
@@ -478,8 +488,42 @@ export default function CollectionDetailPage() {
             </table>
           </div>
 
-          {/* Save button */}
-          <div className="text-right">
+          {/* Buttons */}
+          <div className="flex justify-end gap-3">
+            {/* Superadmin Apply */}
+            {isSuperadmin && (
+              <button
+                onClick={async () => {
+                  const toastId = toast.loading('Applying stock & cost updates...');
+                  try {
+                    const res = await fetch(`/api/collections?resource=apply-inventory&id=${id}`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': userIdHeader,
+                      },
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data?.error || 'Failed to apply inventory updates');
+
+                    if (data?.alreadyApplied) toast.success('Already applied (no changes made)', { id: toastId });
+                    else toast.success('Stock & cost updates applied', { id: toastId });
+
+                    await fetchAll();
+                  } catch (err) {
+                    toast.error(err.message || 'Failed', { id: toastId });
+                  }
+                }}
+                disabled={!canApply}
+                className={`px-6 py-2 rounded text-white ${
+                  canApply ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Apply Stock & Cost
+              </button>
+            )}
+
+            {/* Save (everyone) */}
             <button
               onClick={async () => {
                 const toastId = toast.loading('Saving...');
@@ -487,9 +531,10 @@ export default function CollectionDetailPage() {
                   const payloadItems = items.map((it) => ({
                     product_sku: it.product_sku,
                     quantity: Number(it.quantity || 0),
-                    purchase_price: Number(it.purchase_price || 0), // 0 allowed
+                    purchase_price: Number(it.purchase_price || 0),
                     custom_description: isOther(it.product_sku) ? (it.custom_description || '') : null,
                   }));
+
                   const res = await fetch(`/api/collections?id=${id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -499,12 +544,14 @@ export default function CollectionDetailPage() {
                       items: payloadItems,
                     }),
                   });
+
                   if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
                     throw new Error(data?.error || 'Failed to save');
                   }
+
                   toast.success('Collection saved', { id: toastId });
-                  await fetchAll(); // full reload after a save is OK
+                  await fetchAll();
                 } catch (err) {
                   toast.error(err.message, { id: toastId });
                 }

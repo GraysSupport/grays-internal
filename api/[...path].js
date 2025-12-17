@@ -123,6 +123,14 @@ async function handleCustomers(req, res, subId) {
   }
 }
 
+function isSuperadminFromReq(req) {
+  // Your auth currently returns "access" (not "role")
+  // We’ll treat access === 'superadmin' as the superadmin flag.
+  const access = (req.headers['x-user-access'] || '').toString().toLowerCase();
+  return access === 'superadmin';
+}
+
+
 /* ---------- PRODUCTS ---------- */
 async function handleProducts(req, res, subSku) {
   const client = await getClientWithTimezone();
@@ -132,11 +140,23 @@ async function handleProducts(req, res, subSku) {
 
     if (method === 'GET') {
       if (sku) {
-        const r = await client.query('SELECT * FROM product WHERE sku = $1', [sku]);
+        const superadmin = isSuperadminFromReq(req);
+        const r = await client.query(
+          superadmin
+            ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product WHERE sku = $1'
+            : 'SELECT sku, brand, name, stock, price FROM product WHERE sku = $1',
+          [sku]
+        );
+
         if (!r.rows.length) return res.status(404).json({ error: 'Product not found' });
         return res.status(200).json(r.rows[0]);
       }
-      const r = await client.query('SELECT * FROM product');
+      const superadmin = isSuperadminFromReq(req);
+      const r = await client.query(
+        superadmin
+          ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product'
+          : 'SELECT sku, brand, name, stock, price FROM product'
+      );
       return res.status(200).json(r.rows);
     }
 
