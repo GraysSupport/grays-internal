@@ -115,6 +115,77 @@ export default function CollectionDetailPage() {
     }
   }
 
+  // ----------------- CSV Export -----------------
+  const escapeCsv = (val) => {
+    if (val === null || val === undefined) return '""';
+    const s = String(val).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+
+  const exportCollectionToCsv = () => {
+    if (!collection) {
+      toast.error('Collection not loaded.');
+      return;
+    }
+
+    if (!items.length) {
+      toast.error('No items to export.');
+      return;
+    }
+
+    const lines = [];
+
+    const collectionDateRaw = collection.collection_date
+      ? new Date(collection.collection_date).toISOString().slice(0, 10)
+      : '';
+
+    const collectionName = collection.name || '';
+    const carrier = collection.removalist_name || '';
+
+    // Match the screenshot layout as closely as possible in CSV
+    lines.push(['', 'INWARD EQUIPMENT REGISTER', ''].map(escapeCsv).join(','));
+    lines.push('');
+    lines.push([escapeCsv('Date Received:'), escapeCsv(collectionDateRaw), ''].join(','));
+    lines.push([escapeCsv(`Gym Equipment was Collected from: ${collectionName}`), '', ''].join(','));
+    lines.push('');
+    lines.push(['Qty', 'Item', 'Notes'].map(escapeCsv).join(','));
+
+    for (const it of items) {
+      const qty = Number(it.quantity || 0);
+      const itemName = isOther(it.product_sku)
+        ? (it.custom_description || 'Other (custom)')
+        : (it.name || productBySku.get(String(it.product_sku || '').toUpperCase())?.name || it.product_sku || '');
+
+      const notes = isOther(it.product_sku)
+        ? 'OTHER item'
+        : '';
+
+      lines.push([
+        escapeCsv(qty),
+        escapeCsv(itemName),
+        escapeCsv(notes),
+      ].join(','));
+    }
+
+    lines.push('');
+    lines.push([escapeCsv('Carrier:'), escapeCsv(carrier), ''].join(','));
+
+    const csv = lines.join('\r\n');
+    const bom = '\uFEFF'; // Helps Excel open UTF-8 CSV properly
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `collection_${collection.id || 'export'}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast.success('Collection CSV downloaded.');
+  };
+
   // ----------------- Product Dropdown -----------------
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
@@ -490,6 +561,14 @@ export default function CollectionDetailPage() {
 
           {/* Buttons */}
           <div className="flex justify-end gap-3">
+            <button
+              onClick={exportCollectionToCsv}
+              disabled={!items.length}
+              className="bg-gray-200 text-gray-900 px-6 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
+            >
+              Export CSV
+            </button>
+
             {/* Superadmin Apply */}
             {isSuperadmin && (
               <button
