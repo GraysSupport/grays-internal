@@ -59,11 +59,9 @@ export default function CollectionDetailPage() {
     return m;
   }, [products]);
 
-  // Extraction state linked to DB fields
   const [est, setEst] = useState(0);
   const [act, setAct] = useState(0);
 
-  // ----------------- Load -----------------
   useEffect(() => {
     const stored = localStorage.getItem('user');
     if (!stored) {
@@ -71,7 +69,7 @@ export default function CollectionDetailPage() {
       return;
     }
     fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [id, navigate]);
 
   async function fetchAll() {
@@ -103,7 +101,6 @@ export default function CollectionDetailPage() {
     }
   }
 
-  // ---- NEW: refresh only the products list (avoid wiping local items/form) ----
   async function fetchProductsOnly() {
     try {
       const res = await fetch('/api/products');
@@ -143,10 +140,10 @@ export default function CollectionDetailPage() {
     const carrier = collection.removalist_name || '';
 
     // Match the screenshot layout as closely as possible in CSV
-    lines.push(['', 'INWARD EQUIPMENT REGISTER', ''].map(escapeCsv).join(','));
+    lines.push(['INWARD EQUIPMENT REGISTER', '', ''].map(escapeCsv).join(','));
     lines.push('');
     lines.push([escapeCsv('Date Received:'), escapeCsv(collectionDateRaw), ''].join(','));
-    lines.push([escapeCsv(`Gym Equipment was Collected from: ${collectionName}`), '', ''].join(','));
+    lines.push([escapeCsv('Gym Equipment was Collected from:'),  escapeCsv(collectionName), ''].join(','));
     lines.push('');
     lines.push(['Qty', 'Item', 'Notes'].map(escapeCsv).join(','));
 
