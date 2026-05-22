@@ -29,6 +29,9 @@ import CurrentCollectionsPage from './pages/delivery_operations/current-collecti
 import CompletedCollectionsPage from './pages/delivery_operations/completed-collections';
 import CollectionDetailPage from './pages/delivery_operations/collections/[id]';
 
+// Winnings 3PL — Peloton stock tab
+import PelotonPage from './pages/peloton';
+
 function App() {
   const navigate = useNavigate();
 
@@ -112,10 +115,13 @@ function App() {
         <Route path="delivery_operations/to-be-booked" element={<ToBeBookedDeliveriesPage />} />
         <Route path="delivery_operations/schedule" element={<DeliverySchedulePage />} />
         <Route path="delivery_operations/completed-deliveries" element={<CompletedDeliveriesPage />} />
-        
+
         <Route path="delivery_operations/current-collections" element={<CurrentCollectionsPage />} />
         <Route path="delivery_operations/completed-collections" element={<CompletedCollectionsPage />} />
         <Route path="delivery_operations/collections/:id" element={<CollectionDetailPage />} />
+
+        {/* Winnings 3PL — Peloton */}
+        <Route path="/peloton" element={<PelotonPage />} />
 
       </Routes>
     </>
