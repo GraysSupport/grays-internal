@@ -1,11 +1,7 @@
 // api/winnings.js
 // Vercel serverless function — proxies Winnings SAP inventory API.
-// Credentials live in env vars only; the browser never sees them.
-
-const SAP_BASE = {
-  QAS:  'https://winnings-sap-dev.apimanagement.ap10.hana.ondemand.com:443',
-  PROD: 'https://winnings-sap.apimanagement.ap10.hana.ondemand.com:443',
-};
+// All config lives in environment variables; nothing infrastructure-specific
+// is hardcoded here so the public repo reveals nothing about the SAP endpoints.
 
 export const FACILITY_NAMES = {
   '2000': 'NSW', '3000': 'VIC', '4000': 'QLD',
@@ -22,13 +18,26 @@ export default async function handler(req, res) {
   const sapUser    = process.env.WINNINGS_SAP_USER;
   const sapPass    = process.env.WINNINGS_SAP_PASSWORD;
   const env        = (process.env.WINNINGS_ENV || 'QAS').toUpperCase();
+  const baseQAS    = process.env.WINNINGS_SAP_BASE_QAS;
+  const basePROD   = process.env.WINNINGS_SAP_BASE_PROD;
 
-  if (!apiKey || !sapUser || !sapPass) {
+  // Validate all required env vars up front — fail loudly so misconfiguration
+  // is obvious in Vercel logs rather than silently producing bad requests.
+  const missing = [
+    !apiKey   && 'WINNINGS_API_KEY',
+    !sapUser  && 'WINNINGS_SAP_USER',
+    !sapPass  && 'WINNINGS_SAP_PASSWORD',
+    !baseQAS  && 'WINNINGS_SAP_BASE_QAS',
+    !basePROD && 'WINNINGS_SAP_BASE_PROD',
+  ].filter(Boolean);
+
+  if (missing.length) {
     return res.status(500).json({
-      error: 'Winnings API credentials not configured. '
-           + 'Set WINNINGS_API_KEY, WINNINGS_SAP_USER, and WINNINGS_SAP_PASSWORD in your environment.',
+      error: `Winnings API not fully configured. Missing env vars: ${missing.join(', ')}`,
     });
   }
+
+  const base = env === 'PROD' ? basePROD : baseQAS;
 
   const { facility, sku, includeZeroStock } = req.query;
 
@@ -44,8 +53,7 @@ export default async function handler(req, res) {
   if (includeZeroStock === 'true')  filterParts.push(`IncludeZeroStock eq 'X'`);
 
   const filterStr = filterParts.join(' and ');
-  const base = SAP_BASE[env] || SAP_BASE.QAS;
-  const url  = `${base}/ZSD_INVENTORY_STOCK_SRV/InventoryStockSet?$filter=${encodeURIComponent(filterStr)}`;
+  const url = `${base}/ZSD_INVENTORY_STOCK_SRV/InventoryStockSet?$filter=${encodeURIComponent(filterStr)}`;
 
   try {
     const sapRes = await fetch(url, {
