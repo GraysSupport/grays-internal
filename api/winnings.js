@@ -2,6 +2,9 @@
 // Vercel serverless function — proxies Winnings SAP inventory API.
 // All config lives in environment variables; nothing infrastructure-specific
 // is hardcoded here so the public repo reveals nothing about the SAP endpoints.
+//
+// Credentials are fully split by environment — QAS and PROD each have their
+// own API key, SAP user, password, and base URL. Set WINNINGS_ENV to switch.
 
 export const FACILITY_NAMES = {
   '2000': 'NSW', '3000': 'VIC', '4000': 'QLD',
@@ -14,30 +17,32 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey     = process.env.WINNINGS_API_KEY;
-  const sapUser    = process.env.WINNINGS_SAP_USER;
-  const sapPass    = process.env.WINNINGS_SAP_PASSWORD;
-  const env        = (process.env.WINNINGS_ENV || 'QAS').toUpperCase();
-  const baseQAS    = process.env.WINNINGS_SAP_BASE_QAS;
-  const basePROD   = process.env.WINNINGS_SAP_BASE_PROD;
+  const env = (process.env.WINNINGS_ENV || 'QAS').toUpperCase();
+
+  // Pick the full credential set for the active environment.
+  // QAS and PROD are kept completely separate — SAP commonly issues
+  // different API keys per environment, and sharing credentials causes 401s.
+  const isProd  = env === 'PROD';
+  const apiKey  = isProd ? process.env.WINNINGS_API_KEY_PROD  : process.env.WINNINGS_API_KEY_QAS;
+  const sapUser = isProd ? process.env.WINNINGS_SAP_USER_PROD : process.env.WINNINGS_SAP_USER_QAS;
+  const sapPass = isProd ? process.env.WINNINGS_SAP_PASSWORD_PROD : process.env.WINNINGS_SAP_PASSWORD_QAS;
+  const base    = isProd ? process.env.WINNINGS_SAP_BASE_PROD : process.env.WINNINGS_SAP_BASE_QAS;
 
   // Validate all required env vars up front — fail loudly so misconfiguration
   // is obvious in Vercel logs rather than silently producing bad requests.
+  const prefix  = isProd ? 'PROD' : 'QAS';
   const missing = [
-    !apiKey   && 'WINNINGS_API_KEY',
-    !sapUser  && 'WINNINGS_SAP_USER',
-    !sapPass  && 'WINNINGS_SAP_PASSWORD',
-    !baseQAS  && 'WINNINGS_SAP_BASE_QAS',
-    !basePROD && 'WINNINGS_SAP_BASE_PROD',
+    !apiKey   && `WINNINGS_API_KEY_${prefix}`,
+    !sapUser  && `WINNINGS_SAP_USER_${prefix}`,
+    !sapPass  && `WINNINGS_SAP_PASSWORD_${prefix}`,
+    !base     && `WINNINGS_SAP_BASE_${prefix}`,
   ].filter(Boolean);
 
   if (missing.length) {
     return res.status(500).json({
-      error: `Winnings API not fully configured. Missing env vars: ${missing.join(', ')}`,
+      error: `Winnings ${prefix} environment not fully configured. Missing: ${missing.join(', ')}`,
     });
   }
-
-  const base = env === 'PROD' ? basePROD : baseQAS;
 
   const { facility, sku, includeZeroStock } = req.query;
 
