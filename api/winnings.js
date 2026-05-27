@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const env = (process.env.WINNINGS_ENV || 'QAS').toUpperCase();
+  const env = (process.env.WINNINGS_ENV).toUpperCase();
 
   // Pick the full credential set for the active environment.
   // QAS and PROD are kept completely separate — SAP commonly issues
