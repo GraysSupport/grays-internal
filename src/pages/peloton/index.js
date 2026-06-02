@@ -59,11 +59,17 @@ export default function PelotonPage() {
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState(null);
 
-  // Auth guard
+  // Auth guard — superadmin only
   useEffect(() => {
     const stored = localStorage.getItem('user');
     if (!stored) { navigate('/'); return; }
-    setUser(JSON.parse(stored));
+    const u = JSON.parse(stored);
+    if (u?.access !== 'superadmin') {
+      toast.error('Insufficient permissions');
+      navigate('/dashboard');
+      return;
+    }
+    setUser(u);
   }, [navigate]);
 
   // ── fetch stock ─────────────────────────────────────────────────────────

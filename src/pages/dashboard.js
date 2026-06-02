@@ -275,11 +275,13 @@ export default function Dashboard() {
             Delivery Operations
           </Link>
 
-          {/* Winnings 3PL — Peloton stock (visible to everyone) */}
-          <Link to="/peloton" className="text-gray-700 hover:bg-gray-200 p-2 rounded flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-black flex-shrink-0" />
-            Peloton
-          </Link>
+          {/* Winnings 3PL — Peloton stock (superadmin only) */}
+          {user?.access === 'superadmin' && (
+            <Link to="/peloton" className="text-gray-700 hover:bg-gray-200 p-2 rounded flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-black flex-shrink-0" />
+              Peloton
+            </Link>
+          )}
 
           {/* Only superadmin */}
           {user?.access === 'superadmin' && (
