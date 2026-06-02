@@ -29,8 +29,11 @@ import CurrentCollectionsPage from './pages/delivery_operations/current-collecti
 import CompletedCollectionsPage from './pages/delivery_operations/completed-collections';
 import CollectionDetailPage from './pages/delivery_operations/collections/[id]';
 
-// Winnings 3PL — Peloton stock tab
-import PelotonPage from './pages/peloton';
+// Winnings 3PL — Peloton section
+import PelotonPage             from './pages/peloton';
+import PelotonSalesOrders      from './pages/peloton/sales-orders';
+import PelotonPurchaseOrders   from './pages/peloton/purchase-orders';
+import PelotonDeliveryCalendar from './pages/peloton/delivery-calendar';
 
 function App() {
   const navigate = useNavigate();
@@ -120,8 +123,11 @@ function App() {
         <Route path="delivery_operations/completed-collections" element={<CompletedCollectionsPage />} />
         <Route path="delivery_operations/collections/:id" element={<CollectionDetailPage />} />
 
-        {/* Winnings 3PL — Peloton */}
-        <Route path="/peloton" element={<PelotonPage />} />
+        {/* Winnings 3PL — Peloton section */}
+        <Route path="/peloton"                   element={<PelotonPage />} />
+        <Route path="/peloton/sales-orders"      element={<PelotonSalesOrders />} />
+        <Route path="/peloton/purchase-orders"   element={<PelotonPurchaseOrders />} />
+        <Route path="/peloton/delivery-calendar" element={<PelotonDeliveryCalendar />} />
 
       </Routes>
     </>

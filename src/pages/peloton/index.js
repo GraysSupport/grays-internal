@@ -8,6 +8,7 @@ import toast from 'react-hot-toast';
 import { RefreshCw, PackageSearch, AlertTriangle, Wifi } from 'lucide-react';
 import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
+import PelotonTabs from '../../components/PelotonTabs';
 
 // ─── constants ──────────────────────────────────────────────────────────────
 
@@ -359,6 +360,8 @@ export default function PelotonPage() {
           </div>
         )}
       </main>
+
+      <PelotonTabs />
     </div>
   );
 }
