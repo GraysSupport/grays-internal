@@ -438,7 +438,7 @@ export default function WorkorderDetailPage() {
           status: it.status,
           technician_id: it.technician_id,
           item_sn: it.item_sn ?? null,
-          ...(isSuperadmin ? { selling_price: it.selling_price ?? null } : {}),
+          ...(isSuperadmin && 'selling_price' in it ? { selling_price: it.selling_price === '' ? null : (it.selling_price ?? null) } : {}),
         })),
 
         add_items: pendingNewItems.map((it) => ({
