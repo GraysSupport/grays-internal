@@ -272,7 +272,7 @@ export default function Dashboard() {
 
           {/* Delivery Ops: visible to everyone */}
           <Link
-            to={user?.email === 'workshop@graysfitness.com.au' ? '/workshop' : '/delivery_operations'}
+            to={user?.id === 'WK' ? '/workshop' : '/delivery_operations'}
             className="text-gray-700 hover:bg-gray-200 p-2 rounded"
           >
             Delivery Operations
