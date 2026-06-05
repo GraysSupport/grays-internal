@@ -38,7 +38,7 @@ export default function LandingPage() {
         localStorage.setItem('sessionExpiry', expiryTime.toString());
 
         toast.success('Login successful!');
-        navigate(data.email === 'workshop@graysfitness.com.au' ? '/workshop' : '/dashboard');
+        navigate('/dashboard');
       } else {
         toast.error(data.error || 'Login failed');
       }
