@@ -31,6 +31,7 @@ import CollectionDetailPage from './pages/delivery_operations/collections/[id]';
 
 // Winnings 3PL — Peloton stock tab
 import PelotonPage from './pages/peloton';
+import WorkshopPage from './pages/workshop';
 
 function App() {
   const navigate = useNavigate();
@@ -39,6 +40,10 @@ function App() {
     const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
     const checkSession = () => {
+      // Workshop kiosk user must never be auto-logged out
+      const storedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      if (storedUser?.email === 'workshop@graysfitness.com.au') return;
+
       const expiry = parseInt(localStorage.getItem('sessionExpiry'), 10);
       if (!expiry || Date.now() > expiry) {
         logout();
@@ -122,6 +127,9 @@ function App() {
 
         {/* Winnings 3PL — Peloton */}
         <Route path="/peloton" element={<PelotonPage />} />
+
+        {/* Workshop kiosk display */}
+        <Route path="/workshop" element={<WorkshopPage />} />
 
       </Routes>
     </>
