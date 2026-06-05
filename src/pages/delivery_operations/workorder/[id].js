@@ -209,6 +209,7 @@ export default function WorkorderDetailPage() {
   const [user, setUser] = useState(null);
   const isSuperadmin = user?.access === 'superadmin';
   const isGS = user?.id === 'GS';
+  const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
 
   const userId = useMemo(() => {
     try {
@@ -570,18 +571,25 @@ export default function WorkorderDetailPage() {
       <main className="max-w-6xl mx-auto p-4">
         {/* Top summary */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-          <button
-            type="button"
-            onClick={openCustomerModal}
-            className="rounded-lg border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            title="View / Edit customer contact"
-          >
-            <div className="text-xs text-gray-500 flex items-center justify-between">
-              <span>Customer</span>
-              <span className="text-[11px] text-blue-600 underline">View / Edit</span>
+          {isWorkshop ? (
+            <div className="rounded-lg border bg-white p-3">
+              <div className="text-xs text-gray-500">Customer</div>
+              <div className="font-semibold">{wo.customer_name}</div>
             </div>
-            <div className="font-semibold">{wo.customer_name}</div>
-          </button>
+          ) : (
+            <button
+              type="button"
+              onClick={openCustomerModal}
+              className="rounded-lg border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              title="View / Edit customer contact"
+            >
+              <div className="text-xs text-gray-500 flex items-center justify-between">
+                <span>Customer</span>
+                <span className="text-[11px] text-blue-600 underline">View / Edit</span>
+              </div>
+              <div className="font-semibold">{wo.customer_name}</div>
+            </button>
+          )}
 
           <div className="rounded-lg border bg-white p-3">
             <div className="text-xs text-gray-500">Workorder Date:</div>
@@ -589,12 +597,12 @@ export default function WorkorderDetailPage() {
           </div>
 
           <div
-            className="rounded-lg border bg-white p-3 cursor-pointer"
-            onClick={() => setEditEstimated(true)}
-            title="Click to edit"
+            className={`rounded-lg border bg-white p-3 ${!isWorkshop ? 'cursor-pointer' : ''}`}
+            onClick={!isWorkshop ? () => setEditEstimated(true) : undefined}
+            title={!isWorkshop ? 'Click to edit' : undefined}
           >
             <div className="text-xs text-gray-500">Expected Completion Date:</div>
-            {!editEstimated ? (
+            {!editEstimated || isWorkshop ? (
               <div className="font-semibold">{fmtDate(estimatedCompletion || wo.estimated_completion)}</div>
             ) : (
               <input
@@ -630,16 +638,18 @@ export default function WorkorderDetailPage() {
             )}
           </div>
 
-          <div className="rounded-lg border bg-white p-3">
-            <div className="text-xs text-gray-500">Payment Status:</div>
-            <div className="font-semibold">
-              {Number(wo.outstanding_balance) > 0 ? (
-                <span className="text-red-600">{formatMoney(wo.outstanding_balance)} Outstanding</span>
-              ) : (
-                <span className="text-green-600">Paid</span>
-              )}
+          {!isWorkshop && (
+            <div className="rounded-lg border bg-white p-3">
+              <div className="text-xs text-gray-500">Payment Status:</div>
+              <div className="font-semibold">
+                {Number(wo.outstanding_balance) > 0 ? (
+                  <span className="text-red-600">{formatMoney(wo.outstanding_balance)} Outstanding</span>
+                ) : (
+                  <span className="text-green-600">Paid</span>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Items */}
@@ -948,29 +958,33 @@ export default function WorkorderDetailPage() {
               placeholder="Notes"
             />
 
-            <div className="mt-4">
-              <div className="text-sm text-gray-600 mb-1">Delivery Charged ($)</div>
-              <input
-                type="number"
-                step="0.01"
-                className="w-full border rounded p-2"
-                value={deliveryCharged ?? ''}
-                onChange={(e) => setDeliveryCharged(e.target.value)}
-                placeholder="Value"
-              />
-            </div>
+            {!isWorkshop && (
+              <>
+                <div className="mt-4">
+                  <div className="text-sm text-gray-600 mb-1">Delivery Charged ($)</div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full border rounded p-2"
+                    value={deliveryCharged ?? ''}
+                    onChange={(e) => setDeliveryCharged(e.target.value)}
+                    placeholder="Value"
+                  />
+                </div>
 
-            <div className="mt-3">
-              <div className="text-sm text-gray-600 mb-1">Outstanding Balance ($)</div>
-              <input
-                type="number"
-                step="0.01"
-                className="w-full border rounded p-2"
-                value={outstandingBalance ?? ''}
-                onChange={(e) => setOutstandingBalance(e.target.value)}
-                placeholder="Value"
-              />
-            </div>
+                <div className="mt-3">
+                  <div className="text-sm text-gray-600 mb-1">Outstanding Balance ($)</div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full border rounded p-2"
+                    value={outstandingBalance ?? ''}
+                    onChange={(e) => setOutstandingBalance(e.target.value)}
+                    placeholder="Value"
+                  />
+                </div>
+              </>
+            )}
 
             {String(woStatus) === 'Completed' && (
               <div className="mt-4 border rounded p-3 bg-amber-50">
