@@ -41,6 +41,7 @@ function BarChart({ data = [], onBarClick }) {
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -356,14 +357,14 @@ export default function Dashboard() {
 
             {/* KPI grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-              {analyticsCard('Active Workorders', activeWOs.length, '', () => navigate('/delivery_operations'))}
-              {analyticsCard('Past Target (Active WOs)', pastTargetWOs.length, 'text-red-700', () => navigate('/delivery_operations/?filter=past-target'))}
-              {analyticsCard('Important Workorders', importantWOs.length, 'text-purple-700', () => navigate('/delivery_operations/?filter=important'))}
-              {analyticsCard('Deliveries Today (Booked)', deliveriesToday.length, '', () => navigate('/delivery_operations/schedule?when=today'))}
-              {analyticsCard('Deliveries This Week (Booked)', deliveriesThisWeek.length, '', () => navigate('/delivery_operations/schedule?when=this-week'))}
-              {analyticsCard('Customer Collect (Booked)', customerCollectCount, '', () => navigate('/delivery_operations/schedule?filter=customer-collect'))}
-              {analyticsCard('Collections This Week', collectionsThisWeek.length, '', () => navigate('/delivery_operations/current-collections?when=this-week'))}
-              {analyticsCard('Collections Next Week', collectionsNextWeek.length, '', () => navigate('/delivery_operations/current-collections?when=next-week'))}
+              {analyticsCard('Active Workorders', activeWOs.length, '', isWorkshop ? null : () => navigate('/delivery_operations'))}
+              {analyticsCard('Past Target (Active WOs)', pastTargetWOs.length, 'text-red-700', isWorkshop ? null : () => navigate('/delivery_operations/?filter=past-target'))}
+              {analyticsCard('Important Workorders', importantWOs.length, 'text-purple-700', isWorkshop ? null : () => navigate('/delivery_operations/?filter=important'))}
+              {analyticsCard('Deliveries Today (Booked)', deliveriesToday.length, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?when=today'))}
+              {analyticsCard('Deliveries This Week (Booked)', deliveriesThisWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?when=this-week'))}
+              {analyticsCard('Customer Collect (Booked)', customerCollectCount, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?filter=customer-collect'))}
+              {analyticsCard('Collections This Week', collectionsThisWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/current-collections?when=this-week'))}
+              {analyticsCard('Collections Next Week', collectionsNextWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/current-collections?when=next-week'))}
               {analyticsCard(`Workorders in ${today.getFullYear()}`, totalWOsThisYear)}
             </div>
 
@@ -372,18 +373,20 @@ export default function Dashboard() {
               <div className="bg-gray-50 rounded p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold">Deliveries “To Be Booked” by State</h3>
-                  <button
-                    className="text-xs text-blue-600 hover:underline"
-                    onClick={() => navigate('/delivery_operations/to-be-booked')}
-                  >
-                    View all
-                  </button>
+                  {!isWorkshop && (
+                    <button
+                      className="text-xs text-blue-600 hover:underline"
+                      onClick={() => navigate('/delivery_operations/to-be-booked')}
+                    >
+                      View all
+                    </button>
+                  )}
                 </div>
 
                 {tbbByStateData.length ? (
                   <BarChart
                     data={tbbByStateData}
-                    onBarClick={(state) => navigate(`/delivery_operations/to-be-booked?state=${encodeURIComponent(state)}`)}
+                    onBarClick={isWorkshop ? undefined : (state) => navigate(`/delivery_operations/to-be-booked?state=${encodeURIComponent(state)}`)}
                   />
                 ) : (
                   <div className="text-sm text-gray-500">No “To Be Booked” deliveries.</div>

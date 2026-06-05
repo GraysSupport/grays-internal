@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
-import DeliveryTabs from '../../components/DeliveryTabs';
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -37,6 +36,30 @@ function formatTechnicians(techs) {
 
 const TECH_BADGE_COLORS = { Joe: '#F4B084', Eden: '#FFFFCF', Toby: '#FEFE41', Lino: '#BDD7EE', Brett: '#CDCFD0' };
 function techColor(name) { return TECH_BADGE_COLORS[name] || '#E5E7EB'; }
+
+// Due-date severity — returns one of 6 keys or null (no date)
+const SEVERITY = {
+  overdue:     { rowCls: 'bg-red-100',     label: 'Overdue',        dot: 'bg-red-500',    text: 'text-red-700'    },
+  today:       { rowCls: 'bg-orange-100',  label: 'Due Today',      dot: 'bg-orange-500', text: 'text-orange-700' },
+  imminent:    { rowCls: 'bg-amber-50',    label: 'Due in 1–2 days',dot: 'bg-amber-400',  text: 'text-amber-700'  },
+  soon:        { rowCls: 'bg-yellow-50',   label: 'Due in 3–5 days',dot: 'bg-yellow-400', text: 'text-yellow-700' },
+  upcoming:    { rowCls: 'bg-sky-50',      label: 'Due in 6–14 days',dot:'bg-sky-400',    text: 'text-sky-700'    },
+  comfortable: { rowCls: '',               label: '15+ days away',  dot: 'bg-green-400',  text: 'text-green-700'  },
+};
+
+function getDueSeverity(iso, today) {
+  if (!iso) return null;
+  const due = new Date(iso);
+  if (Number.isNaN(due.getTime())) return null;
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const diffDays = Math.ceil((dueDay - today) / 86_400_000);
+  if (diffDays < 0)   return 'overdue';
+  if (diffDays === 0) return 'today';
+  if (diffDays <= 2)  return 'imminent';
+  if (diffDays <= 5)  return 'soon';
+  if (diffDays <= 14) return 'upcoming';
+  return 'comfortable';
+}
 
 export default function WorkshopPage() {
   const [rows, setRows] = useState([]);
@@ -201,12 +224,24 @@ export default function WorkshopPage() {
       { key: 'notes', header: 'Notes', get: (w) => w.notes || '—' },
     ];
 
+    const PRINT_SEVERITY_BG = {
+      overdue:     '#fee2e2',
+      today:       '#fed7aa',
+      imminent:    '#fef3c7',
+      soon:        '#fefce8',
+      upcoming:    '#e0f2fe',
+      comfortable: '',
+    };
+
     const title = `Workshop Run Sheet${filtersActive ? ' (Filtered)' : ''}`;
     const rowsHtml = (filtered || [])
       .map(w => {
+        const sev = getDueSeverity(w.estimated_completion, today);
+        const rowBg = sev ? PRINT_SEVERITY_BG[sev] : '';
+        const bgStyle = rowBg ? ` style="background:${rowBg}"` : '';
         const tds = cols.map(c => `<td>${escapeHtml(String(c.get(w) ?? ''))}</td>`).join('');
         const impClass = w.important_flag ? ' row-important' : '';
-        return `<tbody class="row-block${impClass}"><tr>${tds}</tr></tbody>`;
+        return `<tbody class="row-block${impClass}"><tr${bgStyle}>${tds}</tr></tbody>`;
       })
       .join('');
     const thead = `<thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>`;
@@ -356,6 +391,19 @@ export default function WorkshopPage() {
               </div>
             )}
 
+            {/* Severity legend */}
+            <div className="px-4 pt-3 pb-1 flex flex-wrap gap-x-4 gap-y-1">
+              {Object.entries(SEVERITY).map(([key, s]) => (
+                <span key={key} className="flex items-center gap-1.5 text-xs text-gray-600">
+                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${s.dot}`} />
+                  {s.label}
+                </span>
+              ))}
+              <span className="flex items-center gap-1.5 text-xs text-gray-400 ml-2 border-l pl-3">
+                ★ = Important
+              </span>
+            </div>
+
             {/* Table */}
             <div className="p-4">
               <div className="overflow-x-auto rounded-lg border">
@@ -381,24 +429,26 @@ export default function WorkshopPage() {
                     {!loading && filtered.length === 0 && (
                       <tr><td colSpan={10} className="px-3 py-6 text-center text-sm">No active work orders.</td></tr>
                     )}
-                    {!loading && filtered.map((w, idx) => {
+                    {!loading && filtered.map((w) => {
                       const itemsStr = formatItemsFromItems(w.items);
-                      const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
                       const isImportant = !!w.important_flag;
-                      const overlayStyle = isImportant ? { boxShadow: 'inset 0 0 0 9999px rgba(251,191,36,0.25)' } : undefined;
+                      const severityKey = getDueSeverity(w.estimated_completion, today);
+                      const severityRowCls = severityKey ? SEVERITY[severityKey].rowCls : 'bg-white';
+                      // Important adds a left amber border on top of the severity colour
+                      const importantCls = isImportant ? 'border-l-4 border-amber-400' : '';
 
                       return (
                         <tr
                           key={w.workorder_id}
-                          className={`${rowCls} cursor-pointer align-top hover:bg-gray-100`}
+                          className={`${severityRowCls} ${importantCls} cursor-pointer align-top hover:brightness-95`}
                           onClick={() => navigate(`/delivery_operations/workorder/${w.workorder_id}`)}
-                          style={overlayStyle}
                           title={isImportant ? 'Important work order' : undefined}
                         >
                           <td className="px-3 py-2 text-sm font-medium w-20">
+                            {isImportant && <span className="mr-1">★</span>}
                             {w.invoice_id ?? '—'}
                             {isImportant && (
-                              <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 align-middle">
+                              <span className="ml-1 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 align-middle">
                                 Important
                               </span>
                             )}
@@ -429,7 +479,9 @@ export default function WorkshopPage() {
                               </div>
                             ) : '—'}
                           </td>
-                          <td className="px-3 py-2 text-sm w-28">{formatDate(w.estimated_completion)}</td>
+                          <td className={`px-3 py-2 text-sm w-28 font-medium ${severityKey ? SEVERITY[severityKey].text : ''}`}>
+                            {formatDate(w.estimated_completion)}
+                          </td>
                           <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words w-40">{w.notes || '—'}</td>
                         </tr>
                       );
@@ -442,7 +494,17 @@ export default function WorkshopPage() {
         </main>
       </div>
 
-      <DeliveryTabs />
+      {/* Exit-only footer */}
+      <div className="sticky bottom-0 z-30 border-t bg-white shadow-lg">
+        <div className="px-3 py-2 flex items-center justify-end">
+          <a
+            href="/dashboard"
+            className="px-4 py-2 text-sm rounded-xl hover:bg-red-50 text-red-600 font-semibold"
+          >
+            Exit
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
