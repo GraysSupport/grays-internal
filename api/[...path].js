@@ -238,7 +238,8 @@ async function handleWaitlist(req, res, subId) {
           FROM collection_items ci
           JOIN collections col ON col.id = ci.collection_id
           WHERE ci.product_sku = w.product_sku
-            AND col.inventory_applied_at IS NULL
+            AND col.status != 'Completed'
+            AND col.collection_date > CURRENT_DATE
           ORDER BY col.collection_date ASC NULLS LAST
           LIMIT 1
         ) uc ON true
