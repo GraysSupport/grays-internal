@@ -164,6 +164,7 @@ export default function Dashboard() {
   const uniqueWaitlistProducts = new Set(w.map((x) => x?.product_sku)).size;
   const uniqueWaitlistCustomers = new Set(w.map((x) => x?.customer_id)).size;
   const waitlistWithStock = w.filter((x) => Number(x?.stock) > 0).length;
+  const waitlistComingIn = w.filter((x) => Number(x?.stock) === 0 && x?.coming_in_date).length;
 
   // ======= WORKORDER / DELIVERY / COLLECTION ANALYTICS ========
   const allWOs = Array.isArray(workorders) ? workorders : [];
@@ -345,6 +346,7 @@ export default function Dashboard() {
                   {analyticsCard('Products Waitlisted', uniqueWaitlistProducts)}
                   {analyticsCard('Customers Waitlisted', uniqueWaitlistCustomers)}
                   {analyticsCard('Waitlist in Stock', waitlistWithStock, 'text-green-700', () => navigate('/waitlist?inStock=true'))}
+                  {analyticsCard('Waitlist Coming In', waitlistComingIn, 'text-amber-700')}
                 </div>
               </div>
               <br />
