@@ -104,12 +104,24 @@ export default function WaitlistPage() {
 
   const grouped = filtered.reduce((acc, entry) => {
     if (!acc[entry.product_name])
-      acc[entry.product_name] = { entries: [], stock: entry.stock ?? 0 };
+      acc[entry.product_name] = {
+        entries: [],
+        stock: entry.stock ?? 0,
+        coming_in_date: entry.coming_in_date ?? null,
+        coming_in_collection: entry.coming_in_collection ?? null,
+        coming_in_status: entry.coming_in_status ?? null,
+      };
     acc[entry.product_name].entries.push(entry);
     return acc;
   }, {});
 
-  const sortedGroups = Object.entries(grouped).sort(([, a], [, b]) => b.stock - a.stock);
+  const sortedGroups = Object.entries(grouped).sort(([, a], [, b]) => {
+    // Products with stock come first, then those with a coming-in date, then neither
+    if (b.stock !== a.stock) return b.stock - a.stock;
+    const aHas = a.coming_in_date ? 1 : 0;
+    const bHas = b.coming_in_date ? 1 : 0;
+    return bHas - aHas;
+  });
 
   return (
     <>
@@ -140,13 +152,24 @@ export default function WaitlistPage() {
           <p className="text-center text-gray-500">No waitlist entries found.</p>
         )}
 
-        {sortedGroups.map(([product, { entries, stock }]) => (
+        {sortedGroups.map(([product, { entries, stock, coming_in_date, coming_in_collection, coming_in_status }]) => (
           <div key={product} className="mb-8">
-            <h3 className="text-lg font-semibold mb-2">
-              {entries[0].product_sku} - {product} -{' '}
+            <h3 className="text-lg font-semibold mb-2 flex flex-wrap items-center gap-2">
+              <span>{entries[0].product_sku} - {product} –</span>
               <span className={stock === 0 ? 'text-red-500' : 'text-green-600'}>
                 {stock === 0 ? 'Out of Stock' : `${stock} in Stock`}
               </span>
+              {coming_in_date && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-0.5 text-sm font-medium text-amber-800 border border-amber-300"
+                  title={coming_in_collection ? `Collection: ${coming_in_collection} (${coming_in_status})` : undefined}
+                >
+                  Coming in ~{new Date(coming_in_date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {coming_in_collection && (
+                    <span className="text-amber-600 font-normal">· {coming_in_collection}</span>
+                  )}
+                </span>
+              )}
             </h3>
 
             <table className="w-full border text-sm mb-2">

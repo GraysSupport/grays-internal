@@ -211,7 +211,7 @@ async function handleWaitlist(req, res, subId) {
         return res.status(200).json(r.rows[0]);
       }
       const r = await client.query(`
-        SELECT 
+        SELECT
           w.waitlist_id,
           w.customer_id,
           w.product_sku,
@@ -219,14 +219,30 @@ async function handleWaitlist(req, res, subId) {
           w.status,
           w.notes,
           w.waitlisted,
-          c.name  AS customer_name, 
+          c.name  AS customer_name,
           c.email AS customer_email,
           c.phone AS customer_phone,
           p.name  AS product_name,
-          p.stock
+          p.stock,
+          uc.coming_in_date,
+          uc.coming_in_collection,
+          uc.coming_in_status
         FROM waitlist w
         JOIN customers c ON w.customer_id = c.id
         JOIN product   p ON w.product_sku = p.sku
+        LEFT JOIN LATERAL (
+          SELECT
+            col.collection_date AS coming_in_date,
+            col.name            AS coming_in_collection,
+            col.status          AS coming_in_status
+          FROM collection_items ci
+          JOIN collections col ON col.id = ci.collection_id
+          WHERE ci.product_sku = w.product_sku
+            AND col.status != 'Completed'
+            AND col.collection_date > CURRENT_DATE
+          ORDER BY col.collection_date ASC NULLS LAST
+          LIMIT 1
+        ) uc ON true
         /* If you want ALL statuses in analytics, remove the WHERE filter entirely */
         WHERE w.status IN ('Active', 'Notified')
         ORDER BY p.stock DESC NULLS LAST, w.waitlisted ASC
