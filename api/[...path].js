@@ -2,6 +2,7 @@
 import { compare, hash } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
+import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole } from '../lib/rbac.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -322,7 +323,11 @@ async function handleAuth(req, res, action) {
       const ok = await compare(password, user.password);
       if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
-      const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
+      // F0b: load the full multi-role set (falls back to [access] if user_roles
+      // is absent). Carry it in the JWT so the server can authorize on it later.
+      const roles = await getRolesForUser(client, user.id, user.access);
+
+      const token = jwt.sign({ id: user.id, email: user.email, roles }, process.env.JWT_SECRET, {
         expiresIn: '1h',
       });
 
@@ -337,7 +342,8 @@ async function handleAuth(req, res, action) {
         id: user.id,
         name: user.name,
         email: user.email,
-        access: user.access,
+        access: user.access, // primary role, unchanged (backward-compat)
+        roles,               // F0b: full role set
       });
     }
 
@@ -348,12 +354,20 @@ async function handleAuth(req, res, action) {
       const existing = await client.query('SELECT 1 FROM users WHERE email = $1', [email]);
       if (existing.rows.length) return res.status(409).json({ error: 'Email is already registered' });
 
+      // F0b: role set from the multi-select (falls back to a single `access` value
+      // or 'staff'). users.access mirrors the primary (highest-precedence) role.
+      let roles = sanitizeRoles(req.body.roles);
+      if (!roles.length && req.body.access) roles = sanitizeRoles([req.body.access]);
+      if (!roles.length) roles = ['staff'];
+      const primary = primaryRole(roles);
+
       const hashed = await hash(password, 10);
       await client.query(
-        'INSERT INTO users (id, name, email, password) VALUES ($1,$2,$3,$4)',
-        [id, name, email, hashed]
+        'INSERT INTO users (id, name, email, password, access) VALUES ($1,$2,$3,$4,$5)',
+        [id, name, email, hashed, primary]
       );
-      return res.status(200).json({ message: 'User registered successfully' });
+      await syncUserRoles(client, id, roles, null); // granted_by unknown (no acting-admin identity here)
+      return res.status(200).json({ message: 'User registered successfully', roles });
     }
 
     if (action === 'change-password') {
@@ -391,25 +405,50 @@ async function handleUsers(req, res) {
     const { method, body } = req;
 
     if (method === 'GET') {
-        const access = (req.query?.access || '').toString();
-        if (access) {
-            const r = await client.query('SELECT * FROM users WHERE access = $1', [access]);
-            return res.status(200).json(r.rows);
-        }
-        const r = await client.query('SELECT * FROM users');
+      const access = (req.query?.access || '').toString();
+      // F0b: return each user's full role set alongside the legacy columns.
+      // Falls back to [access] if user_roles is absent (undefined_table).
+      try {
+        const params = [];
+        let where = '';
+        if (access) { params.push(access); where = 'WHERE u.access = $1'; }
+        const r = await client.query(
+          `SELECT u.*,
+                  COALESCE(array_agg(ur.role) FILTER (WHERE ur.role IS NOT NULL),
+                           ARRAY[]::text[]) AS roles
+             FROM users u
+             LEFT JOIN user_roles ur ON ur.user_id = u.id
+             ${where}
+             GROUP BY u.id
+             ORDER BY u.id`,
+          params
+        );
         return res.status(200).json(r.rows);
+      } catch (err) {
+        if (err?.code !== '42P01') throw err; // only fall back when user_roles is missing
+        const r = access
+          ? await client.query('SELECT * FROM users WHERE access = $1', [access])
+          : await client.query('SELECT * FROM users');
+        return res.status(200).json(r.rows.map((u) => ({ ...u, roles: u.access ? [u.access] : [] })));
+      }
     }
 
     if (method === 'PUT') {
       const { id, name, email, password, access } = body;
       if (!id) return res.status(400).json({ error: 'User ID is required' });
+      // F0b: role set from the multi-select; users.access mirrors the primary role.
+      let roles = sanitizeRoles(body.roles);
+      if (!roles.length && access) roles = sanitizeRoles([access]);
+      if (!roles.length) roles = ['staff'];
+      const primary = primaryRole(roles);
       await client.query(
         `UPDATE users
            SET name=$1, email=$2, password=$3, access=$4
          WHERE id=$5`,
-        [name, email, password, access || 'staff', id]
+        [name, email, password, primary, id]
       );
-      return res.status(200).json({ message: 'User updated successfully' });
+      await syncUserRoles(client, id, roles, null);
+      return res.status(200).json({ message: 'User updated successfully', roles });
     }
 
     if (method === 'DELETE') {

@@ -4,6 +4,28 @@ import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import toast from 'react-hot-toast';
 
+// F0b: single-user-multi-role. Keep in sync with lib/rbac.js ROLES (precedence order).
+// users.access mirrors the primary (highest-precedence) role server-side.
+const ROLES = ['superadmin', 'admin', 'logistics', 'sales', 'staff', 'technician', 'workshop'];
+
+function RoleCheckboxes({ selected, onToggle }) {
+  const set = new Set(selected || []);
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1">
+      {ROLES.map((role) => (
+        <label key={role} className="inline-flex items-center gap-1 text-sm">
+          <input
+            type="checkbox"
+            checked={set.has(role)}
+            onChange={() => onToggle(role)}
+          />
+          {role}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export default function Register() {
   const [activeTab, setActiveTab] = useState('register');
   const [form, setForm] = useState({
@@ -12,6 +34,7 @@ export default function Register() {
     email: '',
     password: '',
     confirmPassword: '',
+    roles: ['staff'],
   });
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -34,10 +57,22 @@ export default function Register() {
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
+  const toggleFormRole = (role) =>
+    setForm((f) => {
+      const set = new Set(f.roles);
+      if (set.has(role)) set.delete(role);
+      else set.add(role);
+      return { ...f, roles: ROLES.filter((r) => set.has(r)) };
+    });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (form.password !== form.confirmPassword) {
       toast.error('Passwords do not match');
+      return;
+    }
+    if (!form.roles.length) {
+      toast.error('Select at least one role');
       return;
     }
 
@@ -62,6 +97,7 @@ export default function Register() {
           email: '',
           password: '',
           confirmPassword: '',
+          roles: ['staff'],
         });
       } else {
         toast.error(data.error || 'Registration failed');
@@ -78,7 +114,12 @@ export default function Register() {
       const res = await fetch('/api/users');
       if (!res.ok) throw new Error('Failed to fetch users');
       const data = await res.json();
-      setUsers(Array.isArray(data) ? data : []);
+      // Ensure every row has a roles array (falls back to [access]).
+      const normalised = (Array.isArray(data) ? data : []).map((u) => ({
+        ...u,
+        roles: Array.isArray(u.roles) && u.roles.length ? u.roles : u.access ? [u.access] : [],
+      }));
+      setUsers(normalised);
     } catch {
       toast.error('Failed to fetch users');
       setUsers([]);
@@ -87,7 +128,22 @@ export default function Register() {
     }
   };
 
+  const toggleUserRole = (userId, role) =>
+    setUsers((prev) =>
+      prev.map((u) => {
+        if (u.id !== userId) return u;
+        const set = new Set(u.roles || []);
+        if (set.has(role)) set.delete(role);
+        else set.add(role);
+        return { ...u, roles: ROLES.filter((r) => set.has(r)) };
+      })
+    );
+
   const handleUpdate = async (row) => {
+    if (!row.roles?.length) {
+      toast.error('Select at least one role');
+      return;
+    }
     const updateToast = toast.loading('Updating user...');
     try {
       const res = await fetch('/api/users', {
@@ -113,8 +169,6 @@ export default function Register() {
   useEffect(() => {
     if (activeTab === 'update') fetchUsers();
   }, [activeTab]);
-
-  const accessLevels = ['superadmin', 'admin', 'staff', 'technician'];
 
   return (
     <>
@@ -154,6 +208,13 @@ export default function Register() {
                   required
                 />
               ))}
+              <div className="mb-4">
+                <p className="text-sm font-semibold mb-1">Roles</p>
+                <RoleCheckboxes selected={form.roles} onToggle={toggleFormRole} />
+                <p className="text-xs text-gray-500 mt-1">
+                  The highest-privilege role becomes the user's primary access level.
+                </p>
+              </div>
               <button
                 type="submit"
                 className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
@@ -178,7 +239,7 @@ export default function Register() {
                         <th className="border px-4 py-2">ID</th>
                         <th className="border px-4 py-2">Name</th>
                         <th className="border px-4 py-2">Email</th>
-                        <th className="border px-4 py-2">Access Level</th>
+                        <th className="border px-4 py-2">Roles</th>
                         <th className="border px-4 py-2">Action</th>
                       </tr>
                     </thead>
@@ -207,19 +268,10 @@ export default function Register() {
                             />
                           </td>
                           <td className="border px-4 py-2">
-                            <select
-                              className="w-full px-2 py-1 border rounded"
-                              value={u.access}
-                              onChange={(e) =>
-                                setUsers(users.map((x) => (x.id === u.id ? { ...x, access: e.target.value } : x)))
-                              }
-                            >
-                              {accessLevels.map((level) => (
-                                <option key={level} value={level}>
-                                  {level}
-                                </option>
-                              ))}
-                            </select>
+                            <RoleCheckboxes
+                              selected={u.roles}
+                              onToggle={(role) => toggleUserRole(u.id, role)}
+                            />
                           </td>
                           <td className="border px-4 py-2 text-center">
                             <button
