@@ -33,6 +33,7 @@ export default function LandingPage() {
             name: data.name,
             email: data.email,
             access: data.access,
+            roles: data.roles || (data.access ? [data.access] : []), // F0b role set (P10/P11)
           })
         );
         localStorage.setItem('sessionExpiry', expiryTime.toString());
