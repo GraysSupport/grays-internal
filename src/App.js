@@ -6,6 +6,7 @@ import Dashboard from './pages/dashboard';
 import Register from './pages/register';
 import LandingPage from './pages/landingpage';
 import Settings from './pages/settings';
+import Inbox from './pages/inbox';
 
 import ProductsPage from './pages/products';
 import EditProduct from './pages/products/edit';
@@ -102,6 +103,7 @@ function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/inbox" element={<Inbox />} />
 
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/:sku/edit" element={<EditProduct />} />
