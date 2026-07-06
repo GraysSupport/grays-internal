@@ -21,6 +21,7 @@
 import statusHandler from '../../lib/podiumRoutes/status.js';
 import assignHandler from '../../lib/podiumRoutes/assign.js';
 import inboxHandler from '../../lib/podiumRoutes/inbox.js';
+import contactHandler from '../../lib/podiumRoutes/contact.js';
 import oauthStartHandler from '../../lib/podiumRoutes/oauthStart.js';
 import oauthCallbackHandler from '../../lib/podiumRoutes/oauthCallback.js';
 
@@ -45,6 +46,8 @@ export default async function handler(req, res) {
       return assignHandler(req, res);
     case 'inbox':
       return inboxHandler(req, res);
+    case 'contact':
+      return contactHandler(req, res);
     case 'oauth':
       if (sub === 'start') return oauthStartHandler(req, res);
       if (sub === 'callback') return oauthCallbackHandler(req, res);
