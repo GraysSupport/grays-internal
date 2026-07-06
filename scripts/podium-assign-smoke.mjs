@@ -20,7 +20,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 const jwt = (await import('jsonwebtoken')).default;
 const { resolvePodiumUserId, mirrorAssignmentToLead } = await import('../lib/podiumAssign.js');
 const { assignConversation, getAssignee } = await import('../lib/podium.js');
-const assignHandler = (await import('../api/podium/assign.js')).default;
+const assignHandler = (await import('../lib/podiumRoutes/assign.js')).default;
 
 let passed = 0;
 function check(name, cond, detail) {

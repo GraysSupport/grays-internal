@@ -18,7 +18,7 @@ delete process.env.PODIUM_REDIRECT_URI;
 
 const jwt = (await import('jsonwebtoken')).default;
 const { signState, verifyState, computeRedirectUri } = await import('../lib/podiumOAuth.js');
-const startHandler = (await import('../api/podium/oauth/start.js')).default;
+const startHandler = (await import('../lib/podiumRoutes/oauthStart.js')).default;
 
 let passed = 0;
 function check(name, cond, detail) {

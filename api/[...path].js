@@ -3,6 +3,14 @@ import { compare, hash } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
 import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole } from '../lib/rbac.js';
+// Formerly standalone /api functions (workorder/delivery/collections/winnings),
+// relocated under lib/handlers/ and routed here so they don't each consume one of the
+// Vercel Hobby plan's 12 Serverless-Function slots. Their handler logic is unchanged;
+// only the entrypoint moved. Same URLs (/api/workorder, …) — no front-end change.
+import workorderHandler from '../lib/handlers/workorder.js';
+import deliveryHandler from '../lib/handlers/delivery.js';
+import collectionsHandler from '../lib/handlers/collections.js';
+import winningsHandler from '../lib/handlers/winnings.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -67,6 +75,18 @@ export default async function handler(req, res) {
 
       case 'access-log':
         return handleAccessLog(req, res);
+
+      // Relocated standalone functions (delegate to the moved handlers verbatim).
+      // These read req.method/req.query/req.body only, so routing through the
+      // catch-all is behaviourally identical to their old standalone entrypoints.
+      case 'workorder':
+        return workorderHandler(req, res);
+      case 'delivery':
+        return deliveryHandler(req, res);
+      case 'collections':
+        return collectionsHandler(req, res);
+      case 'winnings':
+        return winningsHandler(req, res);
 
       default:
         return res.status(404).json({ error: 'Not found' });
