@@ -24,7 +24,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid } = await import('../lib/podiumInbox.js');
 const { listConversations, listMessages, sendMessage } = await import('../lib/podium.js');
-const inboxHandler = (await import('../api/podium/inbox.js')).default;
+const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
 let passed = 0;
 function check(name, cond, detail) {
