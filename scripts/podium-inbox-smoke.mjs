@@ -2,19 +2,20 @@
 //
 // Covers the pure/mock-safe logic added in F3 increment 1: the lib/podiumInbox.js
 // helpers (clampLimit, filterUpdatedSince, resolveSelfPodiumUid with an INJECTED fake
-// pg client), the mock Podium read/send helpers used by the endpoints, and the
-// api/podium/{messages,conversations,poll}.js auth/validation gates. NO network, NO
-// database, NO real secrets:
+// pg client), the mock Podium read/send helpers used by the endpoint, and the single
+// api/podium/inbox.js dispatcher's auth/validation gates (resource=conversations|
+// messages|poll). NO network, NO database, NO real secrets:
 //
 //   node scripts/podium-inbox-smoke.mjs
 //
-// messages.js opens no DB client, so its GET/POST happy paths run fully here. The
-// conversations/poll happy paths open getClientWithTimezone() (a live connection), so
-// only their pre-DB gates are exercised here; the mine-filter logic is validated
-// directly via resolveSelfPodiumUid + listConversations(assigneeUid) below, and the
-// end-to-end mine view is checked against the Neon dev branch separately (see report).
-// getClientWithTimezone()'s pool is lazy, so importing the handlers opens no connection
-// as long as we only hit their pre-DB branches.
+// (One dispatcher file, not three: the Vercel project is on the Hobby plan, capped at
+// 12 Serverless Functions per deployment.) The messages resource opens no DB client, so
+// its GET/POST happy paths run fully here. The conversations/poll resources open
+// getClientWithTimezone() (a live connection), so only their pre-DB gates are exercised
+// here; the mine-filter logic is validated directly via resolveSelfPodiumUid +
+// listConversations(assigneeUid) below, and the end-to-end mine view is checked against
+// the Neon dev branch separately (see report). getClientWithTimezone()'s pool is lazy,
+// so importing the handler opens no connection as long as we only hit pre-DB branches.
 
 process.env.PODIUM_MOCK = 'true';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
@@ -23,9 +24,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid } = await import('../lib/podiumInbox.js');
 const { listConversations, listMessages, sendMessage } = await import('../lib/podium.js');
-const messagesHandler = (await import('../api/podium/messages.js')).default;
-const conversationsHandler = (await import('../api/podium/conversations.js')).default;
-const pollHandler = (await import('../api/podium/poll.js')).default;
+const inboxHandler = (await import('../api/podium/inbox.js')).default;
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -135,67 +134,80 @@ console.log('\nlistConversations mine-filter (mock):');
   check('all: cursor pagination envelope present', 'metadata' in all && 'nextCursor' in all.metadata);
 }
 
-// ---- messages.js — full happy paths (no DB client) ----------------------------
-console.log('\napi/podium/messages.js:');
+// ---- inbox.js dispatcher — top-level gates + unknown resource -----------------
+console.log('\napi/podium/inbox.js (dispatcher gates):');
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ noAuth: true }), res);
-  check('messages: 401 without auth', res.statusCode === 401);
+  await inboxHandler(makeReq({ noAuth: true, query: { resource: 'conversations' } }), res);
+  check('inbox: 401 without auth', res.statusCode === 401);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ roles: ['technician'] }), res);
-  check('messages: 403 for a non-sales role', res.statusCode === 403);
+  await inboxHandler(makeReq({ roles: ['technician'], query: { resource: 'messages' } }), res);
+  check('inbox: 403 for a non-sales role', res.statusCode === 403);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'PUT' }), res);
+  await inboxHandler(makeReq({ query: { resource: 'wat' } }), res);
+  check('inbox: 400 for an unknown resource', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ query: {} }), res);
+  check('inbox: 400 when resource is missing', res.statusCode === 400);
+}
+
+// ---- resource=messages — full happy paths (no DB client) ----------------------
+console.log('\ninbox resource=messages:');
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'PUT', query: { resource: 'messages' } }), res);
   check('messages: 405 for an unsupported method', res.statusCode === 405);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'GET', query: {} }), res);
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'messages' } }), res);
   check('messages GET: 400 without conversationId', res.statusCode === 400);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'GET', query: { conversationId: 'pod_cnv_00001' } }), res);
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'messages', conversationId: 'pod_cnv_00001' } }), res);
   check('messages GET: 200 returns the live thread', res.statusCode === 200 && Array.isArray(res.body.data) && res.body.data.length === 3, `status ${res.statusCode}`);
   check('messages GET: mock flag surfaced', res.body.mock === true);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'GET', query: { conversationId: 'pod_cnv_nope' } }), res);
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'messages', conversationId: 'pod_cnv_nope' } }), res);
   check('messages GET: 404 for an unknown conversation', res.statusCode === 404, `status ${res.statusCode}`);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'POST', body: { conversationId: 'pod_cnv_00001' } }), res);
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'messages' }, body: { conversationId: 'pod_cnv_00001' } }), res);
   check('messages POST: 400 without a body', res.statusCode === 400);
 }
 {
   const res = makeRes();
-  await messagesHandler(makeReq({ method: 'POST', body: { conversationId: 'pod_cnv_00001', body: 'On my way!' } }), res);
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'messages' }, body: { conversationId: 'pod_cnv_00001', body: 'On my way!' } }), res);
   check('messages POST: 201 send returns the upstream result', res.statusCode === 201 && res.body.sent?.status === 'sent', `status ${res.statusCode}`);
 }
 
-// ---- conversations.js / poll.js — pre-DB gates only ---------------------------
-console.log('\napi/podium/conversations.js + poll.js (gates):');
-for (const [name, h] of [['conversations', conversationsHandler], ['poll', pollHandler]]) {
+// ---- resource=conversations|poll — pre-DB gates only --------------------------
+console.log('\ninbox resource=conversations|poll (gates):');
+for (const resource of ['conversations', 'poll']) {
   {
     const res = makeRes();
-    await h(makeReq({ noAuth: true }), res);
-    check(`${name}: 401 without auth`, res.statusCode === 401);
+    await inboxHandler(makeReq({ noAuth: true, query: { resource } }), res);
+    check(`${resource}: 401 without auth`, res.statusCode === 401);
   }
   {
     const res = makeRes();
-    await h(makeReq({ roles: ['technician'] }), res);
-    check(`${name}: 403 for a non-sales role`, res.statusCode === 403);
+    await inboxHandler(makeReq({ roles: ['technician'], query: { resource } }), res);
+    check(`${resource}: 403 for a non-sales role`, res.statusCode === 403);
   }
   {
     const res = makeRes();
-    await h(makeReq({ method: 'POST' }), res);
-    check(`${name}: 405 for an unsupported method`, res.statusCode === 405);
+    await inboxHandler(makeReq({ method: 'POST', query: { resource } }), res);
+    check(`${resource}: 405 for an unsupported method`, res.statusCode === 405);
   }
 }
 
