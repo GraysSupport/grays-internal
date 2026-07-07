@@ -140,6 +140,11 @@ export default function Inbox() {
   const [createEmail, setCreateEmail] = useState('');
   const [needEmail, setNeedEmail] = useState(false);
 
+  // F17 — workorder detail modal (opened from a workorder card in the panel).
+  const [woDetail, setWoDetail] = useState(null);
+  const [woLoading, setWoLoading] = useState(false);
+  const [woOpenId, setWoOpenId] = useState(null);
+
   const sinceRef = useRef(null); // last poll cursor timestamp (server echoes serverTime)
 
   // ---- Gate (client-side display only; the server re-checks every request) -------
@@ -273,6 +278,42 @@ export default function Inbox() {
     return () => clearInterval(id);
   }, [authorized, notLinked, pollNow]);
 
+  // F17 — open a workorder's full detail in a modal. Reuses the existing
+  // GET /api/workorder?id= endpoint, which returns { ...workorder, items, activity }.
+  // It only exposes selling_price to a superadmin actor (via x-user-id, which the inbox
+  // never sends) — so a plain sales rep sees item name/qty/condition/status + workorder
+  // payment only, honouring the selling_price visibility rule.
+  const openWorkorder = useCallback(async (workorderId) => {
+    if (!workorderId) return;
+    setWoOpenId(workorderId);
+    setWoDetail(null);
+    setWoLoading(true);
+    try {
+      const res = await fetch(`/api/workorder?id=${encodeURIComponent(workorderId)}`, {
+        headers: authHeaders(),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) {
+        toast.error(data?.error || 'Could not load the workorder');
+        setWoOpenId(null);
+        return;
+      }
+      setWoDetail(data);
+    } catch {
+      toast.error('Server error loading the workorder');
+      setWoOpenId(null);
+    } finally {
+      setWoLoading(false);
+    }
+  }, [navigate]);
+
+  const closeWorkorder = () => {
+    setWoOpenId(null);
+    setWoDetail(null);
+    setWoLoading(false);
+  };
+
   // ---- Actions -------------------------------------------------------------------
   const clearSelection = () => {
     setSelectedId(null);
@@ -281,6 +322,8 @@ export default function Inbox() {
     setPanel(null);
     setNeedEmail(false);
     setCreateEmail('');
+    setWoOpenId(null);
+    setWoDetail(null);
   };
 
   const switchBucket = (next) => {
@@ -597,6 +640,7 @@ export default function Inbox() {
                   createEmail={createEmail}
                   setCreateEmail={setCreateEmail}
                   onCreate={createCustomer}
+                  onOpenWorkorder={openWorkorder}
                 />
               </aside>
             )}
@@ -608,6 +652,16 @@ export default function Inbox() {
           </p>
         </div>
       </div>
+
+      {/* F17 — workorder detail modal (opened from a workorder card in the panel). */}
+      {woOpenId && (
+        <WorkorderModal
+          workorderId={woOpenId}
+          detail={woDetail}
+          loading={woLoading}
+          onClose={closeWorkorder}
+        />
+      )}
     </>
   );
 }
@@ -617,7 +671,7 @@ export default function Inbox() {
 // action when unmatched), their OPEN workorders + ACTIVE deliveries, and the open
 // lead's funnel stage. Leaves a labelled slot at the top for the F16 AI summary.
 function CustomerPanel({
-  loading, panel, creating, needEmail, createEmail, setCreateEmail, onCreate,
+  loading, panel, creating, needEmail, createEmail, setCreateEmail, onCreate, onOpenWorkorder,
 }) {
   const customer = panel?.customer || null;
   const contact = panel?.contact || null;
@@ -727,20 +781,28 @@ function CustomerPanel({
                   const owing = money(w.outstanding_balance);
                   const paid = Number(w.outstanding_balance) === 0;
                   return (
-                    <li key={w.workorder_id} className="rounded-lg border border-gray-200 p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-gray-900">#{w.workorder_id}</span>
-                        <span className="text-xs text-gray-500">{w.status}</span>
-                      </div>
-                      {w.invoice_id && <Field label="Invoice" value={w.invoice_id} />}
-                      {(w.delivery_suburb || w.delivery_state) && (
-                        <Field label="Deliver to" value={[w.delivery_suburb, w.delivery_state].filter(Boolean).join(', ')} />
-                      )}
-                      {owing && (
-                        <div className={`text-xs mt-0.5 ${paid ? 'text-green-700' : 'text-amber-700'}`}>
-                          {paid ? 'Paid in full' : `Outstanding ${owing}`}
+                    <li key={w.workorder_id}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkorder && onOpenWorkorder(w.workorder_id)}
+                        className="w-full text-left rounded-lg border border-gray-200 p-2 hover:border-blue-300 hover:bg-blue-50 transition"
+                        title="View workorder detail"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-gray-900">#{w.workorder_id}</span>
+                          <span className="text-xs text-gray-500">{w.status}</span>
                         </div>
-                      )}
+                        {w.invoice_id && <Field label="Invoice" value={w.invoice_id} />}
+                        {(w.delivery_suburb || w.delivery_state) && (
+                          <Field label="Deliver to" value={[w.delivery_suburb, w.delivery_state].filter(Boolean).join(', ')} />
+                        )}
+                        {owing && (
+                          <div className={`text-xs mt-0.5 ${paid ? 'text-green-700' : 'text-amber-700'}`}>
+                            {paid ? 'Paid in full' : `Outstanding ${owing}`}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-blue-600 mt-1">View detail →</div>
+                      </button>
                     </li>
                   );
                 })}
@@ -784,6 +846,111 @@ function Field({ label, value }) {
     <div className="flex gap-2 text-xs">
       <span className="text-gray-400 w-20 shrink-0">{label}</span>
       <span className="text-gray-700 break-words min-w-0">{value}</span>
+    </div>
+  );
+}
+
+// ---- Workorder detail modal (F17) ---------------------------------------------
+// Shows a workorder's items + per-item status, the key payment/delivery details, and
+// a read-only, scrollable log of every workorder_logs entry (oldest → newest). Fed by
+// GET /api/workorder?id= (which omits selling_price for a non-superadmin actor), so a
+// sales rep sees item name/qty/condition/status + workorder-level payment only.
+function WorkorderModal({ workorderId, detail, loading, onClose }) {
+  const items = Array.isArray(detail?.items) ? detail.items : [];
+  // The endpoint returns activity newest-first; the log field reads oldest-first.
+  const activity = Array.isArray(detail?.activity) ? detail.activity.slice().reverse() : [];
+  const logText = activity
+    .map((l) => {
+      const bits = [l.ts, l.event_type];
+      if (l.user_id) bits.push(`· ${l.user_id}`);
+      if (l.current_item_status) bits.push(`· [${l.current_item_status}]`);
+      if (l.product_name) bits.push(`· ${l.product_name}`);
+      let line = bits.filter(Boolean).join('  ');
+      if (l.notes_log) line += `  — ${l.notes_log}`;
+      return line;
+    })
+    .join('\n');
+  const owing = money(detail?.outstanding_balance);
+  const paid = Number(detail?.outstanding_balance) === 0;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold">Workorder #{workorderId}</h2>
+            {detail?.status && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{detail.status}</span>
+            )}
+          </div>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
+          {loading && <div className="text-gray-500">Loading workorder…</div>}
+
+          {!loading && !detail && <div className="text-gray-400">Workorder details unavailable.</div>}
+
+          {!loading && detail && (
+            <>
+              {/* Payment / delivery details */}
+              <section className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {detail.customer_name && <Field label="Customer" value={detail.customer_name} />}
+                {detail.invoice_id && <Field label="Invoice" value={detail.invoice_id} />}
+                {owing && <Field label="Outstanding" value={paid ? 'Paid in full' : owing} />}
+                {money(detail.delivery_charged) && <Field label="Delivery" value={money(detail.delivery_charged)} />}
+                {(detail.delivery_suburb || detail.delivery_state) && (
+                  <Field label="Deliver to" value={[detail.delivery_suburb, detail.delivery_state].filter(Boolean).join(', ')} />
+                )}
+                {detail.estimated_completion && <Field label="ETA" value={formatDate(detail.estimated_completion)} />}
+                {detail.date_created && <Field label="Created" value={formatDate(detail.date_created)} />}
+              </section>
+
+              {/* Items + per-item status */}
+              <section>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                  Items{items.length ? ` (${items.length})` : ''}
+                </div>
+                {items.length === 0 ? (
+                  <div className="text-gray-400">No items.</div>
+                ) : (
+                  <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
+                    {items.map((it) => (
+                      <li key={it.workorder_items_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900 truncate">
+                            {it.quantity} × {it.product_name || it.product_id}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {[it.condition, it.item_sn ? `SN ${it.item_sn}` : null].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 shrink-0">
+                          {it.status}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* Full activity log (read-only, scrollable, oldest → newest) */}
+              <section>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Activity log</div>
+                <textarea
+                  readOnly
+                  value={logText || 'No activity recorded.'}
+                  rows={8}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono bg-gray-50 text-gray-700 resize-none"
+                />
+              </section>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
