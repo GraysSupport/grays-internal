@@ -22,7 +22,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
 process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 
 const jwt = (await import('jsonwebtoken')).default;
-const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid } = await import('../lib/podiumInbox.js');
+const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
 const { listConversations, listMessages, sendMessage } = await import('../lib/podium.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
@@ -130,8 +130,33 @@ console.log('\nlistConversations mine-filter (mock):');
   check('mine: filters by assignee uid', Array.isArray(mine.data) && mine.data.every((c) => c.assignedUser?.uid === 'pod_usr_amELia'));
   check('mine: amELia owns 2 fixture conversations', mine.data.length === 2, `got ${mine.data.length}`);
   const all = await listConversations('AM', {});
-  check('all: unfiltered returns every fixture conversation', all.data.length === 5, `got ${all.data.length}`);
+  check('all: unfiltered returns every fixture conversation', all.data.length === 6, `got ${all.data.length}`);
   check('all: cursor pagination envelope present', 'metadata' in all && 'nextCursor' in all.metadata);
+}
+
+// ---- F11 buckets: normalizers + unassigned/status filters (mock) --------------
+console.log('\nF11 buckets (normalizers + filters):');
+{
+  check('normalizeBucket: default → mine', normalizeBucket(undefined) === 'mine' && normalizeBucket('nonsense') === 'mine');
+  check('normalizeBucket: legacy scope=all → all', normalizeBucket('all') === 'all');
+  check('normalizeBucket: unassigned', normalizeBucket('unassigned') === 'unassigned');
+  check('normalizeStatus: open/closed pass through', normalizeStatus('open') === 'open' && normalizeStatus('closed') === 'closed');
+  check('normalizeStatus: absent/all → null (no filter)', normalizeStatus(undefined) === null && normalizeStatus('all') === null);
+
+  const unassigned = await listConversations('AM', { unassigned: true });
+  check('unassigned: every row has no assignee', unassigned.data.every((c) => !c.assignedUser?.uid));
+  check('unassigned: 2 fixtures (00003 open, 00006 closed)', unassigned.data.length === 2, `got ${unassigned.data.length}`);
+
+  const open = await listConversations('AM', { status: 'open' });
+  check('status=open: only open conversations', open.data.every((c) => (c.status || 'open') === 'open'));
+  const closed = await listConversations('AM', { status: 'closed' });
+  check('status=closed: only closed conversations', closed.data.every((c) => c.status === 'closed'));
+  check('open + closed partition the 6 fixtures', open.data.length + closed.data.length === 6, `got ${open.data.length}+${closed.data.length}`);
+
+  const mineClosed = await listConversations('AM', { assigneeUid: 'pod_usr_amELia', status: 'closed' });
+  check('mine+closed: amELia has exactly 1 closed (00004)', mineClosed.data.length === 1 && mineClosed.data[0].uid === 'pod_cnv_00004', `got ${mineClosed.data.map((x) => x.uid)}`);
+  const unassignedOpen = await listConversations('AM', { unassigned: true, status: 'open' });
+  check('unassigned+open: exactly 1 (00003)', unassignedOpen.data.length === 1 && unassignedOpen.data[0].uid === 'pod_cnv_00003', `got ${unassignedOpen.data.map((x) => x.uid)}`);
 }
 
 // ---- inbox.js dispatcher — top-level gates + unknown resource -----------------

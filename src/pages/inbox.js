@@ -5,10 +5,14 @@
 // nothing (P1 — Podium is the system of record). It talks only to the F3 live-proxy
 // dispatcher shipped in increment 1:
 //
-//   GET  /api/podium/inbox?resource=conversations&scope=mine|all   → the conversation list
+//   GET  /api/podium/inbox?resource=conversations&bucket=&status=  → the conversation list
 //   GET  /api/podium/inbox?resource=messages&conversationId=<uid>  → a live thread
 //   POST /api/podium/inbox?resource=messages {conversationId, body}→ send a reply as the rep
-//   GET  /api/podium/inbox?resource=poll&since=<ISO>&scope=        → recently-touched convos (5–10s poll)
+//   GET  /api/podium/inbox?resource=poll&since=<ISO>&bucket=&status= → recently-touched convos (5–10s poll)
+//
+// F11 adds Podium-parity conversation buckets: bucket ∈ {mine (Assigned to You,
+// default), unassigned, all} × status ∈ {open (default), closed}. The default
+// bucket=mine preserves the F1b increment-3 "My conversations" view.
 //
 // F4 increment 2 adds the Podium-style split-view CUSTOMER PANEL beside the thread,
 // backed by the F4 increment-1 bridge (on main):
@@ -113,7 +117,9 @@ export default function Inbox() {
   const [authorized, setAuthorized] = useState(false);
   const [myPodiumUid, setMyPodiumUid] = useState(null);
 
-  const [scope, setScope] = useState('mine');
+  // F11 Podium-parity buckets: bucket (mine|unassigned|all) × status (open|closed).
+  const [bucket, setBucket] = useState('mine');
+  const [status, setStatus] = useState('open');
   const [conversations, setConversations] = useState([]);
   const [notLinked, setNotLinked] = useState(false);
   const [mock, setMock] = useState(false);
@@ -162,7 +168,7 @@ export default function Inbox() {
     if (!silent) setLoadingConvos(true);
     try {
       const res = await fetch(
-        `/api/podium/inbox?resource=conversations&scope=${scope}&limit=30`,
+        `/api/podium/inbox?resource=conversations&bucket=${bucket}&status=${status}&limit=30`,
         { headers: authHeaders() },
       );
       if (res.status === 401) { navigate('/'); return; }
@@ -181,7 +187,7 @@ export default function Inbox() {
     } finally {
       if (!silent) setLoadingConvos(false);
     }
-  }, [scope, navigate]);
+  }, [bucket, status, navigate]);
 
   const loadThread = useCallback(async (convId, { silent = false } = {}) => {
     if (!convId) return;
@@ -243,7 +249,7 @@ export default function Inbox() {
     try {
       const since = sinceRef.current ? `&since=${encodeURIComponent(sinceRef.current)}` : '';
       const res = await fetch(
-        `/api/podium/inbox?resource=poll&scope=${scope}${since}`,
+        `/api/podium/inbox?resource=poll&bucket=${bucket}&status=${status}${since}`,
         { headers: authHeaders() },
       );
       if (!res.ok) return;
@@ -259,7 +265,7 @@ export default function Inbox() {
     } catch {
       /* polls are best-effort; ignore transient errors */
     }
-  }, [scope, selectedId, loadConversations, loadThread]);
+  }, [bucket, status, selectedId, loadConversations, loadThread]);
 
   useEffect(() => {
     if (!authorized || notLinked) return undefined;
@@ -277,9 +283,16 @@ export default function Inbox() {
     setCreateEmail('');
   };
 
-  const switchScope = (next) => {
-    if (next === scope) return;
-    setScope(next);
+  const switchBucket = (next) => {
+    if (next === bucket) return;
+    setBucket(next);
+    clearSelection();
+    sinceRef.current = null;
+  };
+
+  const switchStatus = (next) => {
+    if (next === status) return;
+    setStatus(next);
     clearSelection();
     sinceRef.current = null;
   };
@@ -391,7 +404,7 @@ export default function Inbox() {
 
       <div className="min-h-screen bg-gray-100 pt-16 pb-4 px-3 md:px-6">
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col gap-3 mb-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold">Inbox</h1>
               {mock && (
@@ -400,22 +413,40 @@ export default function Inbox() {
                 </span>
               )}
             </div>
-            {/* Scope toggle: My conversations (default) vs All */}
-            <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-              <button
-                type="button"
-                onClick={() => switchScope('mine')}
-                className={scope === 'mine' ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
-              >
-                My conversations
-              </button>
-              <button
-                type="button"
-                onClick={() => switchScope('all')}
-                className={scope === 'all' ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
-              >
-                All
-              </button>
+            {/* F11 Podium-parity: bucket tabs (Assigned to You / Unassigned / All) +
+                an Open/Closed split. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                {[
+                  { key: 'mine', label: 'Assigned to You' },
+                  { key: 'unassigned', label: 'Unassigned' },
+                  { key: 'all', label: 'All' },
+                ].map((b) => (
+                  <button
+                    key={b.key}
+                    type="button"
+                    onClick={() => switchBucket(b.key)}
+                    className={bucket === b.key ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                {[
+                  { key: 'open', label: 'Open' },
+                  { key: 'closed', label: 'Closed' },
+                ].map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => switchStatus(s.key)}
+                    className={status === s.key ? 'px-3 py-1.5 bg-gray-800 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -439,7 +470,7 @@ export default function Inbox() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => switchScope('all')}
+                      onClick={() => switchBucket('all')}
                       className="w-full border border-gray-300 text-gray-700 py-2 rounded hover:bg-gray-50"
                     >
                       View all conversations instead
@@ -448,7 +479,9 @@ export default function Inbox() {
                 )}
 
                 {!loadingConvos && !notLinked && conversations.length === 0 && (
-                  <div className="p-4 text-sm text-gray-500">No conversations{scope === 'mine' ? ' assigned to you' : ''} yet.</div>
+                  <div className="p-4 text-sm text-gray-500">
+                    No {status} conversations{bucket === 'mine' ? ' assigned to you' : bucket === 'unassigned' ? ' unassigned' : ''}.
+                  </div>
                 )}
 
                 {!loadingConvos && conversations.map((c) => {
