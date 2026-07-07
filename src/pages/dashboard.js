@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { getRoles, hasAnyRole } from '../utils/auth';
 
 /** Small inline bar chart (no external deps) */
 function BarChart({ data = [], onBarClick }) {
@@ -42,6 +43,8 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
+  // F3: the in-portal Inbox is a sales tool (server also gates /api/podium/inbox).
+  const canUseInbox = hasAnyRole(getRoles(), ['sales', 'superadmin']);
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -256,6 +259,13 @@ export default function Dashboard() {
           <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
             Account Settings
           </Link>
+
+          {/* In-portal Inbox — sales/superadmin (F3) */}
+          {canUseInbox && (
+            <Link to="/inbox" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+              Inbox
+            </Link>
+          )}
 
           {/* Not visible to technician */}
           {user?.access !== 'technician' && (
