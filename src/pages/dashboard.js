@@ -43,8 +43,10 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
-  // F3: the in-portal Inbox is a sales tool (server also gates /api/podium/inbox).
+  // F3/F5: the in-portal Inbox and lead funnel are sales tools (the server also gates
+  // /api/podium/inbox and /api/leads).
   const canUseInbox = hasAnyRole(getRoles(), ['sales', 'superadmin']);
+  const canUseLeads = canUseInbox;
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -264,6 +266,13 @@ export default function Dashboard() {
           {canUseInbox && (
             <Link to="/inbox" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
               Inbox
+            </Link>
+          )}
+
+          {/* Lead funnel — sales/superadmin (F5) */}
+          {canUseLeads && (
+            <Link to="/leads" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+              Lead Funnel
             </Link>
           )}
 
