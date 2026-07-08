@@ -148,6 +148,9 @@ export default function Inbox() {
   // Feedback (8 Jul): open/close a conversation + add a conversation to the funnel.
   const [statusSaving, setStatusSaving] = useState(false);
   const [addingLead, setAddingLead] = useState(false);
+  // Funnel stage history (timeline) for the conversation's lead.
+  const [leadHistory, setLeadHistory] = useState([]);
+  const deepLinkedRef = useRef(false); // one-shot: open ?conversation= from a funnel deep-link
 
   const sinceRef = useRef(null); // last poll cursor timestamp (server echoes serverTime)
 
@@ -248,10 +251,54 @@ export default function Inbox() {
     }
   }, [navigate]);
 
+  // Funnel stage history (timeline) for the panel's lead — when/if there is one.
+  const loadLeadHistory = useCallback(async (leadId) => {
+    if (!leadId) { setLeadHistory([]); return; }
+    try {
+      const res = await fetch(`/api/leads/${leadId}/history`, { headers: authHeaders() });
+      if (!res.ok) { setLeadHistory([]); return; }
+      const data = await parseMaybeJson(res);
+      setLeadHistory(Array.isArray(data?.history) ? data.history : []);
+    } catch {
+      setLeadHistory([]);
+    }
+  }, []);
+
+  // Fetch the timeline whenever the panel resolves a lead.
+  useEffect(() => {
+    loadLeadHistory(panel?.lead?.lead_id || null);
+  }, [panel, loadLeadHistory]);
+
   // Load (and reload on scope change) once authorized.
   useEffect(() => {
     if (authorized) loadConversations();
   }, [authorized, loadConversations]);
+
+  // Funnel → chat deep-link: open ?conversation=<uid> once, even if it's not in the
+  // current bucket/status. Fetches the conversation directly and opens its thread+panel.
+  useEffect(() => {
+    if (!authorized || deepLinkedRef.current) return;
+    const convId = new URLSearchParams(window.location.search).get('conversation');
+    if (!convId) return;
+    deepLinkedRef.current = true;
+    setBucket('all'); // widen the list so the deep-linked thread isn't behind a notLinked prompt
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/podium/inbox?resource=conversation&conversationId=${encodeURIComponent(convId)}`,
+          { headers: authHeaders() },
+        );
+        if (res.status === 401) { navigate('/'); return; }
+        const data = await parseMaybeJson(res);
+        if (res.ok && data?.conversation) {
+          setSelectedId(convId);
+          setSelectedConv(data.conversation);
+          loadThread(convId);
+          loadPanel(convId);
+        }
+      } catch { /* deep-link is best-effort */ }
+    })();
+  }, [authorized, navigate, loadThread, loadPanel]);
 
   // ---- Poll: refresh the list (and the open thread) for new activity -------------
   const pollNow = useCallback(async () => {
@@ -328,6 +375,7 @@ export default function Inbox() {
     setCreateEmail('');
     setWoOpenId(null);
     setWoDetail(null);
+    setLeadHistory([]);
   };
 
   const switchBucket = (next) => {
@@ -396,7 +444,7 @@ export default function Inbox() {
       if (wo) {
         payload.converted_workorder_id = wo.workorder_id;
         if (wo.invoice_id) payload.quote_invoice_id = wo.invoice_id;
-        payload.stage = 'Payment Received';
+        payload.stage = 'Won'; // a raised workorder = a closed-won deal
       }
       const res = await fetch('/api/leads', {
         method: 'POST',
@@ -725,6 +773,7 @@ export default function Inbox() {
                   onOpenWorkorder={openWorkorder}
                   onAddToFunnel={addToFunnel}
                   addingLead={addingLead}
+                  leadHistory={leadHistory}
                 />
               </aside>
             )}
@@ -756,7 +805,7 @@ export default function Inbox() {
 // lead's funnel stage. Leaves a labelled slot at the top for the F16 AI summary.
 function CustomerPanel({
   loading, panel, creating, needEmail, createEmail, setCreateEmail, onCreate, onOpenWorkorder,
-  onAddToFunnel, addingLead,
+  onAddToFunnel, addingLead, leadHistory,
 }) {
   const customer = panel?.customer || null;
   const contact = panel?.contact || null;
@@ -836,7 +885,7 @@ function CustomerPanel({
             )}
           </section>
 
-          {/* Funnel stage (open lead) */}
+          {/* Funnel stage + history timeline */}
           <section>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Funnel stage</div>
             {lead ? (
@@ -847,10 +896,11 @@ function CustomerPanel({
                 {lead.product_interest && <Field label="Interest" value={lead.product_interest} />}
                 {money(lead.value_est) && <Field label="Est. value" value={money(lead.value_est)} />}
                 {lead.quote_invoice_id && <Field label="Quote/Invoice" value={lead.quote_invoice_id} />}
+                <FunnelTimeline history={leadHistory} />
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="text-gray-400">No open lead for this conversation.</div>
+                <div className="text-gray-400">Not in the funnel yet.</div>
                 {customer && onAddToFunnel && (
                   <button
                     type="button"
@@ -947,6 +997,30 @@ function Field({ label, value }) {
     <div className="flex gap-2 text-xs">
       <span className="text-gray-400 w-20 shrink-0">{label}</span>
       <span className="text-gray-700 break-words min-w-0">{value}</span>
+    </div>
+  );
+}
+
+// Funnel stage history (timeline) — when the lead arrived, was quoted, won/lost, etc.
+// Fed by GET /api/leads/:id/history (oldest → newest).
+function FunnelTimeline({ history }) {
+  const rows = Array.isArray(history) ? history : [];
+  if (rows.length === 0) return null;
+  return (
+    <div className="pt-2">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Funnel history</div>
+      <ol className="space-y-1.5 border-l border-gray-200 pl-3">
+        {rows.map((h) => (
+          <li key={h.id} className="relative">
+            <span className="absolute -left-[0.95rem] top-1.5 w-1.5 h-1.5 rounded-full bg-blue-400" />
+            <div className="text-xs font-medium text-gray-800">{h.to_stage}</div>
+            <div className="text-[11px] text-gray-400">
+              {formatTime(h.created_at)}{h.user_name ? ` · ${h.user_name}` : ''}
+            </div>
+            {h.notes_log && <div className="text-[11px] text-gray-500 break-words">{h.notes_log}</div>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

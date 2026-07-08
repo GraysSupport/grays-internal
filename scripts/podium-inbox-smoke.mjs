@@ -262,6 +262,24 @@ console.log('\ninbox resource=status (open/close):');
   check('status: closed conversation moves into the Closed bucket', closedForAmelia.data.some((c) => c.uid === 'pod_cnv_00001'));
 }
 
+// ---- resource=conversation — single fetch for the funnel → chat deep-link -------
+console.log('\ninbox resource=conversation (deep-link):');
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'conversation' } }), res);
+  check('conversation: 405 for POST', res.statusCode === 405);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'conversation' } }), res);
+  check('conversation: 400 without conversationId', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'conversation', conversationId: 'pod_cnv_00002' } }), res);
+  check('conversation: 200 returns the single conversation', res.statusCode === 200 && res.body.conversation?.uid === 'pod_cnv_00002', `status ${res.statusCode}`);
+}
+
 // ---- direct helper sanity: sendMessage / listMessages via mock ----------------
 console.log('\nmock helpers:');
 {

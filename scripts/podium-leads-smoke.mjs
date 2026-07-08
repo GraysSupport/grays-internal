@@ -14,7 +14,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
 
 const jwt = (await import('jsonwebtoken')).default;
 const leadsHandler = (await import('../lib/handlers/leads.js')).default;
-const { STAGES } = await import('../lib/handlers/leads.js');
+const { STAGES, LOST_REASONS } = await import('../lib/handlers/leads.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -60,9 +60,10 @@ function makeRes() {
 
 console.log('Lead funnel (F5) smoke — fake client, no DB\n');
 
-// ---- exported constant --------------------------------------------------------
+// ---- exported constants -------------------------------------------------------
 console.log('STAGES:');
-check('STAGES are the canonical funnel stages', JSON.stringify(STAGES) === JSON.stringify(['New', 'Contacted', 'Quoted', 'Payment Received', 'Won', 'Lost']));
+check('STAGES: Payment Received merged into Won', JSON.stringify(STAGES) === JSON.stringify(['New', 'Contacted', 'Quoted', 'Won', 'Lost']));
+check('LOST_REASONS include Other', Array.isArray(LOST_REASONS) && LOST_REASONS.includes('Other') && LOST_REASONS.length >= 5);
 
 // ---- auth gates (return before any DB) ----------------------------------------
 console.log('\nauth gates:');
@@ -124,14 +125,14 @@ console.log('\nPOST /api/leads:');
   const client = makeClient([
     { match: /SELECT lead_id FROM leads/i, result: { rowCount: 0, rows: [] } }, // no dup
     { match: /INSERT INTO leads/i, result: { rowCount: 1, rows: [{ lead_id: 120 }] } },
-    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 120, stage: 'Payment Received' }] } },
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 120, stage: 'Won' }] } },
   ]);
   const res = makeRes();
-  await leadsHandler(makeReq({ method: 'POST', body: { podium_conversation_id: 'pod_cnv_00005', customer_id: 555, converted_workorder_id: 751, quote_invoice_id: '99999', stage: 'Payment Received' } }), res, [], depsFor(client));
+  await leadsHandler(makeReq({ method: 'POST', body: { podium_conversation_id: 'pod_cnv_00005', customer_id: 555, converted_workorder_id: 751, quote_invoice_id: '99999', stage: 'Won' } }), res, [], depsFor(client));
   check('201 add-to-funnel with conversation + workorder link', res.statusCode === 201 && res.body.lead_id === 120);
   const ins = client.calls.find((c) => /INSERT INTO leads/i.test(c.sql));
   check('add-to-funnel: source=podium, conversation + WO + invoice + stage persisted',
-    ins && ins.params[0] === 'podium' && ins.params[2] === 'pod_cnv_00005' && ins.params[9] === 751 && ins.params[8] === '99999' && ins.params[10] === 'Payment Received',
+    ins && ins.params[0] === 'podium' && ins.params[2] === 'pod_cnv_00005' && ins.params[9] === 751 && ins.params[8] === '99999' && ins.params[10] === 'Won',
     `params ${ins && JSON.stringify(ins.params)}`);
 }
 // Add-to-funnel is idempotent: an open lead already on the conversation → return it, no insert.
@@ -156,7 +157,17 @@ console.log('\nPUT /api/leads/:id/stage:');
 {
   const res = makeRes();
   await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Lost' } }), res, ['5', 'stage'], depsFor(makeClient()));
-  check('400 LOST_REASON_REQUIRED when Lost has no reason', res.statusCode === 400 && res.body.code === 'LOST_REASON_REQUIRED');
+  check('400 LOST_REASON_REQUIRED when Lost has no category', res.statusCode === 400 && res.body.code === 'LOST_REASON_REQUIRED');
+}
+{
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Lost', lost_reason_category: 'Not a real reason' } }), res, ['5', 'stage'], depsFor(makeClient()));
+  check('400 for an unknown lost reason category', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Lost', lost_reason_category: 'Other' } }), res, ['5', 'stage'], depsFor(makeClient()));
+  check('400 LOST_NOTE_REQUIRED when category is Other with no note', res.statusCode === 400 && res.body.code === 'LOST_NOTE_REQUIRED');
 }
 {
   const client = makeClient([
@@ -181,17 +192,19 @@ console.log('\nPUT /api/leads/:id/stage:');
   check('no-op transition returns 200 and writes NO log', res.statusCode === 200 && !client.calls.some((c) => /lead_stage_log/i.test(c.sql)));
 }
 {
-  // Lost with a reason updates + logs
+  // Lost with a valid category + note updates (category + note) + logs
   const client = makeClient([
     { match: /SELECT stage FROM leads/i, result: { rowCount: 1, rows: [{ stage: 'Quoted' }] } },
     { match: /UPDATE leads/i, result: { rowCount: 1 } },
-    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 7, stage: 'Lost', lost_reason: 'Bought elsewhere' }] } },
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 7, stage: 'Lost' }] } },
   ]);
   const res = makeRes();
-  await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Lost', lost_reason: 'Bought elsewhere' } }), res, ['7', 'stage'], depsFor(client));
-  check('200 Lost with a reason', res.statusCode === 200 && res.body.stage === 'Lost');
+  await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Lost', lost_reason_category: 'Went with a competitor', lost_reason: 'chose BrandX' } }), res, ['7', 'stage'], depsFor(client));
+  check('200 Lost with a valid category', res.statusCode === 200 && res.body.stage === 'Lost');
   const upd = client.calls.find((c) => /UPDATE leads/i.test(c.sql));
-  check('lost_reason passed to UPDATE', !!upd && upd.params.includes('Bought elsewhere'));
+  check('category + note passed to UPDATE', !!upd && upd.params.includes('Went with a competitor') && upd.params.includes('chose BrandX'));
+  const logCall = client.calls.find((c) => /lead_stage_log/i.test(c.sql));
+  check('stage log note combines category + note', !!logCall && /Went with a competitor — chose BrandX/.test(logCall.params[4] || ''));
 }
 {
   // lead not found
@@ -199,6 +212,22 @@ console.log('\nPUT /api/leads/:id/stage:');
   const res = makeRes();
   await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Contacted' } }), res, ['404', 'stage'], depsFor(client));
   check('404 when the lead does not exist', res.statusCode === 404);
+}
+
+// ---- GET /api/leads/:id/history -----------------------------------------------
+console.log('\nGET /api/leads/:id/history:');
+{
+  const client = makeClient([
+    { match: /FROM lead_stage_log/i, result: { rowCount: 2, rows: [
+      { id: 1, from_stage: null, to_stage: 'New', created_at: 't1' },
+      { id: 2, from_stage: 'New', to_stage: 'Contacted', created_at: 't2' },
+    ] } },
+  ]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'GET' }), res, ['7', 'history'], depsFor(client));
+  check('200 returns the stage history (ASC)', res.statusCode === 200 && res.body.lead_id === 7 && res.body.history.length === 2);
+  const q = client.calls.find((c) => /FROM lead_stage_log/i.test(c.sql));
+  check('history query ordered oldest → newest', !!q && /ORDER BY .*created_at ASC/i.test(q.sql));
 }
 
 console.log(`\n✅ leads smoke: ${passed} checks passed`);

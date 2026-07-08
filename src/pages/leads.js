@@ -2,10 +2,12 @@
 //
 // The sales pipeline over the F5 backend (lib/handlers/leads.js → /api/leads),
 // itself over the leads + lead_stage_log tables from F0's migration 0001 (§4.3).
-// Columns are the canonical stages New → Contacted → Quoted → Payment Received →
-// Won / Lost. Moving a card PUTs /api/leads/:id/stage (which appends a stage-log
-// row); moving to Lost requires a reason (prompted in a small modal). A "+ New lead"
-// form makes the funnel demonstrable on a fresh DB.
+// Columns are New → Contacted → Quoted → Won / Lost ('Payment Received' was merged
+// into 'Won'). Moving a card PUTs /api/leads/:id/stage (which appends a stage-log
+// row); moving to Lost prompts for a structured reason (dropdown + "Other" note) so
+// losses are quantifiable. The board is GLOBAL (all reps' leads) with a My/All filter,
+// and each card shows its owner. A "+ New lead" form makes the funnel demonstrable, and
+// clicking a card opens the linked Podium conversation in the Inbox.
 //
 // Gated to sales/superadmin (display-only here; /api/leads re-checks server-side and
 // runs on the login JWT). No message bodies are touched — leads are CRM metadata.
@@ -15,20 +17,30 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
-import { authHeaders, getToken, getRoles, hasAnyRole } from '../utils/auth';
+import { authHeaders, getToken, getRoles, hasAnyRole, getStoredUser } from '../utils/auth';
 import { parseMaybeJson } from '../utils/http';
 
 const LEADS_ROLES = ['sales', 'superadmin'];
 
-// Canonical funnel stages (mirrors execution-plan §1c / the lead_stage enum).
-const STAGES = ['New', 'Contacted', 'Quoted', 'Payment Received', 'Won', 'Lost'];
+// Funnel stages (Payment Received merged into Won — migration 0002).
+const STAGES = ['New', 'Contacted', 'Quoted', 'Won', 'Lost'];
+
+// Structured Lost-reason categories (keep in sync with lib/handlers/leads.js LOST_REASONS).
+const LOST_REASONS = [
+  'Price / too expensive',
+  'Went with a competitor',
+  'Lead time / stock too long',
+  'Changed mind / no longer needed',
+  'No response (went cold)',
+  'Budget / finance',
+  'Other',
+];
 
 // Per-column accent (header). Mirrors the inbox STAGE_CLS badge colours.
 const COLUMN_CLS = {
   New: 'bg-gray-100 text-gray-700',
   Contacted: 'bg-blue-100 text-blue-800',
   Quoted: 'bg-amber-100 text-amber-800',
-  'Payment Received': 'bg-purple-100 text-purple-800',
   Won: 'bg-green-100 text-green-800',
   Lost: 'bg-red-100 text-red-700',
 };
@@ -52,15 +64,18 @@ export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
+  const [ownerScope, setOwnerScope] = useState('all'); // 'all' | 'mine'
+  const myId = getStoredUser()?.id || null;
 
   // Create form
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ product_interest: '', value_est: '', source_channel: '', notes: '' });
 
-  // Lost-reason modal
-  const [lostFor, setLostFor] = useState(null); // { lead_id } | null
-  const [lostReason, setLostReason] = useState('');
+  // Lost-reason modal (structured: a category + an optional note; "Other" needs a note)
+  const [lostFor, setLostFor] = useState(null); // the lead being marked Lost | null
+  const [lostCategory, setLostCategory] = useState('');
+  const [lostNote, setLostNote] = useState('');
 
   useEffect(() => {
     if (!getToken()) { navigate('/'); return; }
@@ -104,11 +119,14 @@ export default function Leads() {
     });
   };
 
-  const submitStage = useCallback(async (leadId, toStage, reason) => {
+  const submitStage = useCallback(async (leadId, toStage, lost) => {
     setSavingId(leadId);
     try {
       const payload = { to_stage: toStage };
-      if (reason) payload.lost_reason = reason;
+      if (lost) {
+        payload.lost_reason_category = lost.category;
+        if (lost.note) payload.lost_reason = lost.note;
+      }
       const res = await fetch(`/api/leads/${leadId}/stage`, {
         method: 'PUT',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -116,8 +134,9 @@ export default function Leads() {
       });
       if (res.status === 401) { navigate('/'); return false; }
       const data = await parseMaybeJson(res);
-      if (res.status === 400 && data?.code === 'LOST_REASON_REQUIRED') {
-        return false; // caller opens the lost-reason modal
+      if (res.status === 400 && (data?.code === 'LOST_REASON_REQUIRED' || data?.code === 'LOST_NOTE_REQUIRED')) {
+        toast.error(data?.error || 'A reason is required');
+        return false;
       }
       if (!res.ok) { toast.error(data?.error || 'Could not move the lead'); return false; }
       upsertLead(data);
@@ -134,7 +153,8 @@ export default function Leads() {
   const onChangeStage = async (lead, toStage) => {
     if (!toStage || toStage === lead.stage) return;
     if (toStage === 'Lost') {
-      setLostReason('');
+      setLostCategory('');
+      setLostNote('');
       setLostFor(lead);
       return;
     }
@@ -143,10 +163,10 @@ export default function Leads() {
 
   const confirmLost = async () => {
     if (!lostFor) return;
-    const reason = lostReason.trim();
-    if (!reason) { toast.error('Please give a reason'); return; }
-    const ok = await submitStage(lostFor.lead_id, 'Lost', reason);
-    if (ok) { setLostFor(null); setLostReason(''); }
+    if (!lostCategory) { toast.error('Please choose a reason'); return; }
+    if (lostCategory === 'Other' && !lostNote.trim()) { toast.error('Please add a note for "Other"'); return; }
+    const ok = await submitStage(lostFor.lead_id, 'Lost', { category: lostCategory, note: lostNote.trim() });
+    if (ok) { setLostFor(null); setLostCategory(''); setLostNote(''); }
   };
 
   const createLead = async (e) => {
@@ -180,9 +200,18 @@ export default function Leads() {
     }
   };
 
+  // Open the lead's linked Podium conversation in the Inbox (deep-link).
+  const openChat = (lead) => {
+    if (!lead?.podium_conversation_id) return;
+    navigate(`/inbox?conversation=${encodeURIComponent(lead.podium_conversation_id)}`);
+  };
+
   if (!authorized) return null;
 
-  const byStage = (stage) => leads.filter((l) => l.stage === stage);
+  const visibleLeads = ownerScope === 'mine' && myId
+    ? leads.filter((l) => l.assigned_to === myId)
+    : leads;
+  const byStage = (stage) => visibleLeads.filter((l) => l.stage === stage);
 
   return (
     <>
@@ -193,21 +222,40 @@ export default function Leads() {
 
       <div className="min-h-screen bg-gray-100 pt-16 pb-6 px-3 md:px-6">
         <div className="max-w-[90rem] mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
             <h1 className="text-2xl font-bold">Lead Funnel</h1>
-            <button
-              type="button"
-              onClick={() => setShowNew(true)}
-              className="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-600"
-            >
-              + New lead
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Global board — filter to your own leads or show everyone's */}
+              <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                <button
+                  type="button"
+                  onClick={() => setOwnerScope('all')}
+                  className={ownerScope === 'all' ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
+                >
+                  All leads
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOwnerScope('mine')}
+                  className={ownerScope === 'mine' ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
+                >
+                  My leads
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNew(true)}
+                className="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-600"
+              >
+                + New lead
+              </button>
+            </div>
           </div>
 
           {loading ? (
             <div className="text-sm text-gray-500">Loading leads…</div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
               {STAGES.map((stage) => {
                 const cards = byStage(stage);
                 return (
@@ -226,6 +274,7 @@ export default function Leads() {
                           lead={lead}
                           saving={savingId === lead.lead_id}
                           onChangeStage={onChangeStage}
+                          onOpenChat={openChat}
                         />
                       ))}
                     </div>
@@ -236,8 +285,8 @@ export default function Leads() {
           )}
 
           <p className="text-xs text-gray-400 mt-4">
-            Every stage change is recorded to the lead's history. Leads are created here or
-            automatically from an inbound Podium message (P12).
+            This is the whole team's funnel — use “My leads” to see only yours. Every stage
+            change is recorded to the lead's history; click a card to open its chat.
           </p>
         </div>
       </div>
@@ -315,25 +364,44 @@ export default function Leads() {
         </div>
       )}
 
-      {/* Lost-reason modal */}
+      {/* Lost-reason modal — a structured category (quantifiable) + an optional note.
+          "Other" requires the note. */}
       {lostFor && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5 space-y-3">
             <h2 className="text-lg font-bold">Mark lead Lost</h2>
             <p className="text-sm text-gray-600">
-              Why was this lead lost? A reason is required and kept in the lead's history.
+              Why was this lead lost? The reason is recorded so we can see what's costing us leads.
             </p>
-            <textarea
-              value={lostReason}
-              onChange={(e) => setLostReason(e.target.value)}
-              rows={3}
-              placeholder="e.g. Bought elsewhere / out of budget / no response"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-400"
-            />
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Reason *</label>
+              <select
+                value={lostCategory}
+                onChange={(e) => setLostCategory(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+              >
+                <option value="">Choose a reason…</option>
+                {LOST_REASONS.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                Note {lostCategory === 'Other' ? '*' : '(optional)'}
+              </label>
+              <textarea
+                value={lostNote}
+                onChange={(e) => setLostNote(e.target.value)}
+                rows={3}
+                placeholder={lostCategory === 'Other' ? 'Please describe the reason' : 'Any extra detail'}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => { setLostFor(null); setLostReason(''); }}
+                onClick={() => { setLostFor(null); setLostCategory(''); setLostNote(''); }}
                 className="px-4 py-2 rounded text-sm border border-gray-300 text-gray-700 hover:bg-gray-50"
               >
                 Cancel
@@ -354,32 +422,52 @@ export default function Leads() {
   );
 }
 
-// A single lead card with a stage mover.
-function LeadCard({ lead, saving, onChangeStage }) {
+// A single lead card: click the body to open its chat; a stage mover in the footer.
+function LeadCard({ lead, saving, onChangeStage, onOpenChat }) {
   const title = lead.customer_name || lead.product_interest || `Lead #${lead.lead_id}`;
   const est = money(lead.value_est);
   const channel = lead.source_channel ? (CHANNELS[String(lead.source_channel).toLowerCase()] || lead.source_channel) : null;
+  const hasChat = !!lead.podium_conversation_id;
+  const lostText = lead.lost_reason_category
+    ? [lead.lost_reason_category, lead.lost_reason].filter(Boolean).join(' — ')
+    : lead.lost_reason;
 
   return (
     <div className="rounded-lg border border-gray-200 p-2.5 bg-white">
-      <div className="font-medium text-sm text-gray-900 truncate">{title}</div>
-      {lead.customer_name && lead.product_interest && (
-        <div className="text-xs text-gray-500 truncate">{lead.product_interest}</div>
-      )}
-      <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
-        {channel && (
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{channel}</span>
+      {/* Body — clickable to open the linked conversation in the Inbox */}
+      <button
+        type="button"
+        onClick={() => hasChat && onOpenChat && onOpenChat(lead)}
+        className={`w-full text-left ${hasChat ? 'cursor-pointer group' : 'cursor-default'}`}
+        title={hasChat ? 'Open chat' : undefined}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className={`font-medium text-sm text-gray-900 truncate ${hasChat ? 'group-hover:text-blue-700' : ''}`}>{title}</span>
+          {hasChat && <span className="text-[11px] text-blue-600 shrink-0 opacity-0 group-hover:opacity-100">chat →</span>}
+        </div>
+        {lead.customer_name && lead.product_interest && (
+          <div className="text-xs text-gray-500 truncate">{lead.product_interest}</div>
         )}
-        {est && (
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-800">{est}</span>
-        )}
-        {lead.assigned_name && (
-          <span className="text-[11px] text-gray-500">{lead.assigned_name}</span>
-        )}
+        <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
+          {channel && (
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{channel}</span>
+          )}
+          {est && (
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-800">{est}</span>
+          )}
+        </div>
+      </button>
+
+      {/* Owner (global board — always show who it's assigned to) */}
+      <div className="text-[11px] text-gray-500 mt-1">
+        {lead.assigned_name
+          ? <>Owner: <span className="font-medium text-gray-700">{lead.assigned_name}</span></>
+          : <span className="text-gray-400">Unassigned</span>}
       </div>
-      {lead.stage === 'Lost' && lead.lost_reason && (
-        <div className="text-[11px] text-red-600 mt-1 truncate" title={lead.lost_reason}>
-          Lost: {lead.lost_reason}
+
+      {lead.stage === 'Lost' && lostText && (
+        <div className="text-[11px] text-red-600 mt-1 truncate" title={lostText}>
+          Lost: {lostText}
         </div>
       )}
       <div className="mt-2">

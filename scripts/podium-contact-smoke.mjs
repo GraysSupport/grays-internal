@@ -170,17 +170,17 @@ check('phoneKey: empty → empty', C.phoneKey(null) === '');
   check("deliveries: excludes 'Delivery Completed'", /delivery_status <> 'Delivery Completed'/.test(call.sql));
 }
 
-// 8. openLeadFor — defensive against a DB without the leads table (42P01)
+// 8. latestLeadFor — defensive against a DB without the leads table (42P01)
 {
   const client = makeClient([{ match: isSelLead, result: { rowCount: 1, rows: [{ lead_id: 5, stage: 'Contacted' }] } }]);
-  const lead = await C.openLeadFor(client, { customerId: 7, contactUid: 'pod_con_maRIA1', conversationId: 'pod_cnv_00001' });
-  check('lead: returns the open lead', lead?.stage === 'Contacted');
+  const lead = await C.latestLeadFor(client, { customerId: 7, contactUid: 'pod_con_maRIA1', conversationId: 'pod_cnv_00001' });
+  check('lead: returns the latest lead', lead?.stage === 'Contacted');
 }
 {
   const client = makeClient([{ match: isSelLead, throws: pgErr('42P01') }]);
-  const lead = await C.openLeadFor(client, { customerId: 7 });
+  const lead = await C.latestLeadFor(client, { customerId: 7 });
   check('lead: null (not throw) when leads table absent (42P01)', lead === null);
-  check('lead: null with no identifiers, no query', (await C.openLeadFor(makeClient(), {})) === null);
+  check('lead: null with no identifiers, no query', (await C.latestLeadFor(makeClient(), {})) === null);
 }
 
 // 9. buildCustomerPanel — end-to-end (mock contact + fake DB): email match → backfill → 360
