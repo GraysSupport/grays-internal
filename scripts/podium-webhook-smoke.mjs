@@ -127,6 +127,13 @@ console.log('Podium webhook (F2) smoke (PODIUM_MOCK=true)\n');
   const syncPayload = wh.buildSyncPayload(env);
   check('P1: sync-log payload contains NO message body', !/SECRET MESSAGE TEXT/.test(JSON.stringify(syncPayload)) && syncPayload.body === undefined);
   check('sync payload: keeps conversation + channel + assignee', syncPayload.conversationUid === 'pod_cnv_00003' && syncPayload.channel === 'phone' && syncPayload.assignedUserUid === 'pod_usr_amELia');
+
+  // Reply-advance fields (message.sent): sender + automated flag.
+  check('envelope: senderUserUid null when absent', env.senderUserUid === null);
+  check('envelope: automated defaults false', env.automated === false);
+  const outEnv = wh.parseEnvelope({ metadata: { eventType: 'message.sent' }, data: { sender: { uid: 'pod_usr_amELia' }, author: { type: 'bot' } } });
+  check('envelope: senderUserUid extracted from data.sender', outEnv.senderUserUid === 'pod_usr_amELia');
+  check('envelope: automated true when author.type != user (Jerry/AI)', outEnv.automated === true);
 }
 
 // ============================================================================
@@ -134,6 +141,7 @@ console.log('Podium webhook (F2) smoke (PODIUM_MOCK=true)\n');
 // ============================================================================
 {
   check('classify: message.received', wh.classifyEvent('message.received') === 'message.received');
+  check('classify: message.sent', wh.classifyEvent('message.sent') === 'message.sent');
   check('classify: message.failed', wh.classifyEvent('message.failed') === 'message.failed');
   check('classify: assignment (liberal match)', wh.classifyEvent('conversation.assignee.updated') === 'assignment');
   check('classify: contact', wh.classifyEvent('contact.created') === 'contact');
@@ -208,6 +216,70 @@ console.log('Podium webhook (F2) smoke (PODIUM_MOCK=true)\n');
   const client = makeClient([{ match: has(/SELECT id FROM users/i), throws: Object.assign(new Error('col'), { code: '42703' }) }]);
   const id = await wh.portalUserForPodiumUid(client, 'pod_usr_x');
   check('resolve: null (not error) when podium_user_id column absent (42703)', id === null);
+}
+
+// 4g. Reply-advances-lead (message.sent) — hybrid funnel automation
+// A human reply on an open 'New' lead → advance to 'Contacted' (+ stage log).
+{
+  const client = makeClient([
+    { match: has(/SELECT lead_id, stage FROM leads/i), result: { rowCount: 1, rows: [{ lead_id: 810, stage: 'New' }] } },
+    { match: has(/SELECT id FROM users/i), result: { rowCount: 1, rows: [{ id: 'AM' }] } },
+    { match: has(/UPDATE leads SET stage = 'Contacted'/i), result: { rowCount: 1 } },
+    { match: has(/INSERT INTO lead_stage_log/i), result: { rowCount: 1 } },
+  ]);
+  const r = await wh.handleMessageSent(client, { conversationUid: 'pod_cnv_a', senderUserUid: 'pod_usr_amELia', channelType: 'phone' });
+  check('reply: advances an open New lead → Contacted', r.action === 'advanced_lead' && r.leadId === 810);
+  const log = client.calls.find((c) => /INSERT INTO lead_stage_log/i.test(c.sql));
+  check('reply: writes a New→Contacted stage log by the replying rep', log && /'New', 'Contacted'/.test(log.sql) && log.params[1] === 'AM');
+}
+// A reply on a lead already past New → touch only (no regress, no duplicate log).
+{
+  const client = makeClient([
+    { match: has(/SELECT lead_id, stage FROM leads/i), result: { rowCount: 1, rows: [{ lead_id: 811, stage: 'Contacted' }] } },
+    { match: has(/SELECT id FROM users/i), result: { rowCount: 1, rows: [{ id: 'AM' }] } },
+    { match: has(/UPDATE leads SET last_contact_at/i), result: { rowCount: 1 } },
+  ]);
+  const r = await wh.handleMessageSent(client, { conversationUid: 'pod_cnv_b', senderUserUid: 'pod_usr_amELia' });
+  check('reply: already-engaged lead is only touched', r.action === 'touched_lead' && r.leadId === 811);
+  check('reply: no stage log + no stage change when already past New', !client.calls.some((c) => /INSERT INTO lead_stage_log/i.test(c.sql)) && !client.calls.some((c) => /SET stage =/i.test(c.sql)));
+}
+// A reply with NO open lead (rep-initiated outreach) → create one at Contacted.
+{
+  const client = makeClient([
+    { match: has(/SELECT lead_id, stage FROM leads/i), result: { rowCount: 0, rows: [] } },
+    { match: has(/SELECT id FROM users/i), result: { rowCount: 1, rows: [{ id: 'AM' }] } },
+    { match: has(/SELECT id FROM customers/i), result: { rowCount: 0, rows: [] } },
+    { match: has(/INSERT INTO leads/i), result: { rowCount: 1, rows: [{ lead_id: 812 }] } },
+    { match: has(/INSERT INTO lead_stage_log/i), result: { rowCount: 1 } },
+  ]);
+  const r = await wh.handleMessageSent(client, { conversationUid: 'pod_cnv_c', senderUserUid: 'pod_usr_amELia', channelType: 'sms' });
+  check('reply: creates a lead at Contacted when none open (rep-initiated)', r.action === 'created_lead' && r.leadId === 812);
+  const ins = client.calls.find((c) => /INSERT INTO leads/i.test(c.sql));
+  check('reply: new lead is Contacted, on the conversation, owned by the rep', ins && /'Contacted'/.test(ins.sql) && ins.params[1] === 'pod_cnv_c' && ins.params[4] === 'AM');
+}
+// Automated/AI reply (Jerry, F16) → never advances the funnel.
+{
+  const client = makeClient();
+  const r = await wh.handleMessageSent(client, { conversationUid: 'pod_cnv_d', automated: true });
+  check('reply: automated/AI send is skipped (no funnel change)', r.action === 'skipped_automated' && client.calls.length === 0);
+}
+// No conversation uid → skipped.
+{
+  const r = await wh.handleMessageSent(makeClient(), { conversationUid: null });
+  check('reply: skipped when no conversation uid', r.action === 'skipped_no_conversation');
+}
+// Sender absent → fall back to the conversation assignee as the actor.
+{
+  const client = makeClient([
+    { match: has(/SELECT lead_id, stage FROM leads/i), result: { rowCount: 1, rows: [{ lead_id: 813, stage: 'New' }] } },
+    { match: has(/SELECT id FROM users/i), result: { rowCount: 1, rows: [{ id: 'BN' }] } },
+    { match: has(/UPDATE leads SET stage = 'Contacted'/i), result: { rowCount: 1 } },
+    { match: has(/INSERT INTO lead_stage_log/i), result: { rowCount: 1 } },
+  ]);
+  const r = await wh.handleMessageSent(client, { conversationUid: 'pod_cnv_e', senderUserUid: null, assignedUserUid: 'pod_usr_bENjin' });
+  check('reply: actor falls back to the assignee when no sender uid', r.action === 'advanced_lead');
+  const log = client.calls.find((c) => /INSERT INTO lead_stage_log/i.test(c.sql));
+  check('reply: stage log attributed to the fallback assignee', log && log.params[1] === 'BN');
 }
 
 // ============================================================================
@@ -317,6 +389,21 @@ function makeReq({ method = 'POST', headers = {}, raw = '' } = {}) {
   // Missing headers → 401 missing_headers (reached before DB)
   await webhookHandler(makeReq({ method: 'POST', raw }), res);
   check('endpoint: POST missing signature headers → 401', res.statusCode === 401 && res.body?.reason === 'missing_headers');
+}
+
+// 5e. fresh message.sent → routes to reply-advance, marks processed, COMMIT
+{
+  const client = makeClient([
+    { match: has(/INSERT INTO integration_sync_log/i), result: { rowCount: 1, rows: [{ id: 71 }] } },
+    { match: has(/SELECT lead_id, stage FROM leads/i), result: { rowCount: 1, rows: [{ lead_id: 900, stage: 'New' }] } },
+    { match: has(/SELECT id FROM users/i), result: { rowCount: 1, rows: [{ id: 'AM' }] } },
+    { match: has(/UPDATE leads SET stage = 'Contacted'/i), result: { rowCount: 1 } },
+    { match: has(/INSERT INTO lead_stage_log/i), result: { rowCount: 1 } },
+    { match: has(/UPDATE integration_sync_log/i), result: { rowCount: 1 } },
+  ]);
+  const r = await wh.processEvent(client, { eventUid: 'evt_sent', eventType: 'message.sent', conversationUid: 'pod_cnv_z', senderUserUid: 'pod_usr_amELia' });
+  check('processEvent: message.sent advances the lead (not deduped)', r.deduped === false && r.action === 'advanced_lead');
+  check('processEvent: message.sent commits', client.calls.some((c) => /^COMMIT/i.test(c.sql)));
 }
 
 console.log(`\nAll ${passed} checks passed ✅`);
