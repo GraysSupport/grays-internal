@@ -117,7 +117,33 @@ console.log('\nPOST /api/leads:');
   check('201 create returns the new lead', res.statusCode === 201 && res.body.lead_id === 99, `status ${res.statusCode}`);
   check('create is transactional (BEGIN + COMMIT)', client.calls.some((c) => /BEGIN/i.test(c.sql)) && client.calls.some((c) => /COMMIT/i.test(c.sql)));
   const logCall = client.calls.find((c) => /lead_stage_log/i.test(c.sql));
-  check('create writes a NULL→New stage log', !!logCall && /NULL,\s*'New'/i.test(logCall.sql) && logCall.params[0] === 99, `sql/params ${logCall && JSON.stringify(logCall.params)}`);
+  check('create writes a NULL→New stage log', !!logCall && /NULL,\s*\$2::lead_stage/i.test(logCall.sql) && logCall.params[0] === 99 && logCall.params[1] === 'New', `sql/params ${logCall && JSON.stringify(logCall.params)}`);
+}
+// Add-to-funnel: create from a conversation with a workorder link + initial stage.
+{
+  const client = makeClient([
+    { match: /SELECT lead_id FROM leads/i, result: { rowCount: 0, rows: [] } }, // no dup
+    { match: /INSERT INTO leads/i, result: { rowCount: 1, rows: [{ lead_id: 120 }] } },
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 120, stage: 'Payment Received' }] } },
+  ]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { podium_conversation_id: 'pod_cnv_00005', customer_id: 555, converted_workorder_id: 751, quote_invoice_id: '99999', stage: 'Payment Received' } }), res, [], depsFor(client));
+  check('201 add-to-funnel with conversation + workorder link', res.statusCode === 201 && res.body.lead_id === 120);
+  const ins = client.calls.find((c) => /INSERT INTO leads/i.test(c.sql));
+  check('add-to-funnel: source=podium, conversation + WO + invoice + stage persisted',
+    ins && ins.params[0] === 'podium' && ins.params[2] === 'pod_cnv_00005' && ins.params[9] === 751 && ins.params[8] === '99999' && ins.params[10] === 'Payment Received',
+    `params ${ins && JSON.stringify(ins.params)}`);
+}
+// Add-to-funnel is idempotent: an open lead already on the conversation → return it, no insert.
+{
+  const client = makeClient([
+    { match: /SELECT lead_id FROM leads/i, result: { rowCount: 1, rows: [{ lead_id: 121 }] } }, // dup exists
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 121, stage: 'Payment Received' }] } },
+  ]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { podium_conversation_id: 'pod_cnv_00005', customer_id: 555 } }), res, [], depsFor(client));
+  check('add-to-funnel: existing open lead returned (200), no duplicate insert',
+    res.statusCode === 200 && res.body.lead_id === 121 && !client.calls.some((c) => /INSERT INTO leads/i.test(c.sql)));
 }
 
 // ---- PUT stage ----------------------------------------------------------------

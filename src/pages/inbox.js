@@ -145,6 +145,10 @@ export default function Inbox() {
   const [woLoading, setWoLoading] = useState(false);
   const [woOpenId, setWoOpenId] = useState(null);
 
+  // Feedback (8 Jul): open/close a conversation + add a conversation to the funnel.
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [addingLead, setAddingLead] = useState(false);
+
   const sinceRef = useRef(null); // last poll cursor timestamp (server echoes serverTime)
 
   // ---- Gate (client-side display only; the server re-checks every request) -------
@@ -345,6 +349,70 @@ export default function Inbox() {
     setSelectedConv(c);
     loadThread(c.uid);
     loadPanel(c.uid);
+  };
+
+  // Feedback (8 Jul): a salesperson opens/closes the selected conversation. It then
+  // moves between the Open/Closed buckets — refresh the list (it may leave the current
+  // status filter). The thread stays open so it can be reopened.
+  const toggleConversationStatus = async () => {
+    if (!selectedId || statusSaving) return;
+    const current = selectedConv?.status || 'open';
+    const next = current === 'open' ? 'closed' : 'open';
+    setStatusSaving(true);
+    try {
+      const res = await fetch('/api/podium/inbox?resource=status', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ conversationId: selectedId, status: next }),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) { toast.error(data?.error || 'Could not update the conversation'); return; }
+      setSelectedConv((c) => (c ? { ...c, status: next } : c));
+      toast.success(next === 'closed' ? 'Conversation closed' : 'Conversation reopened');
+      loadConversations({ silent: true });
+    } catch {
+      toast.error('Server error updating the conversation');
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
+  // Feedback (8 Jul): add the open conversation to the lead funnel. Links the matched
+  // customer + this conversation; if the customer has an open workorder, links it and
+  // opens the lead at "Payment Received" (money in / workorder raised). Idempotent —
+  // the backend returns the existing open lead if there already is one.
+  const addToFunnel = async () => {
+    if (!selectedId || addingLead || !panel?.customer) return;
+    setAddingLead(true);
+    try {
+      const wo = (panel.workorders || [])[0];
+      const payload = {
+        podium_conversation_id: selectedId,
+        customer_id: panel.customer.id,
+        source_channel: selectedConv?.channel?.type || undefined,
+        product_interest: wo ? `Workorder #${wo.workorder_id}` : 'Enquiry from chat',
+      };
+      if (wo) {
+        payload.converted_workorder_id = wo.workorder_id;
+        if (wo.invoice_id) payload.quote_invoice_id = wo.invoice_id;
+        payload.stage = 'Payment Received';
+      }
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) { toast.error(data?.error || 'Could not add this conversation to the funnel'); return; }
+      toast.success('Added to the funnel');
+      loadPanel(selectedId); // refresh so the funnel-stage badge shows the new lead
+    } catch {
+      toast.error('Server error adding to the funnel');
+    } finally {
+      setAddingLead(false);
+    }
   };
 
   const sendReply = async (e) => {
@@ -569,13 +637,27 @@ export default function Inbox() {
                     >
                       ← Back
                     </button>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-gray-900 truncate">{headerTitle}</span>
                         <ChannelBadge type={selectedConv?.channel?.type} />
+                        {(selectedConv?.status || 'open') === 'closed' && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">Closed</span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400">{assigneeLabel(selectedConv).text}</div>
                     </div>
+                    {/* Open/close the conversation (feedback 8 Jul) */}
+                    <button
+                      type="button"
+                      onClick={toggleConversationStatus}
+                      disabled={statusSaving}
+                      className="shrink-0 text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {statusSaving
+                        ? 'Saving…'
+                        : (selectedConv?.status || 'open') === 'open' ? 'Close' : 'Reopen'}
+                    </button>
                   </header>
 
                   <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
@@ -641,6 +723,8 @@ export default function Inbox() {
                   setCreateEmail={setCreateEmail}
                   onCreate={createCustomer}
                   onOpenWorkorder={openWorkorder}
+                  onAddToFunnel={addToFunnel}
+                  addingLead={addingLead}
                 />
               </aside>
             )}
@@ -672,6 +756,7 @@ export default function Inbox() {
 // lead's funnel stage. Leaves a labelled slot at the top for the F16 AI summary.
 function CustomerPanel({
   loading, panel, creating, needEmail, createEmail, setCreateEmail, onCreate, onOpenWorkorder,
+  onAddToFunnel, addingLead,
 }) {
   const customer = panel?.customer || null;
   const contact = panel?.contact || null;
@@ -764,7 +849,23 @@ function CustomerPanel({
                 {lead.quote_invoice_id && <Field label="Quote/Invoice" value={lead.quote_invoice_id} />}
               </div>
             ) : (
-              <div className="text-gray-400">No open lead for this conversation.</div>
+              <div className="space-y-2">
+                <div className="text-gray-400">No open lead for this conversation.</div>
+                {customer && onAddToFunnel && (
+                  <button
+                    type="button"
+                    onClick={onAddToFunnel}
+                    disabled={addingLead}
+                    className="w-full bg-blue-500 text-white py-2 rounded text-sm hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {addingLead
+                      ? 'Adding…'
+                      : workorders.length
+                        ? `Add to funnel (link WO #${workorders[0].workorder_id})`
+                        : 'Add to funnel'}
+                  </button>
+                )}
+              </div>
             )}
           </section>
 

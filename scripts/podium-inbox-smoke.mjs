@@ -236,6 +236,32 @@ for (const resource of ['conversations', 'poll']) {
   }
 }
 
+// ---- resource=status — open/close a conversation ------------------------------
+console.log('\ninbox resource=status (open/close):');
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'status' } }), res);
+  check('status: 405 for GET', res.statusCode === 405);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'status' }, body: { status: 'closed' } }), res);
+  check('status: 400 without conversationId', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'status' }, body: { conversationId: 'pod_cnv_00006', status: 'weird' } }), res);
+  check('status: 400 for an invalid status value', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'status' }, body: { conversationId: 'pod_cnv_00001', status: 'closed' } }), res);
+  check('status: 200 close mutates the conversation', res.statusCode === 200 && res.body.status === 'closed' && res.body.conversation?.status === 'closed', `status ${res.statusCode}`);
+  // The mock now returns it under the Closed bucket for the assignee.
+  const closedForAmelia = await listConversations('AM', { assigneeUid: 'pod_usr_amELia', status: 'closed' });
+  check('status: closed conversation moves into the Closed bucket', closedForAmelia.data.some((c) => c.uid === 'pod_cnv_00001'));
+}
+
 // ---- direct helper sanity: sendMessage / listMessages via mock ----------------
 console.log('\nmock helpers:');
 {
