@@ -64,7 +64,7 @@ const page2 = await podium.listConversations(REP, { limit: 2, cursor: page1.meta
 check('listConversations page2 is a different page', page2.data[0].uid !== page1.data[0].uid);
 
 const allConvos = await podium.paginate(REP, 'conversations', { limit: 2 });
-check('paginate() walks every conversation', allConvos.length === 5, `got ${allConvos.length}`);
+check('paginate() walks every conversation', allConvos.length === 6, `got ${allConvos.length}`);
 
 // 7. "My conversations" filter (drives F1b/F3 default view)
 const mine = await podium.listConversations(REP, { assigneeUid: 'pod_usr_amELia' });

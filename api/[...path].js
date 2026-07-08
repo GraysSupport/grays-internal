@@ -11,6 +11,7 @@ import workorderHandler from '../lib/handlers/workorder.js';
 import deliveryHandler from '../lib/handlers/delivery.js';
 import collectionsHandler from '../lib/handlers/collections.js';
 import winningsHandler from '../lib/handlers/winnings.js';
+import leadsHandler from '../lib/handlers/leads.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -33,7 +34,8 @@ function methodNotAllowed(res, allow) {
 }
 
 export default async function handler(req, res) {
-  const [root, sub] = segs(req);
+  const parts = segs(req);
+  const [root, sub] = parts;
   try {
     switch (root) {
       case undefined:
@@ -81,6 +83,12 @@ export default async function handler(req, res) {
       // catch-all is behaviourally identical to their old standalone entrypoints.
       case 'workorder':
         return workorderHandler(req, res);
+      // Lead funnel (F5). Pass the segments AFTER "leads" so /api/leads/:id/stage
+      // reaches the handler as ['<id>','stage'] (this catch-all otherwise only
+      // destructures [root, sub]). Handler is JWT-gated to sales/superadmin.
+      case 'leads':
+      case 'lead':
+        return leadsHandler(req, res, parts.slice(1));
       case 'delivery':
         return deliveryHandler(req, res);
       case 'collections':
