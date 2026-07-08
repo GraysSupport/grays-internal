@@ -29,6 +29,11 @@
 // (Open/Closed within Unassigned / All / Assigned-to-You) is F11; the AI-summary card
 // is F16 — this increment leaves a labelled slot for it.
 //
+// F12 rich messaging adds to the composer: image/video ATTACHMENTS (metadata-only seam
+// — the file bytes stay in the browser; real Podium media upload is a live-wiring swap),
+// team-only INTERNAL NOTES (POST ?resource=note — rendered distinctly, never sent to the
+// customer), and Podium MESSAGE TEMPLATES (GET ?resource=templates — inserted into the draft).
+//
 // Default view is "My conversations" (scope=mine) — this closes F1b increment 3.
 // Mock-first: while PODIUM_MOCK=true the backend serves lib/podium.mock.js, so the
 // whole inbox + panel are browsable on the Preview without live Podium credentials.
@@ -111,6 +116,14 @@ function convTitle(c) {
   return c?.channel?.identifier || c?.contact?.uid || c?.uid || 'Conversation';
 }
 
+// F12 — classify a picked file into an attachment kind for rendering/send metadata.
+function kindForType(mime) {
+  const t = String(mime || '').toLowerCase();
+  if (t.startsWith('image/')) return 'image';
+  if (t.startsWith('video/')) return 'video';
+  return 'file';
+}
+
 export default function Inbox() {
   const navigate = useNavigate();
 
@@ -132,6 +145,14 @@ export default function Inbox() {
 
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+
+  // F12 rich messaging: internal-note mode, message templates, attachments.
+  const [composerMode, setComposerMode] = useState('reply'); // 'reply' | 'note'
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [attachments, setAttachments] = useState([]); // {id,file,url,kind,filename,mimeType,size}
+  const fileInputRef = useRef(null);
+  const attachmentsRef = useRef([]); // latest attachments, for object-URL cleanup on unmount
 
   // F4 incr 2 — customer side panel state.
   const [panel, setPanel] = useState(null);
@@ -274,6 +295,20 @@ export default function Inbox() {
     if (authorized) loadConversations();
   }, [authorized, loadConversations]);
 
+  // F12 — fetch Podium message templates once (canned responses for the composer).
+  useEffect(() => {
+    if (!authorized) return;
+    fetch('/api/podium/inbox?resource=templates', { headers: authHeaders() })
+      .then((r) => (r.ok ? parseMaybeJson(r) : null))
+      .then((d) => { if (Array.isArray(d?.data)) setTemplates(d.data); })
+      .catch(() => { /* templates are best-effort */ });
+  }, [authorized]);
+
+  // F12 — keep the latest attachments in a ref and revoke their object URLs on unmount
+  // (avoids leaking blob: URLs). Per-item revokes happen in removeAttachment/clearAttachments.
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  useEffect(() => () => { attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.url)); }, []);
+
   // Funnel → chat deep-link: open ?conversation=<uid> once, even if it's not in the
   // current bucket/status. Fetches the conversation directly and opens its thread+panel.
   useEffect(() => {
@@ -366,6 +401,50 @@ export default function Inbox() {
   };
 
   // ---- Actions -------------------------------------------------------------------
+
+  // F12 — attachments. Files are held only in browser memory (object URLs) and only
+  // metadata is sent (P1: no bytes persisted; real media upload is a live-wiring swap).
+  const onPickFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) {
+      setAttachments((prev) => {
+        const added = files.map((f) => ({
+          id: `${f.name}_${f.size}_${Math.random().toString(36).slice(2)}`,
+          file: f,
+          url: URL.createObjectURL(f),
+          kind: kindForType(f.type),
+          filename: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          size: f.size,
+        }));
+        return [...prev, ...added].slice(0, 10);
+      });
+    }
+    e.target.value = ''; // allow re-selecting the same file
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => {
+      const gone = prev.find((a) => a.id === id);
+      if (gone) URL.revokeObjectURL(gone.url);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  const clearAttachments = useCallback(() => {
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.url));
+      return [];
+    });
+  }, []);
+
+  // F12 — insert a Podium message template into the reply draft.
+  const insertTemplate = (tpl) => {
+    setComposerMode('reply');
+    setDraft((d) => (d ? `${d}\n${tpl.body}` : tpl.body));
+    setShowTemplates(false);
+  };
+
   const clearSelection = () => {
     setSelectedId(null);
     setSelectedConv(null);
@@ -376,6 +455,10 @@ export default function Inbox() {
     setWoOpenId(null);
     setWoDetail(null);
     setLeadHistory([]);
+    setComposerMode('reply');
+    setShowTemplates(false);
+    setDraft('');
+    clearAttachments();
   };
 
   const switchBucket = (next) => {
@@ -463,16 +546,31 @@ export default function Inbox() {
     }
   };
 
-  const sendReply = async (e) => {
-    e.preventDefault();
+  // Composer submit dispatcher — a reply (with optional attachments) or an internal note.
+  const submitComposer = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!selectedId || sending) return;
+    if (composerMode === 'note') { sendNote(); return; }
+    sendReply();
+  };
+
+  const sendReply = async () => {
     const body = draft.trim();
-    if (!body || !selectedId || sending) return;
+    const atts = attachments;
+    if ((!body && atts.length === 0) || !selectedId || sending) return;
     setSending(true);
     try {
+      const payload = { conversationId: selectedId, body };
+      if (atts.length) {
+        // Metadata only — never the file bytes (P1). Real media upload is a live-wiring swap.
+        payload.attachments = atts.map((a) => ({
+          kind: a.kind, filename: a.filename, mimeType: a.mimeType, size: a.size,
+        }));
+      }
       const res = await fetch('/api/podium/inbox?resource=messages', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ conversationId: selectedId, body }),
+        body: JSON.stringify(payload),
       });
       if (res.status === 401) { navigate('/'); return; }
       const data = await parseMaybeJson(res);
@@ -481,6 +579,7 @@ export default function Inbox() {
         return;
       }
       // Optimistically show the sent reply. Held only in React state (P1: never persisted).
+      // Keep the local object URLs so image/video thumbnails render in the sent bubble.
       setMessages((prev) => [
         ...prev,
         {
@@ -488,13 +587,43 @@ export default function Inbox() {
           direction: 'outbound',
           channel: data?.sent?.channel || selectedConv?.channel?.type,
           body,
+          attachments: atts.map((a) => ({ kind: a.kind, url: a.url, filename: a.filename })),
           createdAt: new Date().toISOString(),
           optimistic: true,
         },
       ]);
       setDraft('');
+      setAttachments([]); // handed to the optimistic bubble; URLs stay alive for it
     } catch {
       toast.error('Server error sending the message');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // F12 — post a team-only INTERNAL note (not sent to the customer). The mock appends it
+  // to the thread, so reload it to show the note; no chat/note body is persisted (P1).
+  const sendNote = async () => {
+    const body = draft.trim();
+    if (!body || !selectedId || sending) return;
+    setSending(true);
+    try {
+      const res = await fetch('/api/podium/inbox?resource=note', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ conversationId: selectedId, body }),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) {
+        toast.error(data?.error || 'Could not add the internal note');
+        return;
+      }
+      setDraft('');
+      toast.success('Internal note added (team only)');
+      loadThread(selectedId, { silent: true });
+    } catch {
+      toast.error('Server error adding the internal note');
     } finally {
       setSending(false);
     }
@@ -714,6 +843,23 @@ export default function Inbox() {
                       <div className="text-sm text-gray-400">No messages in this conversation.</div>
                     )}
                     {!loadingThread && messages.map((m) => {
+                      // F12 — internal notes render distinctly (team-only, not sent to the customer).
+                      if (m.internal || m.direction === 'internal') {
+                        return (
+                          <div key={m.uid} className="flex justify-center">
+                            <div className="max-w-[85%] w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                              <div className="text-[11px] font-semibold text-amber-700 mb-0.5">
+                                🔒 Internal note
+                                <span className="font-normal text-amber-600"> · team only, not sent to the customer</span>
+                              </div>
+                              <div className="whitespace-pre-wrap break-words text-sm text-amber-900">{m.body}</div>
+                              <div className="text-[10px] mt-1 text-amber-500">
+                                {formatTime(m.createdAt)}{m.author ? ` · ${m.author}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
                       const outbound = m.direction === 'outbound';
                       return (
                         <div key={m.uid} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
@@ -722,7 +868,8 @@ export default function Inbox() {
                               outbound ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
                             } ${m.optimistic ? 'opacity-80' : ''}`}
                           >
-                            <div className="whitespace-pre-wrap break-words">{m.body}</div>
+                            {m.body && <div className="whitespace-pre-wrap break-words">{m.body}</div>}
+                            <MessageAttachments attachments={m.attachments} outbound={outbound} />
                             <div className={`text-[10px] mt-1 ${outbound ? 'text-blue-100' : 'text-gray-400'}`}>
                               {formatTime(m.createdAt)}{m.optimistic ? ' · sending…' : ''}
                             </div>
@@ -732,28 +879,136 @@ export default function Inbox() {
                     })}
                   </div>
 
-                  <form onSubmit={sendReply} className="border-t border-gray-200 p-3 flex items-end gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendReply(e);
-                        }
-                      }}
-                      rows={1}
-                      placeholder="Type a reply…"
-                      className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={sending || !draft.trim()}
-                      className="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-600 disabled:opacity-50"
-                    >
-                      {sending ? 'Sending…' : 'Send'}
-                    </button>
-                  </form>
+                  <div className="border-t border-gray-200">
+                    {/* F12 — attachment previews (reply mode) */}
+                    {composerMode === 'reply' && attachments.length > 0 && (
+                      <div className="px-3 pt-2 flex flex-wrap gap-2">
+                        {attachments.map((a) => (
+                          <div key={a.id} className="relative">
+                            {a.kind === 'image' ? (
+                              <img src={a.url} alt={a.filename} className="h-16 w-16 object-cover rounded-lg border border-gray-200" />
+                            ) : (
+                              <div className="h-16 w-24 rounded-lg border border-gray-200 bg-gray-50 flex flex-col items-center justify-center px-1 text-center">
+                                <span className="text-lg">{a.kind === 'video' ? '🎬' : '📎'}</span>
+                                <span className="text-[10px] text-gray-500 truncate w-full">{a.filename}</span>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeAttachment(a.id)}
+                              className="absolute -top-1.5 -right-1.5 bg-gray-700 text-white rounded-full w-5 h-5 text-xs leading-none"
+                              aria-label="Remove attachment"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* F12 — composer toolbar: Reply/Note mode, templates, attach */}
+                    <div className="px-3 pt-2 flex flex-wrap items-center gap-2">
+                      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setComposerMode('reply')}
+                          className={composerMode === 'reply' ? 'px-2.5 py-1 bg-blue-500 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
+                        >
+                          Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setComposerMode('note'); setShowTemplates(false); }}
+                          className={composerMode === 'note' ? 'px-2.5 py-1 bg-amber-500 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
+                        >
+                          Internal note
+                        </button>
+                      </div>
+
+                      {composerMode === 'reply' && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowTemplates((v) => !v)}
+                            disabled={templates.length === 0}
+                            className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                            title="Insert a message template"
+                          >
+                            Templates ▾
+                          </button>
+                          {showTemplates && templates.length > 0 && (
+                            <div className="absolute bottom-full mb-1 left-0 z-10 w-64 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                              {templates.map((t) => (
+                                <button
+                                  key={t.uid}
+                                  type="button"
+                                  onClick={() => insertTemplate(t)}
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                                >
+                                  <div className="text-xs font-semibold text-gray-800">{t.title}</div>
+                                  <div className="text-[11px] text-gray-500 truncate">{t.body}</div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {composerMode === 'reply' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                            className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+                            title="Attach an image or video"
+                          >
+                            📎 Attach
+                          </button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*,video/*"
+                            multiple
+                            className="hidden"
+                            onChange={onPickFiles}
+                          />
+                        </>
+                      )}
+
+                      {composerMode === 'note' && (
+                        <span className="text-[11px] text-amber-700">Team-only — not sent to the customer.</span>
+                      )}
+                    </div>
+
+                    <form onSubmit={submitComposer} className="p-3 flex items-end gap-2">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            submitComposer(e);
+                          }
+                        }}
+                        rows={1}
+                        placeholder={composerMode === 'note' ? 'Write an internal note…' : 'Type a reply…'}
+                        className={`flex-1 resize-none border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+                          composerMode === 'note' ? 'border-amber-300 bg-amber-50 focus:ring-amber-400' : 'border-gray-300 focus:ring-blue-400'
+                        }`}
+                      />
+                      <button
+                        type="submit"
+                        disabled={sending || (composerMode === 'note' ? !draft.trim() : (!draft.trim() && attachments.length === 0))}
+                        className={`px-4 py-2 rounded-lg text-sm text-white disabled:opacity-50 ${
+                          composerMode === 'note' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-500 hover:bg-blue-600'
+                        }`}
+                      >
+                        {sending
+                          ? (composerMode === 'note' ? 'Adding…' : 'Sending…')
+                          : (composerMode === 'note' ? 'Add note' : 'Send')}
+                      </button>
+                    </form>
+                  </div>
                 </>
               )}
             </section>
@@ -997,6 +1252,32 @@ function Field({ label, value }) {
     <div className="flex gap-2 text-xs">
       <span className="text-gray-400 w-20 shrink-0">{label}</span>
       <span className="text-gray-700 break-words min-w-0">{value}</span>
+    </div>
+  );
+}
+
+// F12 — render a message's attachments (image thumbnails inline; video/file as chips).
+// In mock, image/video previews come from the sender's local object URLs; under live
+// Podium the message carries hosted media URLs (a live-wiring swap).
+function MessageAttachments({ attachments, outbound }) {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {list.map((a, i) => {
+        const key = `${i}-${a.filename || a.kind}`;
+        if (a.kind === 'image' && a.url) {
+          return <img key={key} src={a.url} alt={a.filename || 'attachment'} className="max-h-40 rounded-lg border border-black/10" />;
+        }
+        return (
+          <span
+            key={key}
+            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg ${outbound ? 'bg-blue-400/60 text-white' : 'bg-gray-100 text-gray-700'}`}
+          >
+            {a.kind === 'video' ? '🎬' : '📎'} {a.filename || a.kind}
+          </span>
+        );
+      })}
     </div>
   );
 }
