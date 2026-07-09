@@ -18,7 +18,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
 process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 
 const jwt = (await import('jsonwebtoken')).default;
-const { resolvePodiumUserId, mirrorAssignmentToLead } = await import('../lib/podiumAssign.js');
+const { resolvePodiumUserId, mirrorAssignmentToLead, resolveAssignees } = await import('../lib/podiumAssign.js');
 const { assignConversation, getAssignee } = await import('../lib/podium.js');
 const assignHandler = (await import('../lib/podiumRoutes/assign.js')).default;
 
@@ -133,10 +133,32 @@ console.log('Podium assignment (F1b) smoke (PODIUM_MOCK=true)\n');
   check('assignConversation: mock echoes conversation', r?.conversationUid === 'pod_cnv_00003');
 }
 
-// 10. getAssignee (mock) — reads the fixture assignee
+// 10. getAssignee (mock) — reads the fixture assignee(s)
 {
   const r = await getAssignee('AM', 'pod_cnv_00001');
-  check('getAssignee: mock returns fixture assignee', r?.assignedUser?.uid === 'pod_usr_amELia');
+  check('getAssignee: mock returns primary assignee', r?.assignedUser?.uid === 'pod_usr_amELia');
+  // F13: 00001 is a shared conversation — the plural list carries both reps.
+  check('getAssignee: returns the full assignees list', Array.isArray(r?.assignees) && r.assignees.map((a) => a.uid).includes('pod_usr_bENjin'));
+}
+
+// 10b. F13 — assignConversation accepts an array (multi-assignee) and clears with []
+{
+  const set = await assignConversation('AM', 'pod_cnv_00002', ['pod_usr_amELia', 'pod_usr_bENjin']);
+  check('assignConversation: array sets a two-rep assignee list', Array.isArray(set.assignees) && set.assignees.length === 2);
+  check('assignConversation: primary = first of the array', set.assignedUser?.uid === 'pod_usr_amELia');
+  const cleared = await assignConversation('AM', 'pod_cnv_00002', []);
+  check('assignConversation: empty array clears all assignees', Array.isArray(cleared.assignees) && cleared.assignees.length === 0 && cleared.assignedUser === null);
+}
+
+// 10c. F13 — resolveAssignees maps podium uids → portal reps, with a member-name fallback
+{
+  const client = makeClient([{ match: (s) => /SELECT .*FROM users/i.test(s), result: { rows: [{ id: 'AM', name: 'Amelia R', podium_user_id: 'pod_usr_amELia' }] } }]);
+  const resolved = await resolveAssignees(client, 'AM', ['pod_usr_amELia', 'pod_usr_bENjin']);
+  const am = resolved.find((a) => a.podiumUserId === 'pod_usr_amELia');
+  const bn = resolved.find((a) => a.podiumUserId === 'pod_usr_bENjin');
+  check('resolveAssignees: matched uid → portal id + linked', am?.portalId === 'AM' && am?.linked === true);
+  check('resolveAssignees: unmatched uid → Podium member name, not linked', bn?.name === 'Ben Jindra' && bn?.linked === false && bn?.portalId === null);
+  check('resolveAssignees: empty input → []', (await resolveAssignees(client, 'AM', [])).length === 0);
 }
 
 // 11. endpoint gates (all reached BEFORE any DB access → offline-safe)

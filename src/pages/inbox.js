@@ -166,6 +166,13 @@ export default function Inbox() {
   const [woLoading, setWoLoading] = useState(false);
   const [woOpenId, setWoOpenId] = useState(null);
 
+  // F13 — multi-assignee: assignable reps, the selected conversation's resolved
+  // assignee set, and the assignment picker.
+  const [reps, setReps] = useState([]);
+  const [assignees, setAssignees] = useState([]); // [{podiumUserId, portalId, name, linked}]
+  const [showAssign, setShowAssign] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
+
   // Feedback (8 Jul): open/close a conversation + add a conversation to the funnel.
   const [statusSaving, setStatusSaving] = useState(false);
   const [addingLead, setAddingLead] = useState(false);
@@ -272,6 +279,23 @@ export default function Inbox() {
     }
   }, [navigate]);
 
+  // F13 — load the selected conversation's assignee set (resolved to portal reps, with
+  // a Podium-member name fallback) for the header chips + the assignment picker.
+  const loadAssignees = useCallback(async (convId) => {
+    if (!convId) { setAssignees([]); return; }
+    try {
+      const res = await fetch(
+        `/api/podium/assign?conversationId=${encodeURIComponent(convId)}`,
+        { headers: authHeaders() },
+      );
+      if (!res.ok) { setAssignees([]); return; }
+      const data = await parseMaybeJson(res);
+      setAssignees(Array.isArray(data?.assignees) ? data.assignees : []);
+    } catch {
+      setAssignees([]);
+    }
+  }, []);
+
   // Funnel stage history (timeline) for the panel's lead — when/if there is one.
   const loadLeadHistory = useCallback(async (leadId) => {
     if (!leadId) { setLeadHistory([]); return; }
@@ -304,6 +328,15 @@ export default function Inbox() {
       .catch(() => { /* templates are best-effort */ });
   }, [authorized]);
 
+  // F13 — fetch the assignable reps once (sales/superadmin portal users) for the picker.
+  useEffect(() => {
+    if (!authorized) return;
+    fetch('/api/podium/inbox?resource=reps', { headers: authHeaders() })
+      .then((r) => (r.ok ? parseMaybeJson(r) : null))
+      .then((d) => { if (Array.isArray(d?.reps)) setReps(d.reps); })
+      .catch(() => { /* reps list is best-effort */ });
+  }, [authorized]);
+
   // F12 — keep the latest attachments in a ref and revoke their object URLs on unmount
   // (avoids leaking blob: URLs). Per-item revokes happen in removeAttachment/clearAttachments.
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
@@ -330,10 +363,11 @@ export default function Inbox() {
           setSelectedConv(data.conversation);
           loadThread(convId);
           loadPanel(convId);
+          loadAssignees(convId);
         }
       } catch { /* deep-link is best-effort */ }
     })();
-  }, [authorized, navigate, loadThread, loadPanel]);
+  }, [authorized, navigate, loadThread, loadPanel, loadAssignees]);
 
   // ---- Poll: refresh the list (and the open thread) for new activity -------------
   const pollNow = useCallback(async () => {
@@ -455,6 +489,8 @@ export default function Inbox() {
     setWoOpenId(null);
     setWoDetail(null);
     setLeadHistory([]);
+    setAssignees([]);
+    setShowAssign(false);
     setComposerMode('reply');
     setShowTemplates(false);
     setDraft('');
@@ -480,6 +516,7 @@ export default function Inbox() {
     setSelectedConv(c);
     loadThread(c.uid);
     loadPanel(c.uid);
+    loadAssignees(c.uid);
   };
 
   // Feedback (8 Jul): a salesperson opens/closes the selected conversation. It then
@@ -543,6 +580,42 @@ export default function Inbox() {
       toast.error('Server error adding to the funnel');
     } finally {
       setAddingLead(false);
+    }
+  };
+
+  // F13 — add or remove a rep from the conversation's assignee set. The picker works in
+  // portal-user space: it sends the whole new set of portal ids to POST /api/podium/assign,
+  // which resolves each to a Podium member and replaces the assignees (Podium is the
+  // system of record). Reps who haven't linked their Podium account come back as a 409.
+  const toggleAssignee = async (rep) => {
+    if (!selectedId || assignSaving || !rep?.id) return;
+    const has = assignees.some((a) => a.portalId === rep.id);
+    // Rebuild the set from the currently-resolved portal ids (Podium-only members that
+    // don't map to a portal user can't be re-sent through the portal picker).
+    const currentPortalIds = assignees.map((a) => a.portalId).filter(Boolean);
+    const nextIds = has
+      ? currentPortalIds.filter((id) => id !== rep.id)
+      : [...new Set([...currentPortalIds, rep.id])];
+    setAssignSaving(true);
+    try {
+      const res = await fetch('/api/podium/assign', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ conversationId: selectedId, userIds: nextIds }),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) {
+        toast.error(data?.error || 'Could not update the assignees');
+        return;
+      }
+      toast.success(has ? `Removed ${rep.name}` : `Assigned ${rep.name}`);
+      loadAssignees(selectedId);
+      loadConversations({ silent: true }); // the row may move in/out of "Assigned to You"
+    } catch {
+      toast.error('Server error updating the assignees');
+    } finally {
+      setAssignSaving(false);
     }
   };
 
@@ -672,16 +745,46 @@ export default function Inbox() {
   // ---- Render --------------------------------------------------------------------
   if (!authorized) return null;
 
+  // F13: a conversation may have one OR MORE assignees. Prefer the `assignees` set, fall
+  // back to the single `assignedUser`. Show "You" when the logged-in rep is one of them.
+  const conversationAssigneeUids = (c) => (
+    Array.isArray(c?.assignees) && c.assignees.length
+      ? c.assignees.map((a) => a?.uid)
+      : (c?.assignedUser?.uid ? [c.assignedUser.uid] : [])
+  ).filter(Boolean);
+
   const assigneeLabel = (c) => {
-    const uid = c?.assignedUser?.uid;
-    if (!uid) return { text: 'Unassigned', cls: 'text-gray-400' };
-    if (myPodiumUid && uid === myPodiumUid) return { text: 'You', cls: 'text-green-700' };
-    return { text: 'Assigned', cls: 'text-gray-500' };
+    const uids = conversationAssigneeUids(c);
+    if (uids.length === 0) return { text: 'Unassigned', cls: 'text-gray-400' };
+    const mine = myPodiumUid && uids.includes(myPodiumUid);
+    if (uids.length === 1) {
+      return mine ? { text: 'You', cls: 'text-green-700' } : { text: 'Assigned', cls: 'text-gray-500' };
+    }
+    return mine
+      ? { text: `You +${uids.length - 1}`, cls: 'text-green-700' }
+      : { text: `${uids.length} assignees`, cls: 'text-gray-500' };
   };
 
   // Prefer the resolved customer/contact name in the thread header once the panel loads.
   const headerTitle =
     panel?.customer?.name || panel?.contact?.name || convTitle(selectedConv);
+
+  // F13 sender attribution — in a MULTI-REP thread (≥2 distinct outbound senders), label
+  // who sent each outbound message. Names come from the message's senderUser (mock) or,
+  // as a fallback, the reps/assignees maps keyed by Podium member uid.
+  const nameByPodiumUid = new Map();
+  reps.forEach((r) => { if (r.podiumUserId) nameByPodiumUid.set(r.podiumUserId, r.name); });
+  assignees.forEach((a) => { if (a.podiumUserId && a.name) nameByPodiumUid.set(a.podiumUserId, a.name); });
+  const outboundSenderUids = new Set(
+    messages.filter((m) => m.direction === 'outbound' && m.senderUser?.uid).map((m) => m.senderUser.uid),
+  );
+  const showSenders = outboundSenderUids.size >= 2;
+  const senderDisplay = (m) => {
+    const s = m.senderUser;
+    if (!s?.uid) return null;
+    if (myPodiumUid && s.uid === myPodiumUid) return 'You';
+    return s.name || nameByPodiumUid.get(s.uid) || 'Team';
+  };
 
   return (
     <>
@@ -822,7 +925,16 @@ export default function Inbox() {
                           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">Closed</span>
                         )}
                       </div>
-                      <div className="text-xs text-gray-400">{assigneeLabel(selectedConv).text}</div>
+                      {/* F13 — assignee chips + assignment picker (one or more reps). */}
+                      <AssigneeBar
+                        assignees={assignees}
+                        reps={reps}
+                        myPodiumUid={myPodiumUid}
+                        show={showAssign}
+                        setShow={setShowAssign}
+                        onToggle={toggleAssignee}
+                        saving={assignSaving}
+                      />
                     </div>
                     {/* Open/close the conversation (feedback 8 Jul) */}
                     <button
@@ -868,6 +980,9 @@ export default function Inbox() {
                               outbound ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
                             } ${m.optimistic ? 'opacity-80' : ''}`}
                           >
+                            {showSenders && outbound && senderDisplay(m) && (
+                              <div className="text-[11px] font-semibold text-blue-100 mb-0.5">{senderDisplay(m)}</div>
+                            )}
                             {m.body && <div className="whitespace-pre-wrap break-words">{m.body}</div>}
                             <MessageAttachments attachments={m.attachments} outbound={outbound} />
                             <div className={`text-[10px] mt-1 ${outbound ? 'text-blue-100' : 'text-gray-400'}`}>
@@ -1242,6 +1357,66 @@ function CustomerPanel({
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+// F13 — assignee chips + the assignment picker for the thread header. Shows every
+// assignee (resolved to a portal rep, or a Podium-member name), highlights the logged-in
+// rep as "You", and lets a salesperson add/remove reps (the picker manages portal reps;
+// reps who haven't linked their Podium account are shown disabled). A conversation can be
+// assigned to one OR MORE reps — Podium's assignees endpoint is plural.
+function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onToggle, saving }) {
+  const assignedPortalIds = new Set(assignees.map((a) => a.portalId).filter(Boolean));
+  return (
+    <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+      <span className="text-[11px] text-gray-400">Assigned:</span>
+      {assignees.length === 0 && <span className="text-xs text-gray-400">Unassigned</span>}
+      {assignees.map((a) => {
+        const you = myPodiumUid && a.podiumUserId === myPodiumUid;
+        return (
+          <span
+            key={a.podiumUserId}
+            className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full ${you ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}
+          >
+            {a.name || a.podiumUserId}{you ? ' (You)' : ''}
+          </span>
+        );
+      })}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setShow(!show)}
+          disabled={saving || reps.length === 0}
+          className="text-[11px] px-2 py-0.5 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+          title="Assign salespeople to this conversation"
+        >
+          {saving ? 'Saving…' : 'Assign ▾'}
+        </button>
+        {show && reps.length > 0 && (
+          <div className="absolute top-full mt-1 left-0 z-20 w-60 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+            {reps.map((r) => {
+              const checked = assignedPortalIds.has(r.id);
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => onToggle(r)}
+                  disabled={saving || !r.linked}
+                  className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-50 disabled:opacity-50"
+                  title={r.linked ? '' : 'This rep has not linked their Podium account'}
+                >
+                  <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs text-gray-800 truncate">{r.name}</span>
+                    {!r.linked && <span className="block text-[10px] text-gray-400">Not linked to Podium</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
