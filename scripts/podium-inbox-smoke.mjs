@@ -23,7 +23,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
-const { listConversations, listMessages, sendMessage } = await import('../lib/podium.js');
+const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote } = await import('../lib/podium.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
 let passed = 0;
@@ -287,6 +287,87 @@ console.log('\nmock helpers:');
   check('sendMessage: mock returns an outbound sent message', sent.direction === 'outbound' && sent.status === 'sent');
   const thread = await listMessages('AM', 'pod_cnv_00004', {});
   check('listMessages: mock returns the thread envelope', Array.isArray(thread.data) && thread.data.length === 2);
+}
+
+// ---- F12 rich messaging: templates -------------------------------------------
+console.log('\nF12 resource=templates:');
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'templates' } }), res);
+  check('templates: 405 for POST', res.statusCode === 405);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'templates' } }), res);
+  check('templates GET: 200 returns the template list', res.statusCode === 200 && Array.isArray(res.body.data) && res.body.data.length >= 3, `status ${res.statusCode}`);
+  check('templates GET: each has uid/title/body', res.body.data.every((t) => t.uid && t.title && t.body));
+  check('templates GET: mock flag surfaced', res.body.mock === true);
+}
+{
+  const tpls = await listMessageTemplates('AM', { limit: 50 });
+  check('listMessageTemplates: mock helper returns templates', Array.isArray(tpls.data) && tpls.data.length >= 3);
+}
+
+// ---- F12 rich messaging: internal notes --------------------------------------
+console.log('\nF12 resource=note (internal notes):');
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'GET', query: { resource: 'note' } }), res);
+  check('note: 405 for GET', res.statusCode === 405);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'note' }, body: { body: 'hi' } }), res);
+  check('note: 400 without conversationId', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'note' }, body: { conversationId: 'pod_cnv_00005' } }), res);
+  check('note: 400 without a body', res.statusCode === 400);
+}
+{
+  const before = (await listMessages('AM', 'pod_cnv_00005', {})).data.length;
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'note' }, body: { conversationId: 'pod_cnv_00005', body: 'Customer wants a callback Monday.' } }), res);
+  check('note POST: 201 returns an internal note', res.statusCode === 201 && res.body.note?.internal === true && res.body.note?.direction === 'internal', `status ${res.statusCode}`);
+  check('note POST: attributed to the acting rep (id only, P1)', res.body.note?.author === 'AM');
+  const after = (await listMessages('AM', 'pod_cnv_00005', {})).data;
+  check('note POST: appended to the thread (team-visible)', after.length === before + 1 && after[after.length - 1].internal === true, `before ${before} after ${after.length}`);
+}
+{
+  const note = await postInternalNote('AM', { conversationUid: 'pod_cnv_00003', body: 'Direct helper note.', author: 'AM' });
+  check('postInternalNote: mock helper returns an internal note', note.internal === true && note.body === 'Direct helper note.');
+}
+
+// ---- F12 rich messaging: attachments on send ---------------------------------
+console.log('\nF12 resource=messages with attachments:');
+{
+  // body-less send is rejected only when there are also no attachments
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'messages' }, body: { conversationId: 'pod_cnv_00001', attachments: [] } }), res);
+  check('messages POST: 400 with neither body nor attachment', res.statusCode === 400);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({
+    method: 'POST',
+    query: { resource: 'messages' },
+    body: { conversationId: 'pod_cnv_00001', attachments: [{ kind: 'image', filename: 'squat-rack.jpg', mimeType: 'image/jpeg', size: 12345 }] },
+  }), res);
+  check('messages POST: 201 attachment-only send is allowed', res.statusCode === 201, `status ${res.statusCode}`);
+  check('messages POST: attachments echoed on the sent message', Array.isArray(res.body.sent?.attachments) && res.body.sent.attachments[0].kind === 'image' && res.body.sent.attachments[0].filename === 'squat-rack.jpg');
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({
+    method: 'POST',
+    query: { resource: 'messages' },
+    body: { conversationId: 'pod_cnv_00001', body: 'See attached', templateId: 'pod_tpl_deliv', attachments: [{ kind: 'nonsense', filename: 'x'.repeat(500) }] },
+  }), res);
+  check('messages POST: 201 with body + template + attachment', res.statusCode === 201);
+  check('messages POST: bad kind sanitised to file', res.body.sent?.attachments?.[0].kind === 'file');
+  check('messages POST: long filename clamped to 200 chars', (res.body.sent?.attachments?.[0].filename || '').length === 200);
+  check('messages POST: templateId echoed', res.body.sent?.templateId === 'pod_tpl_deliv');
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
