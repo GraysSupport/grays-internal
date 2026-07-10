@@ -318,6 +318,11 @@ export default function WorkorderDetailPage() {
   // which existing row is expanded for Serial Number editing
   const [expandedId, setExpandedId] = useState(null);
 
+  // G5 scan-in
+  const [scanning, setScanning] = useState(false);
+  const [scanValue, setScanValue] = useState('');
+  const scanInputRef = useRef(null);
+
   // user object
   const [user, setUser] = useState(null);
   const isSuperadmin = user?.access === 'superadmin';
@@ -332,6 +337,88 @@ export default function WorkorderDetailPage() {
       return '';
     }
   }, []);
+
+  // G5: reload the workorder + items (after a scan-in mutates lots/status server-side)
+  const reloadWO = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: { 'X-User-Id': userId || '' } });
+      const data = await r.json();
+      if (r.ok) {
+        setWo(data);
+        setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
+      }
+    } catch { /* ignore */ }
+  }, [id, userId]);
+
+  // G5: scan a lot sticker to assign it to the matching item + set In Workshop.
+  const handleScanIn = useCallback(async (raw) => {
+    const lotNum = String(raw || '').trim().toUpperCase();
+    if (!lotNum) return;
+    try {
+      const lr = await fetch(`/api/lots?lot_number=${encodeURIComponent(lotNum)}`);
+      if (lr.status === 404) { toast.error(`Lot ${lotNum} not found`); return; }
+      if (!lr.ok) { toast.error('Lookup failed'); return; }
+      const lot = await lr.json();
+
+      const matches = items.filter((it) =>
+        !it.is_custom &&
+        it.status !== 'Canceled' &&
+        String(it.product_id).toUpperCase() === String(lot.product_sku).toUpperCase());
+
+      if (!matches.length) {
+        toast.error(
+          `WRONG ITEM — ${lot.lot_number} is ${lot.product_name || lot.product_sku} (${lot.product_sku}). This workorder has no line for that model.`,
+          { duration: 7000 }
+        );
+        return;
+      }
+
+      // pick a matching item that still has a free lot slot
+      let target = null;
+      for (const it of matches) {
+        const sr = await fetch(`/api/lots?sku=${encodeURIComponent(it.product_id)}&workorder_items_id=${it.workorder_items_id}`);
+        const sl = sr.ok ? await sr.json() : [];
+        if (lot.workorder_items_id === it.workorder_items_id) { toast(`${lot.lot_number} is already on this workorder.`); return; }
+        const assignedCount = sl.filter((l) => l.workorder_items_id === it.workorder_items_id && (l.status === 'Assigned' || l.status === 'Sold')).length;
+        if (assignedCount < Number(it.quantity || 0)) { target = it; break; }
+      }
+      if (!target) { toast.error(`All ${lot.product_sku} units on this workorder already have a lot assigned.`); return; }
+
+      const ar = await fetch('/api/lots?action=assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
+        body: JSON.stringify({ lot_id: lot.lot_id, workorder_items_id: target.workorder_items_id }),
+      });
+      const ad = await ar.json().catch(() => ({}));
+      if (!ar.ok) { toast.error(ad?.error === 'WRONG_MODEL' ? 'Wrong model — lot does not match the item.' : (ad?.error || 'Assign failed')); return; }
+
+      // set the item In Workshop
+      await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': userId || '' },
+        body: JSON.stringify({ items: [{ workorder_items_id: target.workorder_items_id, status: 'In Workshop' }] }),
+      });
+
+      toast.success(`${lot.lot_number} → In Workshop (${lot.product_sku})`, { duration: 5000 });
+
+      // capture the machine's serial (console/screen serial for cardio)
+      const sn = window.prompt(`Serial number for ${lot.lot_number} (console/screen serial for cardio — optional):`, lot.serial_number || '');
+      if (sn !== null && sn.trim()) {
+        await fetch('/api/lots?action=serial', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
+          body: JSON.stringify({ lot_id: lot.lot_id, serial_number: sn.trim() }),
+        });
+      }
+
+      await reloadWO();
+    } catch {
+      toast.error('Scan failed');
+    } finally {
+      setScanValue('');
+      scanInputRef.current?.focus();
+    }
+  }, [items, id, userId, reloadWO]);
 
   useEffect(() => {
     try {
@@ -777,7 +864,15 @@ export default function WorkorderDetailPage() {
         <div className="rounded-xl border bg-white">
           <div className="border-b p-4 flex items-center justify-between">
             <div className="text-center font-semibold flex-1">Items</div>
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 flex items-center gap-2">
+              {(isWorkshop || isSuperadmin) && (
+                <button
+                  onClick={() => { setScanning((s) => !s); setTimeout(() => scanInputRef.current?.focus(), 50); }}
+                  className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-600 text-white border-green-600' : 'hover:bg-gray-50'}`}
+                >
+                  {scanning ? '● Scanning…' : '⧉ Scan item in'}
+                </button>
+              )}
               <button
                 onClick={handleAddPendingRow}
                 className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
@@ -786,6 +881,24 @@ export default function WorkorderDetailPage() {
               </button>
             </div>
           </div>
+          {scanning && (
+            <div className="border-b p-3 bg-green-50">
+              <form onSubmit={(e) => { e.preventDefault(); handleScanIn(scanValue); }}>
+                <input
+                  ref={scanInputRef}
+                  autoFocus
+                  value={scanValue}
+                  onChange={(e) => setScanValue(e.target.value)}
+                  placeholder="Scan a lot sticker (or type L##### and Enter)…"
+                  className="w-full border rounded p-2 font-mono"
+                />
+              </form>
+              <div className="text-xs text-gray-600 mt-1">
+                Scans the lot → checks it matches an item on this workorder (wrong model is rejected) →
+                assigns the lot and sets that item to <b>In Workshop</b> → asks for the serial.
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
