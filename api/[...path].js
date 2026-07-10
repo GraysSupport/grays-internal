@@ -123,24 +123,29 @@ async function handleCustomers(req, res, subId) {
     }
 
     if (method === 'POST') {
-      const { name, email, phone, address, notes } = body;
+      const { name, email, phone, address, notes, customer_type } = body;
       if (!name || !email) return res.status(400).json({ error: 'Name and email are required' });
+      // Individual/Business (G1). Required on create — default Individual for the common case.
+      const type = customer_type === 'Business' ? 'Business' : 'Individual';
       const r = await client.query(
-        `INSERT INTO customers (name, email, phone, address, notes)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [name, email, phone || null, address || '', notes || null]
+        `INSERT INTO customers (name, email, phone, address, notes, customer_type)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [name, email, phone || null, address || '', notes || null, type]
       );
       return res.status(201).json(r.rows[0]);
     }
 
     if (method === 'PUT') {
       if (!id) return res.status(400).json({ error: 'Missing customer ID' });
-      const { name, email, phone, address, notes } = body;
+      const { name, email, phone, address, notes, customer_type } = body;
+      // Only accept the two valid values; anything else keeps the existing type (non-clobbering).
+      const type = (customer_type === 'Individual' || customer_type === 'Business') ? customer_type : null;
       const r = await client.query(
         `UPDATE customers
-           SET name=$1, email=$2, phone=$3, address=$4, notes=$5
-         WHERE id=$6 RETURNING *`,
-        [name, email, phone || null, address || '', notes || null, id]
+           SET name=$1, email=$2, phone=$3, address=$4, notes=$5,
+               customer_type=COALESCE($6, customer_type)
+         WHERE id=$7 RETURNING *`,
+        [name, email, phone || null, address || '', notes || null, type, id]
       );
       if (!r.rowCount) return res.status(404).json({ error: 'Customer not found' });
       return res.status(200).json(r.rows[0]);

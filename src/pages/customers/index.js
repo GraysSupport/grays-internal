@@ -8,6 +8,7 @@ import { useNavigate, Link } from 'react-router-dom';
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
 
@@ -36,9 +37,13 @@ export default function CustomersPage() {
     }
   };
 
-  const filtered = customers.filter((c) =>
-    `${c.name} ${c.email} ${c.phone}`.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = customers.filter((c) => {
+    const matchesSearch = `${c.name} ${c.email} ${c.phone}`
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase());
+    const matchesType = typeFilter === 'All' || c.customer_type === typeFilter;
+    return matchesSearch && matchesType;
+  });
 
   const totalPages = Math.ceil(filtered.length / CUSTOMERS_PER_PAGE) || 1;
   const currentCustomers = filtered.slice(
@@ -81,21 +86,36 @@ export default function CustomersPage() {
           />
         )}
 
-        <input
-          type="text"
-          placeholder="Search by name, email, or phone"
-          className="mb-4 p-2 border rounded w-full"
-          value={searchTerm}
-          onChange={(e) => {
-            setSearchTerm(e.target.value);
-            setCurrentPage(1);
-          }}
-        />
+        <div className="mb-4 flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            placeholder="Search by name, email, or phone"
+            className="p-2 border rounded w-full"
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setCurrentPage(1);
+            }}
+          />
+          <select
+            className="p-2 border rounded w-full sm:w-48"
+            value={typeFilter}
+            onChange={(e) => {
+              setTypeFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="All">All types</option>
+            <option value="Individual">Individual</option>
+            <option value="Business">Business</option>
+          </select>
+        </div>
 
         <table className="w-full border text-sm">
           <thead className="bg-gray-100">
             <tr>
               <th className="border px-4 py-2">Name</th>
+              <th className="border px-4 py-2">Type</th>
               <th className="border px-4 py-2">Email</th>
               <th className="border px-4 py-2">Phone</th>
               <th className="border px-4 py-2">Address</th>
@@ -106,6 +126,19 @@ export default function CustomersPage() {
             {currentCustomers.map((c) => (
               <tr key={c.id}>
                 <td className="border px-4 py-2">{c.name}</td>
+                <td className="border px-4 py-2">
+                  {c.customer_type && (
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                        c.customer_type === 'Business'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      {c.customer_type}
+                    </span>
+                  )}
+                </td>
                 <td className="border px-4 py-2">{c.email}</td>
                 <td className="border px-4 py-2">{c.phone}</td>
                 <td className="border px-4 py-2">{c.address}</td>
