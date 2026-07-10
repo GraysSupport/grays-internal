@@ -72,16 +72,25 @@ check('assignee filter returns only Amelia’s convos', mine.data.length === 2 &
 
 // 8. messages (live-only; never persisted — P1)
 const msgs = await podium.listMessages(REP, 'pod_cnv_00001');
-check('listMessages returns the thread', msgs.data.length === 3);
+check('listMessages returns the thread', msgs.data.length === 4); // F13: Amelia + Ben both reply
 check('messages carry a body for live render only', typeof msgs.data[0].body === 'string');
+// F13 sender attribution: outbound messages carry a senderUser; 00001 has two distinct senders.
+const outboundSenders = new Set(msgs.data.filter((m) => m.direction === 'outbound' && m.senderUser?.uid).map((m) => m.senderUser.uid));
+check('messages: multi-rep thread has ≥2 distinct outbound senders', outboundSenders.size === 2, `got ${outboundSenders.size}`);
 
 // 9. send message
 const sent = await podium.sendMessage(REP, { conversationUid: 'pod_cnv_00001', body: 'On its way!' });
 check('sendMessage returns sent status', sent.status === 'sent' && sent.direction === 'outbound');
 
-// 10. assignment (F1b)
+// 10. assignment (F1b single + F13 multi)
 const assigned = await podium.assignConversation(REP, 'pod_cnv_00003', 'pod_usr_amELia');
 check('assignConversation sets the assignee', assigned.assignedUser?.uid === 'pod_usr_amELia');
+// F13: multi-assignee — assign a set of two, then read the plural assignees list back.
+const multi = await podium.assignConversation(REP, 'pod_cnv_00003', ['pod_usr_amELia', 'pod_usr_bENjin']);
+check('assignConversation accepts an array (multi-assignee)', Array.isArray(multi.assignees) && multi.assignees.length === 2);
+check('assignConversation primary = first of the set', multi.assignedUser?.uid === 'pod_usr_amELia');
+const readBack = await podium.getAssignee(REP, 'pod_cnv_00003');
+check('getAssignee returns the full assignees list', Array.isArray(readBack.assignees) && readBack.assignees.map((a) => a.uid).includes('pod_usr_bENjin'));
 
 // 11. users + contact + review invite
 const users = await podium.getUsers(REP);

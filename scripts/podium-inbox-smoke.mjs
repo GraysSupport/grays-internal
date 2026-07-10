@@ -197,8 +197,12 @@ console.log('\ninbox resource=messages:');
 {
   const res = makeRes();
   await inboxHandler(makeReq({ method: 'GET', query: { resource: 'messages', conversationId: 'pod_cnv_00001' } }), res);
-  check('messages GET: 200 returns the live thread', res.statusCode === 200 && Array.isArray(res.body.data) && res.body.data.length === 3, `status ${res.statusCode}`);
+  check('messages GET: 200 returns the live thread', res.statusCode === 200 && Array.isArray(res.body.data) && res.body.data.length === 4, `status ${res.statusCode}`);
   check('messages GET: mock flag surfaced', res.body.mock === true);
+  // F13 sender attribution: outbound messages carry senderUser; 00001 is a two-rep thread.
+  const outs = res.body.data.filter((m) => m.direction === 'outbound');
+  check('messages GET: outbound messages carry a senderUser', outs.every((m) => m.senderUser?.uid));
+  check('messages GET: two distinct outbound senders (multi-rep)', new Set(outs.map((m) => m.senderUser.uid)).size === 2);
 }
 {
   const res = makeRes();
@@ -368,6 +372,32 @@ console.log('\nF12 resource=messages with attachments:');
   check('messages POST: bad kind sanitised to file', res.body.sent?.attachments?.[0].kind === 'file');
   check('messages POST: long filename clamped to 200 chars', (res.body.sent?.attachments?.[0].filename || '').length === 200);
   check('messages POST: templateId echoed', res.body.sent?.templateId === 'pod_tpl_deliv');
+}
+
+// ---- F13 multi-assignee: mine-filter membership + reps route gates ------------
+console.log('\nF13 multi-assignee:');
+{
+  // 00001 is assigned to Amelia AND Ben → it appears in BOTH reps' "mine" buckets.
+  const amMine = await listConversations('AM', { assigneeUid: 'pod_usr_amELia' });
+  const bnMine = await listConversations('AM', { assigneeUid: 'pod_usr_bENjin' });
+  check('mine: 00001 (shared) appears for Amelia', amMine.data.some((c) => c.uid === 'pod_cnv_00001'));
+  check('mine: 00001 (shared) also appears for Ben', bnMine.data.some((c) => c.uid === 'pod_cnv_00001'));
+  check('mine: Ben also owns his own convos (00002/00005)', bnMine.data.some((c) => c.uid === 'pod_cnv_00002'));
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ method: 'POST', query: { resource: 'reps' } }), res);
+  check('reps: 405 for POST', res.statusCode === 405);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ noAuth: true, query: { resource: 'reps' } }), res);
+  check('reps: 401 without auth', res.statusCode === 401);
+}
+{
+  const res = makeRes();
+  await inboxHandler(makeReq({ roles: ['technician'], query: { resource: 'reps' } }), res);
+  check('reps: 403 for a non-sales role', res.statusCode === 403);
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
