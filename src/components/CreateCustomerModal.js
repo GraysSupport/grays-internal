@@ -16,6 +16,7 @@ export default function CreateCustomerModal({
     phone: '',
     address: '',
     notes: '',
+    customer_type: 'Individual',
   });
 
   // Seed form for edit mode
@@ -27,6 +28,7 @@ export default function CreateCustomerModal({
         phone: initialForm.phone ?? '',
         address: initialForm.address ?? '',
         notes: initialForm.notes ?? '',
+        customer_type: initialForm.customer_type ?? 'Individual',
       });
     }
   }, [initialForm]);
@@ -102,6 +104,18 @@ export default function CreateCustomerModal({
               onChange={(e) => setForm({ ...form, [field]: e.target.value })}
             />
           ))}
+
+          <label className="block text-sm font-medium text-gray-700">
+            Customer type
+            <select
+              className="border p-2 rounded w-full mt-1"
+              value={form.customer_type}
+              onChange={(e) => setForm({ ...form, customer_type: e.target.value })}
+            >
+              <option value="Individual">Individual</option>
+              <option value="Business">Business</option>
+            </select>
+          </label>
 
           <button
             type="submit"

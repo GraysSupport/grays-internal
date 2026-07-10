@@ -82,6 +82,17 @@ export default function EditCustomerPage() {
               onChange={(e) => setForm({ ...form, [field]: e.target.value })}
             />
           ))}
+          <label className="block text-sm font-medium text-gray-700">
+            Customer type
+            <select
+              className="border p-2 rounded w-full mt-1"
+              value={form.customer_type ?? 'Individual'}
+              onChange={(e) => setForm({ ...form, customer_type: e.target.value })}
+            >
+              <option value="Individual">Individual</option>
+              <option value="Business">Business</option>
+            </select>
+          </label>
           <button
             type="submit"
             className="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
