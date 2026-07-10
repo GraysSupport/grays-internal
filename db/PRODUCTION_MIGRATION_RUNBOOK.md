@@ -2,6 +2,16 @@
 
 _Last updated 10 Jul 2026. Read this before running any migration against the Neon **production** branch (`br-floral-unit-ae0t5qvk`)._
 
+> ## ✅ EXECUTED — 10 Jul 2026 (Option A, Nick-directed)
+> Migrations **0001–0005** + the customer-type seed were applied to Production on
+> 10 Jul 2026. Backup branch: **`backup-pre-ops-migration-2026-07-10`**
+> (`br-noisy-mouse-aede2pyu`). Verified: all core-table row counts identical
+> before/after (569 customers / 588 workorders / 1,047 items / 539 deliveries /
+> 90 collections / 5,790 logs); customer types 377 Individual / 191 Business /
+> 1 untagged (created after the reviewed snapshot); `user_roles` backfilled 18/18;
+> `product_lots` empty with the sequence at 1. The section below is kept for
+> context and for any FUTURE migration (next number: **0006**, Podium's).
+
 ## The situation (verified 10 Jul 2026)
 
 There are **two parallel workstreams** adding schema through **one** shared, linearly-numbered migration sequence in `db/migrations/`:
@@ -74,8 +84,8 @@ Use only if Ops must reach Production before Podium. Slightly messier ledger (00
 
 | Migration | Workstream | Dev | Production |
 |---|---|---|---|
-| 0001_podium | Podium | ✅ applied | ❌ not yet |
-| 0002_lead_lost_reason | Podium | ✅ applied (unrecorded) | ❌ not yet |
-| 0003_customer_type | Ops G1 | ✅ applied + recorded | ❌ not yet |
-| 0004_* (G2) | Ops G2 | _pending build_ | ❌ |
-| 0005_* (G3) | Ops G3 | _pending build_ | ❌ |
+| 0001_podium | Podium | ✅ applied | ✅ 10 Jul 2026 |
+| 0002_lead_lost_reason | Podium | ✅ applied (unrecorded) | ✅ 10 Jul 2026 |
+| 0003_customer_type (+seed) | Ops G1 | ✅ applied + recorded | ✅ 10 Jul 2026 (seed: 568 rows) |
+| 0004_delivery_type | Ops G2 | ✅ applied + recorded | ✅ 10 Jul 2026 |
+| 0005_product_lots | Ops G3 | ✅ applied + recorded | ✅ 10 Jul 2026 |
