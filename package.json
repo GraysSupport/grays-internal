@@ -11,6 +11,7 @@
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "dotenv": "^17.2.1",
+    "jsbarcode": "^3.12.3",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.534.0",
     "pg": "^8.16.3",

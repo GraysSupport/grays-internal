@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import BackButton from '../../../components/backbutton';
 import HomeButton from '../../../components/homebutton';
 import CreateProductModal from '../../../components/CreateProductModal';
+import { printLotLabels } from '../../../utils/lotLabels';
 
 const ensureArray = (x) => (Array.isArray(x) ? x : (x && typeof x === 'object' ? [x] : []));
 
@@ -582,6 +583,16 @@ export default function CollectionDetailPage() {
                     : '(generated when this collection is marked Completed)'}
                 </span>
               </div>
+              <div className="flex items-center gap-2">
+              {lots.length > 0 && (
+                <button
+                  onClick={() => printLotLabels(lots.filter((l) => l.status !== 'Void'))}
+                  className="rounded border px-3 py-1 text-sm hover:bg-gray-50"
+                  title="Print a 50×30mm barcode label for every lot"
+                >
+                  🖨 Print all labels
+                </button>
+              )}
               {isSuperadmin && collection?.status === 'Completed' && (
                 <button
                   onClick={async () => {
@@ -606,6 +617,7 @@ export default function CollectionDetailPage() {
                   Sync lots
                 </button>
               )}
+              </div>
             </div>
             {lots.length > 0 ? (
               <div className="overflow-x-auto">
@@ -618,6 +630,7 @@ export default function CollectionDetailPage() {
                       <th className="px-3 py-2">Status</th>
                       <th className="px-3 py-2">Serial</th>
                       <th className="px-3 py-2">Destination</th>
+                      <th className="px-3 py-2">Label</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -637,6 +650,17 @@ export default function CollectionDetailPage() {
                         </td>
                         <td className="px-3 py-2 font-mono">{l.serial_number || '—'}</td>
                         <td className="px-3 py-2">{l.invoice_id ? `Invoice ${l.invoice_id}` : '—'}</td>
+                        <td className="px-3 py-2">
+                          {l.status !== 'Void' && (
+                            <button
+                              onClick={() => printLotLabels([l])}
+                              className="rounded border px-2 py-0.5 text-xs hover:bg-gray-50"
+                              title="Reprint this label"
+                            >
+                              🖨 Label
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
