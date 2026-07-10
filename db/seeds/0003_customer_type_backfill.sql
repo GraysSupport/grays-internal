@@ -7,9 +7,11 @@
 -- (377 Individual / 191 Business).
 --
 -- Idempotent: re-running sets the same values. Rows not listed here are left NULL.
--- Run ONCE per environment AFTER 0003_customer_type.sql:
---   psql "$DATABASE_URL" -f db/migrations/0003_customer_type_backfill.sql
+-- This lives in db/seeds/ (NOT db/migrations/) so `npm run migrate` never auto-runs
+-- a curated data step. Run it EXPLICITLY, ONCE per environment, AFTER 0003_customer_type.sql:
+--   psql "$DATABASE_URL" -f db/seeds/0003_customer_type_backfill.sql
 -- Dev/preview first; production only at release with Nick's sign-off.
+-- See db/PRODUCTION_MIGRATION_RUNBOOK.md for the full cutover order.
 
 UPDATE customers AS c
 SET customer_type = v.t::customer_type_enum
