@@ -597,6 +597,64 @@ export default function ToBeBookedDeliveriesPage() {
     );
   };
 
+  // G2: delivery type + free/cash flags + installation cost (our cost)
+  const TypeCell = ({ row }) => {
+    const busy = savingIds.has(row.delivery_id);
+    const [inst, setInst] = useState(row.installation_cost ?? '');
+    useEffect(() => { setInst(row.installation_cost ?? ''); }, [row]);
+    return (
+      <div className="flex flex-col gap-1" {...stopRowNav}>
+        <select
+          className="w-full rounded border px-2 py-1 text-sm disabled:opacity-60"
+          value={row.delivery_type || 'Standard'}
+          onChange={(e) => {
+            if (e.target.value !== (row.delivery_type || 'Standard')) {
+              saveDelivery(row.delivery_id, { delivery_type: e.target.value });
+            }
+          }}
+          disabled={busy}
+        >
+          {['Standard', 'Standard + Installation', 'Customer Collect'].map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        {row.delivery_type === 'Standard + Installation' && (
+          <CompactMoneyInput
+            widthClass="w-24"
+            value={inst ?? ''}
+            onChange={(e) => setInst(e.target.value)}
+            onBlur={() => {
+              const num = inst === '' ? null : Number(inst);
+              const orig = row.installation_cost == null ? null : Number(row.installation_cost);
+              if (num !== orig) saveDelivery(row.delivery_id, { installation_cost: num });
+            }}
+            disabled={busy}
+          />
+        )}
+        <div className="flex flex-wrap gap-2">
+          <label className="inline-flex items-center gap-1 text-[11px] text-gray-600">
+            <input
+              type="checkbox"
+              checked={!!row.free_delivery}
+              disabled={busy}
+              onChange={(e) => saveDelivery(row.delivery_id, { free_delivery: e.target.checked })}
+            />
+            Free
+          </label>
+          <label className="inline-flex items-center gap-1 text-[11px] text-gray-600">
+            <input
+              type="checkbox"
+              checked={!!row.cash_to_removalist}
+              disabled={busy}
+              onChange={(e) => saveDelivery(row.delivery_id, { cash_to_removalist: e.target.checked })}
+            />
+            Cash direct
+          </label>
+        </div>
+      </div>
+    );
+  };
+
   // Section renderer
   const renderSection = (code) => {
     const rows = (groupByState.get(code) || []).map(r => ({ ...r, delivery_date: asYMD(r.delivery_date) }));
@@ -618,6 +676,7 @@ export default function ToBeBookedDeliveriesPage() {
                 <th className="px-3 py-2 w-16 text-center">Payment</th>
                 <th className="px-3 py-2 w-40">Delivery Date</th>
                 <th className="px-3 py-2 w-72">Notes</th>
+                <th className="px-3 py-2 w-52">Type / Flags</th>
                 <th className="px-3 py-2 w-20">Delivery Charged</th>
                 <th className="px-3 py-2 w-20">Delivery Quoted</th>
                 <th className="px-3 py-2 w-24">Margin</th>
@@ -625,12 +684,13 @@ export default function ToBeBookedDeliveriesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading && <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">Loading…</td></tr>}
-              {!loading && rows.length === 0 && <tr><td colSpan={12} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>}
+              {loading && <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>}
               {rows.map((row, idx) => {
                 const margin =
                   (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
-                  (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted));
+                  (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted)) -
+                  (row.installation_cost == null ? 0 : Number(row.installation_cost));
                 const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
                 return (
                   <tr
@@ -650,6 +710,7 @@ export default function ToBeBookedDeliveriesPage() {
                     <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
                     <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
                     <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
+                    <td className="px-3 py-2 text-sm"><TypeCell row={row} /></td>
                     <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
                     <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
                     <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>

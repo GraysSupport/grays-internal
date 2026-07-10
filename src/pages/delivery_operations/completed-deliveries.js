@@ -479,6 +479,7 @@ export default function CompletedDeliveriesPage() {
                       <th className="px-3 py-2 w-20 text-center">Payment</th>
                       <th className="px-3 py-2 w-36">Delivery Date</th>{/* read-only */}
                       <th className="px-3 py-2 w-72">Notes</th>
+                      <th className="px-3 py-2 w-44">Type / Flags</th>
                       <th className="px-3 py-2 w-24">Delivery Charged</th>
                       <th className="px-3 py-2 w-24">Delivery Quoted</th>
                       <th className="px-3 py-2 w-24">Margin</th>
@@ -488,16 +489,17 @@ export default function CompletedDeliveriesPage() {
 
                   <tbody className="divide-y divide-gray-100">
                     {loading && (
-                      <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                      <tr><td colSpan={14} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
                     )}
                     {!loading && paged.length === 0 && (
-                      <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
+                      <tr><td colSpan={14} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
                     )}
 
                     {paged.map((row, idx) => {
                       const margin =
                         (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
-                        (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted));
+                        (row.delivery_quoted == null ? 0 : Number(row.delivery_quoted)) -
+                        (row.installation_cost == null ? 0 : Number(row.installation_cost));
                       const rowCls = idx % 2 ? 'bg-gray-50' : 'bg-white';
                       return (
                         <tr
@@ -535,6 +537,26 @@ export default function CompletedDeliveriesPage() {
                           <td className="px-3 py-2 text-sm text-center"><PaymentBadge outstanding={row.outstanding_balance} /></td>
                           <td className="px-3 py-2 text-sm">{formatDate(row.delivery_date) || '—'}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>
+
+                          {/* G2: delivery type + flags (read-only here) */}
+                          <td className="px-3 py-2 text-sm">
+                            <div className="flex flex-col gap-1">
+                              <span>{row.delivery_type || '—'}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {row.free_delivery && (
+                                  <span className="inline-block rounded bg-green-100 text-green-800 px-1.5 py-0.5 text-[10px] font-medium">FREE</span>
+                                )}
+                                {row.cash_to_removalist && (
+                                  <span className="inline-block rounded bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[10px] font-medium">CASH</span>
+                                )}
+                                {row.installation_cost != null && (
+                                  <span className="inline-block rounded bg-blue-100 text-blue-800 px-1.5 py-0.5 text-[10px] font-medium">
+                                    install {fmtMoney(Number(row.installation_cost))}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
 
                           {/* ✅ EDITABLE: Delivery Charged */}
                           <td className="px-3 py-2 text-sm" {...stopRowNav}>

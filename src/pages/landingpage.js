@@ -77,6 +77,15 @@ export default function LandingPage() {
             Login
           </button>
         </form>
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => navigate('/scan')}
+            className="text-sm text-blue-600 underline"
+          >
+            🔍 Stock scanner (no login)
+          </button>
+        </div>
       </div>
     </div>
   );

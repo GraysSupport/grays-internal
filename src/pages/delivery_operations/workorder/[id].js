@@ -1,8 +1,117 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
+
+/**
+ * G3: per-unit lot slots for a workorder item.
+ * Lists lots already assigned to this item (releasable, with a per-lot serial)
+ * and, until `quantity` lots are assigned, a SKU-filtered dropdown of In-Stock
+ * lots to assign. Renders nothing for items with no lots (e.g. custom lines).
+ */
+function LotSlots({ item, actorId }) {
+  const [lots, setLots] = useState(null);
+  const wiId = item.workorder_items_id;
+  const sku = item.product_id;
+  const qty = Number(item.quantity) || 0;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/lots?sku=${encodeURIComponent(sku)}&workorder_items_id=${wiId}`);
+      const d = r.ok ? await r.json() : [];
+      setLots(Array.isArray(d) ? d : []);
+    } catch {
+      setLots([]);
+    }
+  }, [sku, wiId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const call = useCallback(async (action, body) => {
+    const r = await fetch(`/api/lots?action=${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': actorId || '' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = d?.error === 'WRONG_MODEL'
+        ? `Wrong model: lot is ${d.lot_sku}, item is ${d.item_sku}`
+        : (d?.error || 'Failed');
+      throw new Error(msg);
+    }
+    return d;
+  }, [actorId]);
+
+  const assigned = (lots || []).filter((l) => l.workorder_items_id === wiId && (l.status === 'Assigned' || l.status === 'Sold'));
+  const available = (lots || []).filter((l) => l.status === 'In Stock');
+
+  const assign = async (lotId) => {
+    try { await call('assign', { lot_id: Number(lotId), workorder_items_id: wiId }); toast.success('Lot assigned'); await load(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const unassign = async (lotId) => {
+    try { await call('unassign', { lot_id: Number(lotId) }); toast.success('Lot released'); await load(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const saveSerial = async (lotId, sn) => {
+    try { await call('serial', { lot_id: Number(lotId), serial_number: sn }); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <div className="text-sm font-medium mb-2">
+        Lot numbers <span className="font-normal text-gray-500">({assigned.length}/{qty} assigned)</span>
+      </div>
+      {assigned.map((l) => (
+        <div key={l.lot_id} className="flex items-center gap-2 mb-1">
+          <span className="font-mono text-sm w-20">{l.lot_number}</span>
+          <input
+            type="text"
+            defaultValue={l.serial_number ?? ''}
+            placeholder="Unit serial (console/screen serial for cardio)"
+            className="border rounded px-2 py-1 text-sm flex-1"
+            onBlur={(e) => saveSerial(l.lot_id, e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); unassign(l.lot_id); }}
+            className="text-red-600 text-sm px-2"
+            title="Release this lot"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {lots === null ? (
+        <div className="text-xs text-gray-400 mt-1">Loading lots…</div>
+      ) : assigned.length < qty ? (
+        available.length ? (
+          <select
+            className="border rounded px-2 py-1 text-sm mt-1"
+            value=""
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => { if (e.target.value) assign(e.target.value); }}
+          >
+            <option value="">+ Assign a lot…</option>
+            {available.map((l) => (
+              <option key={l.lot_id} value={l.lot_id}>{l.lot_number}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="text-xs text-gray-500 mt-1">
+            No lots in stock for this model yet — lots are created when a collection of this SKU is marked Completed.
+          </div>
+        )
+      ) : (
+        <div className="text-xs text-green-700 mt-1">All units have a lot assigned.</div>
+      )}
+    </div>
+  );
+}
 
 /** Utils **/
 function formatMoney(n) {
@@ -177,6 +286,10 @@ export default function WorkorderDetailPage() {
 
   const [notes, setNotes] = useState('');
   const [deliveryCharged, setDeliveryCharged] = useState('');
+  const [deliveryType, setDeliveryType] = useState('Standard');       // G2
+  const [freeDelivery, setFreeDelivery] = useState(false);            // G2
+  const [cashToRemovalist, setCashToRemovalist] = useState(false);    // G2
+  const [installationCost, setInstallationCost] = useState('');       // G2
   const [outstandingBalance, setOutstandingBalance] = useState('');
 
   const [activity, setActivity] = useState([]);
@@ -205,6 +318,11 @@ export default function WorkorderDetailPage() {
   // which existing row is expanded for Serial Number editing
   const [expandedId, setExpandedId] = useState(null);
 
+  // G5 scan-in
+  const [scanning, setScanning] = useState(false);
+  const [scanValue, setScanValue] = useState('');
+  const scanInputRef = useRef(null);
+
   // user object
   const [user, setUser] = useState(null);
   const isSuperadmin = user?.access === 'superadmin';
@@ -219,6 +337,88 @@ export default function WorkorderDetailPage() {
       return '';
     }
   }, []);
+
+  // G5: reload the workorder + items (after a scan-in mutates lots/status server-side)
+  const reloadWO = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: { 'X-User-Id': userId || '' } });
+      const data = await r.json();
+      if (r.ok) {
+        setWo(data);
+        setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
+      }
+    } catch { /* ignore */ }
+  }, [id, userId]);
+
+  // G5: scan a lot sticker to assign it to the matching item + set In Workshop.
+  const handleScanIn = useCallback(async (raw) => {
+    const lotNum = String(raw || '').trim().toUpperCase();
+    if (!lotNum) return;
+    try {
+      const lr = await fetch(`/api/lots?lot_number=${encodeURIComponent(lotNum)}`);
+      if (lr.status === 404) { toast.error(`Lot ${lotNum} not found`); return; }
+      if (!lr.ok) { toast.error('Lookup failed'); return; }
+      const lot = await lr.json();
+
+      const matches = items.filter((it) =>
+        !it.is_custom &&
+        it.status !== 'Canceled' &&
+        String(it.product_id).toUpperCase() === String(lot.product_sku).toUpperCase());
+
+      if (!matches.length) {
+        toast.error(
+          `WRONG ITEM — ${lot.lot_number} is ${lot.product_name || lot.product_sku} (${lot.product_sku}). This workorder has no line for that model.`,
+          { duration: 7000 }
+        );
+        return;
+      }
+
+      // pick a matching item that still has a free lot slot
+      let target = null;
+      for (const it of matches) {
+        const sr = await fetch(`/api/lots?sku=${encodeURIComponent(it.product_id)}&workorder_items_id=${it.workorder_items_id}`);
+        const sl = sr.ok ? await sr.json() : [];
+        if (lot.workorder_items_id === it.workorder_items_id) { toast(`${lot.lot_number} is already on this workorder.`); return; }
+        const assignedCount = sl.filter((l) => l.workorder_items_id === it.workorder_items_id && (l.status === 'Assigned' || l.status === 'Sold')).length;
+        if (assignedCount < Number(it.quantity || 0)) { target = it; break; }
+      }
+      if (!target) { toast.error(`All ${lot.product_sku} units on this workorder already have a lot assigned.`); return; }
+
+      const ar = await fetch('/api/lots?action=assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
+        body: JSON.stringify({ lot_id: lot.lot_id, workorder_items_id: target.workorder_items_id }),
+      });
+      const ad = await ar.json().catch(() => ({}));
+      if (!ar.ok) { toast.error(ad?.error === 'WRONG_MODEL' ? 'Wrong model — lot does not match the item.' : (ad?.error || 'Assign failed')); return; }
+
+      // set the item In Workshop
+      await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': userId || '' },
+        body: JSON.stringify({ items: [{ workorder_items_id: target.workorder_items_id, status: 'In Workshop' }] }),
+      });
+
+      toast.success(`${lot.lot_number} → In Workshop (${lot.product_sku})`, { duration: 5000 });
+
+      // capture the machine's serial (console/screen serial for cardio)
+      const sn = window.prompt(`Serial number for ${lot.lot_number} (console/screen serial for cardio — optional):`, lot.serial_number || '');
+      if (sn !== null && sn.trim()) {
+        await fetch('/api/lots?action=serial', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
+          body: JSON.stringify({ lot_id: lot.lot_id, serial_number: sn.trim() }),
+        });
+      }
+
+      await reloadWO();
+    } catch {
+      toast.error('Scan failed');
+    } finally {
+      setScanValue('');
+      scanInputRef.current?.focus();
+    }
+  }, [items, id, userId, reloadWO]);
 
   useEffect(() => {
     try {
@@ -298,6 +498,10 @@ export default function WorkorderDetailPage() {
         setItems((data.items || []).filter(it => it.status !== 'Canceled'));
         setNotes(data.notes || '');
         setDeliveryCharged(data.delivery_charged ?? '');
+        setDeliveryType(data.delivery_type || 'Standard');
+        setFreeDelivery(!!data.free_delivery);
+        setCashToRemovalist(!!data.cash_to_removalist);
+        setInstallationCost(data.installation_cost ?? '');
         setOutstandingBalance(data.outstanding_balance ?? '');
         setActivity(data.activity || []);
         setImportant(!!data.important_flag);
@@ -426,6 +630,10 @@ export default function WorkorderDetailPage() {
         status: woStatus || wo.status,
         notes,
         delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
+        delivery_type: deliveryType,
+        free_delivery: !!freeDelivery,
+        cash_to_removalist: !!cashToRemovalist,
+        installation_cost: installationCost === '' ? null : Number(installationCost),
         outstanding_balance:
           outstandingBalance === ''
             ? wo.outstanding_balance
@@ -656,7 +864,15 @@ export default function WorkorderDetailPage() {
         <div className="rounded-xl border bg-white">
           <div className="border-b p-4 flex items-center justify-between">
             <div className="text-center font-semibold flex-1">Items</div>
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 flex items-center gap-2">
+              {(isWorkshop || isSuperadmin) && (
+                <button
+                  onClick={() => { setScanning((s) => !s); setTimeout(() => scanInputRef.current?.focus(), 50); }}
+                  className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-600 text-white border-green-600' : 'hover:bg-gray-50'}`}
+                >
+                  {scanning ? '● Scanning…' : '⧉ Scan item in'}
+                </button>
+              )}
               <button
                 onClick={handleAddPendingRow}
                 className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
@@ -665,6 +881,24 @@ export default function WorkorderDetailPage() {
               </button>
             </div>
           </div>
+          {scanning && (
+            <div className="border-b p-3 bg-green-50">
+              <form onSubmit={(e) => { e.preventDefault(); handleScanIn(scanValue); }}>
+                <input
+                  ref={scanInputRef}
+                  autoFocus
+                  value={scanValue}
+                  onChange={(e) => setScanValue(e.target.value)}
+                  placeholder="Scan a lot sticker (or type L##### and Enter)…"
+                  className="w-full border rounded p-2 font-mono"
+                />
+              </form>
+              <div className="text-xs text-gray-600 mt-1">
+                Scans the lot → checks it matches an item on this workorder (wrong model is rejected) →
+                assigns the lot and sets that item to <b>In Workshop</b> → asks for the serial.
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -760,18 +994,24 @@ export default function WorkorderDetailPage() {
                           <tr className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'}`}>
                             <td colSpan={colCount} className="px-6 pb-4">
                               <div className="mt-1 border rounded-md p-3 bg-gray-50">
-                                <div className="text-sm font-medium mb-2">Serial Number</div>
+                                <div className="text-sm font-medium mb-2">Machine base serial / note</div>
                                 <input
                                   type="text"
                                   className="border rounded px-2 py-1 w-full"
                                   value={it.item_sn ?? ''}
-                                  placeholder="Enter serial number"
+                                  placeholder="Machine base serial number, or a note"
                                   onChange={(e) => setItemField(idx, 'item_sn', e.target.value)}
                                   onClick={stop}
                                 />
                                 <div className="text-xs text-gray-600 mt-2">
-                                  Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
+                                  Base serial / note for the machine. Saved with the main “Save” button.
+                                  Per-unit serials (e.g. the console/screen serial on cardio) go on each lot below.
                                 </div>
+                                {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial).
+                                    Shown for real products only — custom/OTHER lines don't carry lots. */}
+                                {!it.is_custom && it.product_id !== 'OTHER' && (
+                                  <LotSlots item={it} actorId={userId} />
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -970,6 +1210,51 @@ export default function WorkorderDetailPage() {
                     onChange={(e) => setDeliveryCharged(e.target.value)}
                     placeholder="Value"
                   />
+                </div>
+
+                {/* Delivery type + flags + installation cost (G2) */}
+                <div className="mt-3">
+                  <div className="text-sm text-gray-600 mb-1">Delivery Type</div>
+                  <select
+                    className="w-full border rounded p-2"
+                    value={deliveryType}
+                    onChange={(e) => setDeliveryType(e.target.value)}
+                  >
+                    <option value="Standard">Standard delivery</option>
+                    <option value="Standard + Installation">Standard + Installation</option>
+                    <option value="Customer Collect">Customer Collect (no delivery fee)</option>
+                  </select>
+                </div>
+                {deliveryType === 'Standard + Installation' && (
+                  <div className="mt-3">
+                    <div className="text-sm text-gray-600 mb-1">Installation cost to us ($)</div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="w-full border rounded p-2"
+                      value={installationCost ?? ''}
+                      onChange={(e) => setInstallationCost(e.target.value)}
+                      placeholder="Value"
+                    />
+                  </div>
+                )}
+                <div className="mt-3 flex flex-col gap-1 text-sm text-gray-700">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={freeDelivery}
+                      onChange={(e) => setFreeDelivery(e.target.checked)}
+                    />
+                    Free delivery (included in sale)
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={cashToRemovalist}
+                      onChange={(e) => setCashToRemovalist(e.target.checked)}
+                    />
+                    Customer pays removalist cash direct
+                  </label>
                 </div>
 
                 <div className="mt-3">
