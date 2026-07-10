@@ -1,8 +1,113 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
+
+/**
+ * G3: per-unit lot slots for a workorder item.
+ * Lists lots already assigned to this item (releasable, with a per-lot serial)
+ * and, until `quantity` lots are assigned, a SKU-filtered dropdown of In-Stock
+ * lots to assign. Renders nothing for items with no lots (e.g. custom lines).
+ */
+function LotSlots({ item, actorId }) {
+  const [lots, setLots] = useState(null);
+  const wiId = item.workorder_items_id;
+  const sku = item.product_id;
+  const qty = Number(item.quantity) || 0;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/lots?sku=${encodeURIComponent(sku)}&workorder_items_id=${wiId}`);
+      const d = r.ok ? await r.json() : [];
+      setLots(Array.isArray(d) ? d : []);
+    } catch {
+      setLots([]);
+    }
+  }, [sku, wiId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const call = useCallback(async (action, body) => {
+    const r = await fetch(`/api/lots?action=${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': actorId || '' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = d?.error === 'WRONG_MODEL'
+        ? `Wrong model: lot is ${d.lot_sku}, item is ${d.item_sku}`
+        : (d?.error || 'Failed');
+      throw new Error(msg);
+    }
+    return d;
+  }, [actorId]);
+
+  if (lots === null) return null;
+  const assigned = lots.filter((l) => l.workorder_items_id === wiId && (l.status === 'Assigned' || l.status === 'Sold'));
+  const available = lots.filter((l) => l.status === 'In Stock');
+  if (!assigned.length && !available.length) return null;
+
+  const assign = async (lotId) => {
+    try { await call('assign', { lot_id: Number(lotId), workorder_items_id: wiId }); toast.success('Lot assigned'); await load(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const unassign = async (lotId) => {
+    try { await call('unassign', { lot_id: Number(lotId) }); toast.success('Lot released'); await load(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const saveSerial = async (lotId, sn) => {
+    try { await call('serial', { lot_id: Number(lotId), serial_number: sn }); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <div className="text-sm font-medium mb-2">
+        Lot numbers <span className="font-normal text-gray-500">({assigned.length}/{qty} assigned)</span>
+      </div>
+      {assigned.map((l) => (
+        <div key={l.lot_id} className="flex items-center gap-2 mb-1">
+          <span className="font-mono text-sm w-20">{l.lot_number}</span>
+          <input
+            type="text"
+            defaultValue={l.serial_number ?? ''}
+            placeholder="Serial number"
+            className="border rounded px-2 py-1 text-sm flex-1"
+            onBlur={(e) => saveSerial(l.lot_id, e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); unassign(l.lot_id); }}
+            className="text-red-600 text-sm px-2"
+            title="Release this lot"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {assigned.length < qty && (
+        available.length ? (
+          <select
+            className="border rounded px-2 py-1 text-sm mt-1"
+            value=""
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => { if (e.target.value) assign(e.target.value); }}
+          >
+            <option value="">+ Assign a lot…</option>
+            {available.map((l) => (
+              <option key={l.lot_id} value={l.lot_id}>{l.lot_number}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="text-xs text-gray-500 mt-1">No lots in stock for this model.</div>
+        )
+      )}
+    </div>
+  );
+}
 
 /** Utils **/
 function formatMoney(n) {
@@ -784,6 +889,8 @@ export default function WorkorderDetailPage() {
                                 <div className="text-xs text-gray-600 mt-2">
                                   Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
                                 </div>
+                                {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial) */}
+                                <LotSlots item={it} actorId={userId} />
                               </div>
                             </td>
                           </tr>
