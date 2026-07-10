@@ -71,7 +71,7 @@ function LotSlots({ item, actorId }) {
           <input
             type="text"
             defaultValue={l.serial_number ?? ''}
-            placeholder="Serial number"
+            placeholder="Unit serial (console/screen serial for cardio)"
             className="border rounded px-2 py-1 text-sm flex-1"
             onBlur={(e) => saveSerial(l.lot_id, e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -881,17 +881,18 @@ export default function WorkorderDetailPage() {
                           <tr className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'}`}>
                             <td colSpan={colCount} className="px-6 pb-4">
                               <div className="mt-1 border rounded-md p-3 bg-gray-50">
-                                <div className="text-sm font-medium mb-2">Serial Number</div>
+                                <div className="text-sm font-medium mb-2">Machine base serial / note</div>
                                 <input
                                   type="text"
                                   className="border rounded px-2 py-1 w-full"
                                   value={it.item_sn ?? ''}
-                                  placeholder="Enter serial number"
+                                  placeholder="Machine base serial number, or a note"
                                   onChange={(e) => setItemField(idx, 'item_sn', e.target.value)}
                                   onClick={stop}
                                 />
                                 <div className="text-xs text-gray-600 mt-2">
-                                  Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
+                                  Base serial / note for the machine. Saved with the main “Save” button.
+                                  Per-unit serials (e.g. the console/screen serial on cardio) go on each lot below.
                                 </div>
                                 {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial).
                                     Shown for real products only — custom/OTHER lines don't carry lots. */}
