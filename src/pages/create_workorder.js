@@ -30,6 +30,10 @@ export default function CreateWorkorderPage() {
     delivery_suburb: '',
     delivery_state: '',
     delivery_charged: '',
+    delivery_type: 'Standard',
+    free_delivery: false,
+    cash_to_removalist: false,
+    installation_cost: '',
     lead_time: '',
     estimated_completion: '',
     notes: '',
@@ -409,6 +413,49 @@ export default function CreateWorkorderPage() {
                   value={form.delivery_charged}
                   onChange={(e) => setForm((f) => ({ ...f, delivery_charged: e.target.value }))}
                 />
+
+                {/* Delivery Type (G2) */}
+                <select
+                  className="border p-2 rounded w-full"
+                  value={form.delivery_type}
+                  onChange={(e) => setForm((f) => ({ ...f, delivery_type: e.target.value }))}
+                >
+                  <option value="Standard">Standard delivery</option>
+                  <option value="Standard + Installation">Standard + Installation</option>
+                  <option value="Customer Collect">Customer Collect (no delivery fee)</option>
+                </select>
+
+                {/* Installation cost (our cost) — only relevant when installing */}
+                {form.delivery_type === 'Standard + Installation' && (
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Installation cost to us ($)"
+                    className="border p-2 rounded w-full"
+                    value={form.installation_cost}
+                    onChange={(e) => setForm((f) => ({ ...f, installation_cost: e.target.value }))}
+                  />
+                )}
+
+                {/* Delivery pricing/payment flags (G2) */}
+                <div className="flex flex-col gap-1 text-sm text-gray-700">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.free_delivery}
+                      onChange={(e) => setForm((f) => ({ ...f, free_delivery: e.target.checked }))}
+                    />
+                    Free delivery (included in sale to win the deal)
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.cash_to_removalist}
+                      onChange={(e) => setForm((f) => ({ ...f, cash_to_removalist: e.target.checked }))}
+                    />
+                    Customer pays removalist cash direct
+                  </label>
+                </div>
 
                 {/* Lead Time */}
                 <select

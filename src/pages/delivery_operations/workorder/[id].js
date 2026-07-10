@@ -177,6 +177,10 @@ export default function WorkorderDetailPage() {
 
   const [notes, setNotes] = useState('');
   const [deliveryCharged, setDeliveryCharged] = useState('');
+  const [deliveryType, setDeliveryType] = useState('Standard');       // G2
+  const [freeDelivery, setFreeDelivery] = useState(false);            // G2
+  const [cashToRemovalist, setCashToRemovalist] = useState(false);    // G2
+  const [installationCost, setInstallationCost] = useState('');       // G2
   const [outstandingBalance, setOutstandingBalance] = useState('');
 
   const [activity, setActivity] = useState([]);
@@ -298,6 +302,10 @@ export default function WorkorderDetailPage() {
         setItems((data.items || []).filter(it => it.status !== 'Canceled'));
         setNotes(data.notes || '');
         setDeliveryCharged(data.delivery_charged ?? '');
+        setDeliveryType(data.delivery_type || 'Standard');
+        setFreeDelivery(!!data.free_delivery);
+        setCashToRemovalist(!!data.cash_to_removalist);
+        setInstallationCost(data.installation_cost ?? '');
         setOutstandingBalance(data.outstanding_balance ?? '');
         setActivity(data.activity || []);
         setImportant(!!data.important_flag);
@@ -426,6 +434,10 @@ export default function WorkorderDetailPage() {
         status: woStatus || wo.status,
         notes,
         delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
+        delivery_type: deliveryType,
+        free_delivery: !!freeDelivery,
+        cash_to_removalist: !!cashToRemovalist,
+        installation_cost: installationCost === '' ? null : Number(installationCost),
         outstanding_balance:
           outstandingBalance === ''
             ? wo.outstanding_balance
@@ -970,6 +982,51 @@ export default function WorkorderDetailPage() {
                     onChange={(e) => setDeliveryCharged(e.target.value)}
                     placeholder="Value"
                   />
+                </div>
+
+                {/* Delivery type + flags + installation cost (G2) */}
+                <div className="mt-3">
+                  <div className="text-sm text-gray-600 mb-1">Delivery Type</div>
+                  <select
+                    className="w-full border rounded p-2"
+                    value={deliveryType}
+                    onChange={(e) => setDeliveryType(e.target.value)}
+                  >
+                    <option value="Standard">Standard delivery</option>
+                    <option value="Standard + Installation">Standard + Installation</option>
+                    <option value="Customer Collect">Customer Collect (no delivery fee)</option>
+                  </select>
+                </div>
+                {deliveryType === 'Standard + Installation' && (
+                  <div className="mt-3">
+                    <div className="text-sm text-gray-600 mb-1">Installation cost to us ($)</div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="w-full border rounded p-2"
+                      value={installationCost ?? ''}
+                      onChange={(e) => setInstallationCost(e.target.value)}
+                      placeholder="Value"
+                    />
+                  </div>
+                )}
+                <div className="mt-3 flex flex-col gap-1 text-sm text-gray-700">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={freeDelivery}
+                      onChange={(e) => setFreeDelivery(e.target.checked)}
+                    />
+                    Free delivery (included in sale)
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={cashToRemovalist}
+                      onChange={(e) => setCashToRemovalist(e.target.checked)}
+                    />
+                    Customer pays removalist cash direct
+                  </label>
                 </div>
 
                 <div className="mt-3">
