@@ -2,8 +2,9 @@
 // sticker (USB scanner types the lot number + Enter) or type it, and see the
 // product, retail price, stock, and lot status. Read-only; the backend
 // lot_number lookup returns no cost or customer data.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 
 function money(n) {
   if (n == null) return '—';
@@ -21,11 +22,12 @@ export default function ScanPage() {
   const [code, setCode] = useState('');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [camera, setCamera] = useState(false);
   const inputRef = useRef(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  const lookup = async (raw) => {
+  const lookup = useCallback(async (raw) => {
     const lot = String(raw || '').trim();
     if (!lot) return;
     setLoading(true);
@@ -41,7 +43,13 @@ export default function ScanPage() {
       setCode('');
       inputRef.current?.focus();
     }
-  };
+  }, []);
+
+  // Camera scan (phone/tablet) — closes the camera and looks the code up.
+  const onCameraResult = useCallback((text) => {
+    setCamera(false);
+    lookup(text);
+  }, [lookup]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
@@ -51,18 +59,32 @@ export default function ScanPage() {
           <Link to="/" className="text-sm text-blue-600 underline">Staff login</Link>
         </div>
         <p className="text-sm text-gray-600 mb-3">
-          Scan a lot sticker, or type its lot number (e.g. <span className="font-mono">L00042</span>) and press Enter.
+          Scan a lot sticker with a USB scanner or the camera, or type its lot number
+          (e.g. <span className="font-mono">L00042</span>) and press Enter.
         </p>
-        <form onSubmit={(e) => { e.preventDefault(); lookup(code); }}>
+        <form onSubmit={(e) => { e.preventDefault(); lookup(code); }} className="flex gap-2">
           <input
             ref={inputRef}
             autoFocus
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Scan or type lot number…"
-            className="w-full border rounded-lg p-4 text-lg font-mono"
+            className="flex-1 border rounded-lg p-4 text-lg font-mono min-w-0"
           />
+          <button
+            type="button"
+            onClick={() => setCamera(true)}
+            className="border rounded-lg px-4 text-2xl hover:bg-gray-100"
+            title="Scan with the camera"
+            aria-label="Scan with the camera"
+          >
+            📷
+          </button>
         </form>
+
+        {camera && (
+          <CameraBarcodeScanner onResult={onCameraResult} onClose={() => setCamera(false)} />
+        )}
 
         {loading && <div className="mt-6 text-gray-500">Looking up…</div>}
 
