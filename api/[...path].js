@@ -12,6 +12,7 @@ import deliveryHandler from '../lib/handlers/delivery.js';
 import collectionsHandler from '../lib/handlers/collections.js';
 import winningsHandler from '../lib/handlers/winnings.js';
 import leadsHandler from '../lib/handlers/leads.js';
+import lotsHandler from '../lib/handlers/lots.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -95,6 +96,9 @@ export default async function handler(req, res) {
         return collectionsHandler(req, res);
       case 'winnings':
         return winningsHandler(req, res);
+      case 'lots':
+      case 'lot':
+        return lotsHandler(req, res);
 
       default:
         return res.status(404).json({ error: 'Not found' });
