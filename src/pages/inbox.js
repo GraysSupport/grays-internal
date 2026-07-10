@@ -138,6 +138,12 @@ export default function Inbox() {
   const [mock, setMock] = useState(false);
   const [loadingConvos, setLoadingConvos] = useState(true);
 
+  // F14 — conversation search (by customer name / phone / email, via the F4 bridge).
+  // `searchInput` is the live box; `search` is the debounced value used for the fetch.
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [searchTruncated, setSearchTruncated] = useState(false);
+
   const [selectedId, setSelectedId] = useState(null);
   const [selectedConv, setSelectedConv] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -207,8 +213,9 @@ export default function Inbox() {
   const loadConversations = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoadingConvos(true);
     try {
+      const q = search ? `&search=${encodeURIComponent(search)}` : '';
       const res = await fetch(
-        `/api/podium/inbox?resource=conversations&bucket=${bucket}&status=${status}&limit=30`,
+        `/api/podium/inbox?resource=conversations&bucket=${bucket}&status=${status}${q}&limit=30`,
         { headers: authHeaders() },
       );
       if (res.status === 401) { navigate('/'); return; }
@@ -220,6 +227,7 @@ export default function Inbox() {
       }
       setConversations(Array.isArray(data?.data) ? data.data : []);
       setNotLinked(!!data?.notLinked);
+      setSearchTruncated(!!data?.searchTruncated);
       setMock(!!data?.mock);
       sinceRef.current = new Date().toISOString();
     } catch {
@@ -227,7 +235,7 @@ export default function Inbox() {
     } finally {
       if (!silent) setLoadingConvos(false);
     }
-  }, [bucket, status, navigate]);
+  }, [bucket, status, search, navigate]);
 
   const loadThread = useCallback(async (convId, { silent = false } = {}) => {
     if (!convId) return;
@@ -314,7 +322,14 @@ export default function Inbox() {
     loadLeadHistory(panel?.lead?.lead_id || null);
   }, [panel, loadLeadHistory]);
 
-  // Load (and reload on scope change) once authorized.
+  // F14 — debounce the search box (300 ms) before it drives the list fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Load (and reload on scope/search change) once authorized. loadConversations depends
+  // on bucket/status/search, so this re-runs whenever any of them changes.
   useEffect(() => {
     if (authorized) loadConversations();
   }, [authorized, loadConversations]);
@@ -844,6 +859,34 @@ export default function Inbox() {
           <div className="bg-white rounded-lg shadow-md flex flex-col md:flex-row overflow-hidden" style={{ height: 'calc(100vh - 8rem)' }}>
             {/* Conversation list */}
             <aside className={`md:w-72 border-b md:border-b-0 md:border-r border-gray-200 flex flex-col ${selectedId ? 'hidden md:flex' : 'flex'}`}>
+              {/* F14 — search the list by customer name / phone / email (F4 bridge). */}
+              <div className="p-2 border-b border-gray-200">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search name, phone or email…"
+                    aria-label="Search conversations"
+                    className="w-full text-sm border border-gray-300 rounded-md pl-3 pr-8 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  {searchInput && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchInput('')}
+                      aria-label="Clear search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {search && searchTruncated && (
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    Showing matches from the first 100 conversations — narrow your search if needed.
+                  </p>
+                )}
+              </div>
               <div className="flex-1 overflow-y-auto">
                 {loadingConvos && (
                   <div className="p-4 text-sm text-gray-500">Loading conversations…</div>
@@ -871,7 +914,9 @@ export default function Inbox() {
 
                 {!loadingConvos && !notLinked && conversations.length === 0 && (
                   <div className="p-4 text-sm text-gray-500">
-                    No {status} conversations{bucket === 'mine' ? ' assigned to you' : bucket === 'unassigned' ? ' unassigned' : ''}.
+                    {search
+                      ? <>No conversations match “{search}”.</>
+                      : <>No {status} conversations{bucket === 'mine' ? ' assigned to you' : bucket === 'unassigned' ? ' unassigned' : ''}.</>}
                   </div>
                 )}
 
@@ -886,7 +931,7 @@ export default function Inbox() {
                       className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm text-gray-900 truncate">{convTitle(c)}</span>
+                        <span className="font-medium text-sm text-gray-900 truncate">{c.identity?.displayName || convTitle(c)}</span>
                         <ChannelBadge type={c?.channel?.type} />
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-1">
