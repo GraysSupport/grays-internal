@@ -44,10 +44,8 @@ function LotSlots({ item, actorId }) {
     return d;
   }, [actorId]);
 
-  if (lots === null) return null;
-  const assigned = lots.filter((l) => l.workorder_items_id === wiId && (l.status === 'Assigned' || l.status === 'Sold'));
-  const available = lots.filter((l) => l.status === 'In Stock');
-  if (!assigned.length && !available.length) return null;
+  const assigned = (lots || []).filter((l) => l.workorder_items_id === wiId && (l.status === 'Assigned' || l.status === 'Sold'));
+  const available = (lots || []).filter((l) => l.status === 'In Stock');
 
   const assign = async (lotId) => {
     try { await call('assign', { lot_id: Number(lotId), workorder_items_id: wiId }); toast.success('Lot assigned'); await load(); }
@@ -88,7 +86,9 @@ function LotSlots({ item, actorId }) {
           </button>
         </div>
       ))}
-      {assigned.length < qty && (
+      {lots === null ? (
+        <div className="text-xs text-gray-400 mt-1">Loading lots…</div>
+      ) : assigned.length < qty ? (
         available.length ? (
           <select
             className="border rounded px-2 py-1 text-sm mt-1"
@@ -102,8 +102,12 @@ function LotSlots({ item, actorId }) {
             ))}
           </select>
         ) : (
-          <div className="text-xs text-gray-500 mt-1">No lots in stock for this model.</div>
+          <div className="text-xs text-gray-500 mt-1">
+            No lots in stock for this model yet — lots are created when a collection of this SKU is marked Completed.
+          </div>
         )
+      ) : (
+        <div className="text-xs text-green-700 mt-1">All units have a lot assigned.</div>
       )}
     </div>
   );
@@ -889,8 +893,11 @@ export default function WorkorderDetailPage() {
                                 <div className="text-xs text-gray-600 mt-2">
                                   Tip: Click the row to collapse/expand. Changes are saved with the main “Save” button.
                                 </div>
-                                {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial) */}
-                                <LotSlots item={it} actorId={userId} />
+                                {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial).
+                                    Shown for real products only — custom/OTHER lines don't carry lots. */}
+                                {!it.is_custom && it.product_id !== 'OTHER' && (
+                                  <LotSlots item={it} actorId={userId} />
+                                )}
                               </div>
                             </td>
                           </tr>
