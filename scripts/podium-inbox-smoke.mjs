@@ -24,6 +24,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
 const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote } = await import('../lib/podium.js');
+const { buildConversationIdentity, identityMatchesSearch } = await import('../lib/podiumContact.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
 let passed = 0;
@@ -398,6 +399,53 @@ console.log('\nF13 multi-assignee:');
   const res = makeRes();
   await inboxHandler(makeReq({ roles: ['technician'], query: { resource: 'reps' } }), res);
   check('reps: 403 for a non-sales role', res.statusCode === 403);
+}
+
+// ---- F14 conversation search: identity resolution + free-text matcher --------
+console.log('\nF14 conversation search:');
+{
+  // Pure matcher — name / email / phone (partial + full cross-format) / handle / empty.
+  const maria = {
+    contactName: 'Maria Papadopoulos', customerName: null, email: 'maria@example.com',
+    phone: '+61400111222', displayName: 'Maria Papadopoulos', matchedBy: 'none',
+  };
+  const convPhone = { channel: { type: 'phone', identifier: '+61400111222' } };
+  const convIg = { channel: { type: 'instagram', identifier: 'ig:graysfitness' } };
+  check('search: empty/whitespace term matches everything', identityMatchesSearch(maria, convPhone, '   ') === true);
+  check('search: name substring (case-insensitive)', identityMatchesSearch(maria, convPhone, 'MARia') === true);
+  check('search: surname substring', identityMatchesSearch(maria, convPhone, 'papado') === true);
+  check('search: email substring', identityMatchesSearch(maria, convPhone, 'maria@example') === true);
+  check('search: phone prefix in stored form', identityMatchesSearch(maria, convPhone, '400111') === true);
+  check('search: full phone typed local 04xx matches +61 stored (last-8)', identityMatchesSearch(maria, convPhone, '0400 111 222') === true);
+  check('search: non-matching text rejected', identityMatchesSearch(maria, convPhone, 'zzzznope') === false);
+  check('search: wrong number rejected', identityMatchesSearch(maria, convPhone, '999888') === false);
+  check('search: social handle matched via channel identifier', identityMatchesSearch({ displayName: null }, convIg, 'graysfitness') === true);
+}
+{
+  // buildConversationIdentity resolves the Podium contact (mock); no portal customer match.
+  const convs = (await listConversations('AM', { limit: 100 })).data;
+  const c1 = convs.find((c) => c.uid === 'pod_cnv_00001');
+  const client = makeClient(); // every customer query returns 0 rows → matchedBy 'none'
+  const id = await buildConversationIdentity(client, 'AM', c1);
+  check('identity: contact name resolved from Podium (mock)', id.contactName === 'Maria Papadopoulos');
+  check('identity: displayName falls back to the contact name', id.displayName === 'Maria Papadopoulos');
+  check('identity: no portal match → matchedBy none', id.matchedBy === 'none');
+  check('identity: resolved contact phone drives phone search', identityMatchesSearch(id, c1, '400111') === true);
+}
+{
+  // buildConversationIdentity with a portal customer matched on podium_contact_id.
+  const convs = (await listConversations('AM', { limit: 100 })).data;
+  const c1 = convs.find((c) => c.uid === 'pod_cnv_00001');
+  const client = makeClient([
+    {
+      match: (sql) => /podium_contact_id = \$1/.test(sql),
+      result: { rowCount: 1, rows: [{ id: 42, name: 'Maria P (portal)', email: 'maria@example.com', phone: '0400111222' }] },
+    },
+  ]);
+  const id = await buildConversationIdentity(client, 'AM', c1);
+  check('identity: portal customer matched on podium_contact_id', id.matchedBy === 'podium_contact_id');
+  check('identity: customerName preferred for the display name', id.displayName === 'Maria P (portal)' && id.customerName === 'Maria P (portal)');
+  check('identity: search matches the matched portal customer name', identityMatchesSearch(id, c1, 'portal') === true);
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
