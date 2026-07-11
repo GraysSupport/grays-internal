@@ -160,6 +160,14 @@ export default function Inbox() {
   const fileInputRef = useRef(null);
   const attachmentsRef = useRef([]); // latest attachments, for object-URL cleanup on unmount
 
+  // F15 — product price/stock widget. The list is fetched ONCE when the Inbox opens
+  // and cached client-side (Nick's feedback), then filtered in the browser. Retail
+  // price + stock only — no x-user-access header is sent, so avg_cost is never returned.
+  const [products, setProducts] = useState([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+
   // F4 incr 2 — customer side panel state.
   const [panel, setPanel] = useState(null);
   const [panelLoading, setPanelLoading] = useState(false);
@@ -350,6 +358,19 @@ export default function Inbox() {
       .then((r) => (r.ok ? parseMaybeJson(r) : null))
       .then((d) => { if (Array.isArray(d?.reps)) setReps(d.reps); })
       .catch(() => { /* reps list is best-effort */ });
+  }, [authorized]);
+
+  // F15 — fetch the product price/stock list ONCE and cache it (Nick's feedback:
+  // "fetch once when the Inbox opens"). Reuses the existing GET /api/products case
+  // (a bare array of {sku, brand, name, stock, price}); no x-user-access header is
+  // sent, so a sales rep never receives avg_cost. Filtering is done in the browser.
+  useEffect(() => {
+    if (!authorized) return;
+    fetch('/api/products', { headers: authHeaders() })
+      .then((r) => (r.ok ? parseMaybeJson(r) : null))
+      .then((d) => { if (Array.isArray(d)) setProducts(d); })
+      .catch(() => { /* product list is best-effort */ })
+      .finally(() => setProductsLoaded(true));
   }, [authorized]);
 
   // F12 — keep the latest attachments in a ref and revoke their object URLs on unmount
@@ -853,6 +874,15 @@ export default function Inbox() {
                   </button>
                 ))}
               </div>
+              {/* F15 — in-inbox product price/stock lookup (list cached client-side). */}
+              <button
+                type="button"
+                onClick={() => setShowProducts(true)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50"
+                title="Look up product price and stock"
+              >
+                <span aria-hidden="true">🔍</span> Price &amp; stock
+              </button>
             </div>
           </div>
 
@@ -1208,6 +1238,17 @@ export default function Inbox() {
           detail={woDetail}
           loading={woLoading}
           onClose={closeWorkorder}
+        />
+      )}
+
+      {/* F15 — product price/stock lookup modal (uses the client-cached product list). */}
+      {showProducts && (
+        <ProductLookupModal
+          products={products}
+          loaded={productsLoaded}
+          search={productSearch}
+          setSearch={setProductSearch}
+          onClose={() => setShowProducts(false)}
         />
       )}
     </>
@@ -1626,6 +1667,100 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Product price/stock lookup (F15) ------------------------------------------
+// A read-only in-inbox widget so a rep can quote price + stock without leaving the
+// chat. The product list is fetched once (client-cached) by the Inbox and passed in;
+// this modal only filters it in the browser. Retail price + stock only — no cost.
+const PRODUCT_RESULT_CAP = 60; // render at most this many matches (the table has ~1,000 rows)
+
+function ProductLookupModal({ products, loaded, search, setSearch, onClose }) {
+  const term = String(search || '').trim().toLowerCase();
+  const all = Array.isArray(products) ? products : [];
+  const matches = term
+    ? all.filter((p) => {
+        const hay = `${p.name || ''} ${p.brand || ''} ${p.sku || ''}`.toLowerCase();
+        return hay.includes(term);
+      })
+    : all;
+  const shown = matches.slice(0, PRODUCT_RESULT_CAP);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <h2 className="text-lg font-bold">Product price &amp; stock</h2>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
+        </header>
+
+        <div className="px-5 pt-4">
+          <input
+            type="text"
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by product, brand or SKU…"
+            aria-label="Search products"
+            className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {!loaded && <div className="text-sm text-gray-500">Loading products…</div>}
+
+          {loaded && all.length === 0 && (
+            <div className="text-sm text-gray-400">Product list unavailable.</div>
+          )}
+
+          {loaded && all.length > 0 && matches.length === 0 && (
+            <div className="text-sm text-gray-500">No products match “{search.trim()}”.</div>
+          )}
+
+          {loaded && shown.length > 0 && (
+            <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
+              {shown.map((p) => {
+                const inStock = Number(p.stock) > 0;
+                return (
+                  <li key={p.sku} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 truncate">{p.name || p.sku}</div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {[p.brand, p.sku].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-semibold text-gray-900">{money(p.price) ?? '—'}</div>
+                      <span
+                        className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          inStock ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'
+                        }`}
+                      >
+                        {inStock ? `In stock: ${p.stock}` : 'Out of stock'}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {loaded && matches.length > shown.length && (
+            <p className="mt-2 text-[11px] text-gray-500">
+              Showing the first {shown.length} of {matches.length} matches — refine your search to narrow it.
+            </p>
+          )}
+        </div>
+
+        <footer className="px-5 py-2 border-t border-gray-200 text-[11px] text-gray-400">
+          Retail price and current stock. Loaded once when the Inbox opened.
+        </footer>
       </div>
     </div>
   );
