@@ -1679,12 +1679,16 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
 const PRODUCT_RESULT_CAP = 60; // render at most this many matches (the table has ~1,000 rows)
 
 function ProductLookupModal({ products, loaded, search, setSearch, onClose }) {
-  const term = String(search || '').trim().toLowerCase();
+  // Token-based, order-independent match — mirrors the product page's search
+  // (src/pages/products/index.js): split on spaces, every keyword must appear
+  // somewhere in "sku name brand" so "Life Treadmill SE3 HD" matches
+  // "Life Fitness 95T Treadmill with Discover SE3 HD console".
+  const keywords = String(search || '').toLowerCase().split(' ').filter(Boolean);
   const all = Array.isArray(products) ? products : [];
-  const matches = term
+  const matches = keywords.length
     ? all.filter((p) => {
-        const hay = `${p.name || ''} ${p.brand || ''} ${p.sku || ''}`.toLowerCase();
-        return hay.includes(term);
+        const hay = `${p.sku || ''} ${p.name || ''} ${p.brand || ''}`.toLowerCase();
+        return keywords.every((kw) => hay.includes(kw));
       })
     : all;
   const shown = matches.slice(0, PRODUCT_RESULT_CAP);
