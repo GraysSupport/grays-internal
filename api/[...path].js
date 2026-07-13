@@ -117,14 +117,20 @@ export default async function handler(req, res) {
 async function handleCustomers(req, res, rest = []) {
   const [subId, subResource] = Array.isArray(rest) ? rest : [rest];
 
-  // F6 — Customer-360 unified journey: GET /api/customers/:id/journey.
+  // F6 — Customer-360 unified journey. Reachable as BOTH the REST path
+  // (GET /api/customers/:id/journey) and the query form the rest of the app uses
+  // (GET /api/customers?id=:id&resource=journey) — the query form is the proven-safe
+  // convention across this app (edit page, workorder modal, inbox all use ?id=), so the
+  // front-end calls that and we don't depend on 3-segment path routing on Vercel.
   // Merges lead_stage_log ∪ workorder_logs (+ delivery records) into one timeline.
   // Read-only; sits in the general customers area (same access level as the other
   // customer reads — F9 will formalise nav gating). No message bodies touched (P1 n/a).
-  if (subResource === 'journey') {
+  const wantsJourney = subResource === 'journey' || String(req.query?.resource || '') === 'journey';
+  if (wantsJourney) {
     if (req.method !== 'GET') return methodNotAllowed(res, ['GET']);
-    if (!subId) return res.status(400).json({ error: 'Missing customer ID' });
-    const result = await buildJourney(subId);
+    const cid = subId ?? req.query?.id;
+    if (!cid) return res.status(400).json({ error: 'Missing customer ID' });
+    const result = await buildJourney(cid);
     if (!result) return res.status(404).json({ error: 'Customer not found' });
     return res.status(200).json(result);
   }

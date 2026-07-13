@@ -12,6 +12,18 @@ import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 
+// Parse a fetch Response as JSON, but fail with a readable message if the server returned
+// HTML (e.g. a platform 404/500 page) instead of JSON — so the page never crashes with a
+// raw "Unexpected token" JSON error.
+async function parseJson(res) {
+  const text = await res.text();
+  try {
+    return { ok: res.ok, status: res.status, data: JSON.parse(text) };
+  } catch {
+    return { ok: false, status: res.status, data: { error: `Server returned a non-JSON response (HTTP ${res.status}).` } };
+  }
+}
+
 // Timeline colour + label per event category.
 const CATEGORY_STYLE = {
   lead: { dot: 'bg-amber-500', chip: 'bg-amber-100 text-amber-800', label: 'Lead' },
@@ -51,17 +63,18 @@ export default function CustomerDetailPage() {
     (async () => {
       setLoading(true);
       try {
+        // Query form (?id=) — the proven convention used across this app.
         const [cRes, jRes] = await Promise.all([
-          fetch(`/api/customers/${id}`),
-          fetch(`/api/customers/${id}/journey`),
+          fetch(`/api/customers?id=${encodeURIComponent(id)}`),
+          fetch(`/api/customers?id=${encodeURIComponent(id)}&resource=journey`),
         ]);
-        const cData = await cRes.json();
-        if (!cRes.ok) throw new Error(cData.error || 'Failed to load customer');
-        const jData = await jRes.json();
-        if (!jRes.ok) throw new Error(jData.error || 'Failed to load journey');
+        const c = await parseJson(cRes);
+        if (!c.ok) throw new Error(c.data.error || 'Failed to load customer');
+        const j = await parseJson(jRes);
+        if (!j.ok) throw new Error(j.data.error || 'Failed to load journey');
         if (!alive) return;
-        setCustomer(jData.customer || cData);
-        setEvents(Array.isArray(jData.events) ? jData.events : []);
+        setCustomer(j.data.customer || c.data);
+        setEvents(Array.isArray(j.data.events) ? j.data.events : []);
       } catch (err) {
         if (alive) toast.error(err.message);
       } finally {
@@ -84,9 +97,9 @@ export default function CustomerDetailPage() {
         `/api/podium/inbox?resource=conversations&bucket=all&status=all&search=${encodeURIComponent(term)}`,
         { headers: authHeaders() }
       );
-      const data = await res.json();
-      if (res.status === 403) { setConvState({ loaded: true, loading: false, rows: [], notLinked: false, mock: false, denied: true, error: null }); return; }
-      if (!res.ok) throw new Error(data.error || 'Failed to load conversations');
+      const { ok, status, data } = await parseJson(res);
+      if (status === 403) { setConvState({ loaded: true, loading: false, rows: [], notLinked: false, mock: false, denied: true, error: null }); return; }
+      if (!ok) throw new Error(data.error || 'Failed to load conversations');
       setConvState({
         loaded: true, loading: false,
         rows: Array.isArray(data.data) ? data.data : [],
