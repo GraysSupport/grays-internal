@@ -6,6 +6,7 @@ import BackButton from '../../../components/backbutton';
 import HomeButton from '../../../components/homebutton';
 import CreateProductModal from '../../../components/CreateProductModal';
 import { printLotLabels } from '../../../utils/lotLabels';
+import { downloadInwardRegisterXlsx } from '../../../utils/inwardRegisterXlsx';
 
 const ensureArray = (x) => (Array.isArray(x) ? x : (x && typeof x === 'object' ? [x] : []));
 
@@ -117,75 +118,57 @@ export default function CollectionDetailPage() {
     }
   }
 
-  // ----------------- CSV Export -----------------
-  const escapeCsv = (val) => {
-    if (val === null || val === undefined) return '""';
-    const s = String(val).replace(/"/g, '""');
-    return `"${s}"`;
-  };
-
-  const exportCollectionToCsv = () => {
+  // ----------------- Excel (.xlsx) Export -----------------
+  // Inward Equipment Register, formatted to the "Inward goods green docket"
+  // template. Allocated (non-void) lot numbers for each item are folded into
+  // the "Lot Number - Notes" column, matched to items by SKU.
+  const exportCollectionToExcel = () => {
     if (!collection) {
       toast.error('Collection not loaded.');
       return;
     }
-
     if (!items.length) {
       toast.error('No items to export.');
       return;
     }
 
-    const lines = [];
+    // Group this collection's live lot numbers by SKU (skip Void).
+    const lotsBySku = new Map();
+    for (const l of lots) {
+      if (!l || l.status === 'Void') continue;
+      const sku = String(l.product_sku || '').toUpperCase();
+      if (!sku || !l.lot_number) continue;
+      if (!lotsBySku.has(sku)) lotsBySku.set(sku, []);
+      lotsBySku.get(sku).push(String(l.lot_number));
+    }
+    for (const arr of lotsBySku.values()) arr.sort();
 
-    const collectionDateRaw = collection.collection_date
-      ? new Date(collection.collection_date).toISOString().slice(0, 10)
-      : '';
-
-    const collectionName = collection.name || '';
-    const carrier = collection.removalist_name || '';
-
-    // Match the screenshot layout as closely as possible in CSV
-    lines.push(['INWARD EQUIPMENT REGISTER', '', ''].map(escapeCsv).join(','));
-    lines.push('');
-    lines.push([escapeCsv('Date Received:'), escapeCsv(collectionDateRaw), ''].join(','));
-    lines.push([escapeCsv(`Gym Equipment was Collected from:`), escapeCsv(collectionName), ''].join(','));
-    lines.push('');
-    lines.push(['Qty', 'Item', 'Notes'].map(escapeCsv).join(','));
-
-    for (const it of items) {
-      const qty = Number(it.quantity || 0);
-      const itemName = isOther(it.product_sku)
+    const rows = items.map((it) => {
+      const other = isOther(it.product_sku);
+      const itemName = other
         ? (it.custom_description || 'Other (custom)')
         : (it.name || productBySku.get(String(it.product_sku || '').toUpperCase())?.name || it.product_sku || '');
+      const lotNums = other ? [] : (lotsBySku.get(String(it.product_sku || '').toUpperCase()) || []);
+      const lotText = lotNums.join(', ');
+      const notes = other
+        ? (lotText ? `OTHER item \u2014 ${lotText}` : 'OTHER item')
+        : lotText;
+      return { qty: Number(it.quantity || 0), item: itemName, notes };
+    });
 
-      const notes = isOther(it.product_sku)
-        ? 'OTHER item'
-        : '';
+    const d = collection.collection_date ? new Date(collection.collection_date) : null;
+    const dateStr = d && !Number.isNaN(d.getTime())
+      ? `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
+      : '';
 
-      lines.push([
-        escapeCsv(qty),
-        escapeCsv(itemName),
-        escapeCsv(notes),
-      ].join(','));
-    }
+    downloadInwardRegisterXlsx({
+      collectedFrom: collection.name || '',
+      dateStr,
+      rows,
+      fileName: `inward-equipment-register_${collection.id || 'export'}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    });
 
-    lines.push('');
-    lines.push([escapeCsv('Carrier:'), escapeCsv(carrier), ''].join(','));
-
-    const csv = lines.join('\r\n');
-    const bom = '\uFEFF'; // Helps Excel open UTF-8 CSV properly
-    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `collection_${collection.id || 'export'}_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    toast.success('Collection CSV downloaded.');
+    toast.success('Inward register (Excel) downloaded.');
   };
 
   // ----------------- Product Dropdown -----------------
@@ -676,11 +659,11 @@ export default function CollectionDetailPage() {
           {/* Buttons */}
           <div className="flex justify-end gap-3">
             <button
-              onClick={exportCollectionToCsv}
+              onClick={exportCollectionToExcel}
               disabled={!items.length}
               className="bg-gray-200 text-gray-900 px-6 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
             >
-              Export CSV
+              Export Excel
             </button>
 
             {/* Superadmin Apply */}
