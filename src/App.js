@@ -14,6 +14,7 @@ import EditProduct from './pages/products/edit';
 
 import CustomersPage from './pages/customers';
 import EditCustomerPage from './pages/customers/edit';
+import CustomerDetailPage from './pages/customers/[id]';
 
 import WaitlistPage from './pages/waitlist';
 import CreateWaitlistPage from './pages/waitlist/create';
@@ -113,6 +114,7 @@ function App() {
         <Route path="/products/:sku/edit" element={<EditProduct />} />
 
         <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route path="/customers/:id/edit" element={<EditCustomerPage />} />
 
         <Route path="/waitlist" element={<WaitlistPage />} />

@@ -125,7 +125,11 @@ export default function CustomersPage() {
           <tbody>
             {currentCustomers.map((c) => (
               <tr key={c.id}>
-                <td className="border px-4 py-2">{c.name}</td>
+                <td className="border px-4 py-2">
+                  <Link to={`/customers/${c.id}`} className="text-blue-600 hover:underline">
+                    {c.name}
+                  </Link>
+                </td>
                 <td className="border px-4 py-2">
                   {c.customer_type && (
                     <span
