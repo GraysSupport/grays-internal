@@ -15,6 +15,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
 const jwt = (await import('jsonwebtoken')).default;
 const leadsHandler = (await import('../lib/handlers/leads.js')).default;
 const { STAGES, LOST_REASONS } = await import('../lib/handlers/leads.js');
+const { isMyobEnabled, createInvoice, MyobDisabledError } = await import('../lib/myob.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -211,6 +212,74 @@ console.log('\nPUT /api/leads/:id/stage:');
   const client = makeClient([{ match: /SELECT stage FROM leads/i, result: { rowCount: 0, rows: [] } }]);
   const res = makeRes();
   await leadsHandler(makeReq({ method: 'PUT', body: { to_stage: 'Contacted' } }), res, ['404', 'stage'], depsFor(client));
+  check('404 when the lead does not exist', res.statusCode === 404);
+}
+
+// ---- MYOB seam (lib/myob.js) --------------------------------------------------
+console.log('\nMYOB seam (FEATURE_MYOB stub):');
+{
+  delete process.env.FEATURE_MYOB;
+  check('isMyobEnabled() false by default (flag unset)', isMyobEnabled() === false);
+  process.env.FEATURE_MYOB = 'false';
+  check('isMyobEnabled() false when FEATURE_MYOB=false', isMyobEnabled() === false);
+  let threw = null;
+  try { await createInvoice({ orderTotal: 100 }); } catch (e) { threw = e; }
+  check('createInvoice throws MYOB_DISABLED while off', threw instanceof MyobDisabledError && threw.code === 'MYOB_DISABLED');
+  process.env.FEATURE_MYOB = 'true';
+  check('isMyobEnabled() true when FEATURE_MYOB=true', isMyobEnabled() === true);
+  delete process.env.FEATURE_MYOB; // leave the env as found for the rest of the smoke
+}
+
+// ---- POST /api/leads/:id/quote (F7a) ------------------------------------------
+console.log('\nPOST /api/leads/:id/quote:');
+{
+  // No invoice number + MYOB off → 400 INVOICE_REQUIRED (before any DB work).
+  const client = makeClient();
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: {} }), res, ['5', 'quote'], depsFor(client));
+  check('400 INVOICE_REQUIRED when no invoice and MYOB is off', res.statusCode === 400 && res.body.code === 'INVOICE_REQUIRED');
+  check('no DB touched when the invoice is missing', client.calls.length === 0);
+}
+{
+  // Happy path: Contacted → Quoted; UPDATE records the invoice + total; logs Contacted→Quoted.
+  const client = makeClient([
+    { match: /SELECT stage FROM leads/i, result: { rowCount: 1, rows: [{ stage: 'Contacted' }] } },
+    { match: /UPDATE leads/i, result: { rowCount: 1 } },
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 5, stage: 'Quoted', quote_invoice_id: '20431', order_total: 3590 } ] } },
+  ]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { quote_invoice_id: '20431', order_total: 3590 } }), res, ['5', 'quote'], depsFor(client));
+  check('200 raise-quote moves the lead to Quoted', res.statusCode === 200 && res.body.stage === 'Quoted', `status ${res.statusCode}`);
+  const upd = client.calls.find((c) => /UPDATE leads/i.test(c.sql));
+  check('UPDATE sets stage=Quoted + records invoice + total', !!upd && /stage = 'Quoted'::lead_stage/i.test(upd.sql) && upd.params[0] === '20431' && upd.params[1] === 3590);
+  const logCall = client.calls.find((c) => /lead_stage_log/i.test(c.sql));
+  check('logs Contacted→Quoted with the invoice in the note', !!logCall && logCall.params[1] === 'Contacted' && /MYOB invoice 20431/.test(logCall.params[3] || ''));
+}
+{
+  // Re-quote: already Quoted → update the invoice, but write NO new stage-log row.
+  const client = makeClient([
+    { match: /SELECT stage FROM leads/i, result: { rowCount: 1, rows: [{ stage: 'Quoted' }] } },
+    { match: /UPDATE leads/i, result: { rowCount: 1 } },
+    { match: /FROM leads l/i, result: { rowCount: 1, rows: [{ lead_id: 5, stage: 'Quoted', quote_invoice_id: '20999' }] } },
+  ]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { quote_invoice_id: '20999' } }), res, ['5', 'quote'], depsFor(client));
+  check('200 re-quote updates the invoice', res.statusCode === 200 && res.body.quote_invoice_id === '20999');
+  check('re-quote writes NO new stage-log row', !client.calls.some((c) => /lead_stage_log/i.test(c.sql)));
+}
+{
+  // Closed lead (Won) → 409 LEAD_CLOSED, no UPDATE.
+  const client = makeClient([{ match: /SELECT stage FROM leads/i, result: { rowCount: 1, rows: [{ stage: 'Won' }] } }]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { quote_invoice_id: '20431' } }), res, ['9', 'quote'], depsFor(client));
+  check('409 LEAD_CLOSED when quoting a Won lead', res.statusCode === 409 && res.body.code === 'LEAD_CLOSED');
+  check('no UPDATE on a closed lead', !client.calls.some((c) => /UPDATE leads/i.test(c.sql)));
+}
+{
+  // Lead not found → 404.
+  const client = makeClient([{ match: /SELECT stage FROM leads/i, result: { rowCount: 0, rows: [] } }]);
+  const res = makeRes();
+  await leadsHandler(makeReq({ method: 'POST', body: { quote_invoice_id: '20431' } }), res, ['404', 'quote'], depsFor(client));
   check('404 when the lead does not exist', res.statusCode === 404);
 }
 
