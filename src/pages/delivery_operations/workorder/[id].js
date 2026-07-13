@@ -154,7 +154,10 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
     const onReflow = () => {
       if (!anchorRef.current) return;
       const r = anchorRef.current.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+      // Menu is position:fixed (viewport-relative) — use raw getBoundingClientRect
+      // coords WITHOUT scroll offsets, or it drifts off-screen once the page is
+      // scrolled (e.g. a workorder with many items).
+      setMenuPos({ top: r.bottom, left: r.left, width: r.width });
     };
     document.addEventListener('mousedown', onDoc);
     window.addEventListener('keydown', onEsc);
@@ -171,7 +174,10 @@ function ProductSelect({ products, value, onChange, placeholder = 'Search SKU, n
   useEffect(() => {
     if (open && anchorRef.current) {
       const r = anchorRef.current.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width });
+      // Menu is position:fixed (viewport-relative) — use raw getBoundingClientRect
+      // coords WITHOUT scroll offsets, or it drifts off-screen once the page is
+      // scrolled (e.g. a workorder with many items).
+      setMenuPos({ top: r.bottom, left: r.left, width: r.width });
     }
   }, [open]);
 
@@ -516,13 +522,15 @@ export default function WorkorderDetailPage() {
     })();
   }, [id, navigate, userId]);
 
-  // Update local existing item field
-  const setItemField = (idx, key, val) => {
-    setItems((arr) => {
-      const copy = [...arr];
-      copy[idx] = { ...copy[idx], [key]: val };
-      return copy;
-    });
+  // Update local existing item field.
+  // Keyed by the stable workorder_items_id — NOT the render index, because the
+  // table renders `items.filter(status !== 'Canceled')`, so the rendered index
+  // diverges from the real array index as soon as any item is Canceled (which
+  // made edits/cancels land on the wrong row — the "every other item" bug).
+  const setItemField = (workorder_items_id, key, val) => {
+    setItems((arr) => arr.map((it) =>
+      it.workorder_items_id === workorder_items_id ? { ...it, [key]: val } : it
+    ));
   };
 
   // Update pending new item field
@@ -941,7 +949,7 @@ export default function WorkorderDetailPage() {
                             <select
                               className="border rounded px-2 py-1 w-full"
                               value={it.technician_id || ''}
-                              onChange={(e) => setItemField(idx, 'technician_id', e.target.value)}
+                              onChange={(e) => setItemField(it.workorder_items_id, 'technician_id', e.target.value)}
                             >
                               <option value="" disabled>Select tech</option>
                               {techs.map((t) => (
@@ -954,7 +962,7 @@ export default function WorkorderDetailPage() {
                             <select
                               className="border rounded px-2 py-1 w-full"
                               value={it.status}
-                              onChange={(e) => setItemField(idx, 'status', e.target.value)}
+                              onChange={(e) => setItemField(it.workorder_items_id, 'status', e.target.value)}
                             >
                               <option>Not in Workshop</option>
                               <option>In Workshop</option>
@@ -972,7 +980,7 @@ export default function WorkorderDetailPage() {
                                 className="border rounded px-2 py-1 w-full"
                                 value={it.selling_price ?? ''}
                                 placeholder="e.g. 199.00"
-                                onChange={(e) => setItemField(idx, 'selling_price', e.target.value)}
+                                onChange={(e) => setItemField(it.workorder_items_id, 'selling_price', e.target.value)}
                               />
                             </td>
                           )}
@@ -1000,7 +1008,7 @@ export default function WorkorderDetailPage() {
                                   className="border rounded px-2 py-1 w-full"
                                   value={it.item_sn ?? ''}
                                   placeholder="Machine base serial number, or a note"
-                                  onChange={(e) => setItemField(idx, 'item_sn', e.target.value)}
+                                  onChange={(e) => setItemField(it.workorder_items_id, 'item_sn', e.target.value)}
                                   onClick={stop}
                                 />
                                 <div className="text-xs text-gray-600 mt-2">
