@@ -12,6 +12,7 @@ import deliveryHandler from '../lib/handlers/delivery.js';
 import collectionsHandler from '../lib/handlers/collections.js';
 import winningsHandler from '../lib/handlers/winnings.js';
 import leadsHandler from '../lib/handlers/leads.js';
+import logisticsHandler from '../lib/handlers/logistics.js';
 import lotsHandler from '../lib/handlers/lots.js';
 import { buildJourney } from '../lib/customerJourney.js';
 
@@ -93,6 +94,11 @@ export default async function handler(req, res) {
       case 'leads':
       case 'lead':
         return leadsHandler(req, res, parts.slice(1));
+      // Logistics work queues (F7b). Pass the segments AFTER "logistics"; the handler
+      // also accepts ?resource= (the query form the front-end uses — safe under Vercel's
+      // multi-segment routing). JWT-gated to logistics/superadmin.
+      case 'logistics':
+        return logisticsHandler(req, res, parts.slice(1));
       case 'delivery':
         return deliveryHandler(req, res);
       case 'collections':

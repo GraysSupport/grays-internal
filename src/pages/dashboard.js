@@ -47,6 +47,9 @@ export default function Dashboard() {
   // /api/podium/inbox and /api/leads).
   const canUseInbox = hasAnyRole(getRoles(), ['sales', 'superadmin']);
   const canUseLeads = canUseInbox;
+  // F7b: the Awaiting-Workorder queue is a logistics tool (the server also gates
+  // /api/logistics). superadmin sees it too.
+  const canUseLogistics = hasAnyRole(getRoles(), ['logistics', 'superadmin']);
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -273,6 +276,13 @@ export default function Dashboard() {
           {canUseLeads && (
             <Link to="/leads" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
               Lead Funnel
+            </Link>
+          )}
+
+          {/* Awaiting-Workorder queue — logistics/superadmin (F7b) */}
+          {canUseLogistics && (
+            <Link to="/logistics/awaiting-workorder" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+              Awaiting Workorder
             </Link>
           )}
 
