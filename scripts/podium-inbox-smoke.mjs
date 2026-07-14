@@ -23,7 +23,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021.04.01';
 
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
-const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote, normalizeConversation, conversationMatchesFilters } = await import('../lib/podium.js');
+const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote, normalizeConversation, conversationMatchesFilters, podiumTailCursor } = await import('../lib/podium.js');
 const { buildConversationIdentity, identityMatchesSearch } = await import('../lib/podiumContact.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
@@ -491,6 +491,21 @@ console.log('\nF14 conversation search:');
   check('live filter: status closed rejects an open row', conversationMatchesFilters(n, { status: 'closed' }) === false);
   check('live filter: mine+open combined', conversationMatchesFilters(n, { assigneeUid: 'u1', status: 'open' }) === true);
   check('live filter: no filters matches everything', conversationMatchesFilters(nClosed, {}) === true);
+}
+
+{
+  // Live-wiring (14 Jul 2026): podiumTailCursor() — the synthetic "start from the
+  // newest row" cursor for Podium's keyset pagination (verified against the live
+  // format: outer base64 JSON {cursor, direction}, inner URL-safe-base64 ETF
+  // %{id: <int32 max>}). If Podium changes the format, callers fall back to the
+  // plain oldest-first listing — these checks pin OUR encoding, not Podium's.
+  const outer = JSON.parse(Buffer.from(podiumTailCursor(), 'base64').toString('utf8'));
+  check('tail cursor: outer wrapper has direction prev', outer.direction === 'prev');
+  const inner = Buffer.from(String(outer.cursor).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  check('tail cursor: inner is an ETF map (0x83 0x74)', inner[0] === 0x83 && inner[1] === 0x74);
+  check('tail cursor: keyed on atom id', inner.slice(8, 10).toString('utf8') === 'id');
+  check('tail cursor: int32 max payload', inner.readInt32BE(11) === 2147483647);
+  check('tail cursor: inner base64 is URL-safe', !/[+/]/.test(outer.cursor));
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
