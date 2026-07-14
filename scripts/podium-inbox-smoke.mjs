@@ -24,7 +24,7 @@ process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021.04.01';
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
 const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote, normalizeConversation, conversationMatchesFilters, podiumTailCursor } = await import('../lib/podium.js');
-const { buildConversationIdentity, identityMatchesSearch } = await import('../lib/podiumContact.js');
+const { buildConversationIdentity, identityMatchesSearch, channelStubContact } = await import('../lib/podiumContact.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
 let passed = 0;
@@ -506,6 +506,21 @@ console.log('\nF14 conversation search:');
   check('tail cursor: keyed on atom id', inner.slice(8, 10).toString('utf8') === 'id');
   check('tail cursor: int32 max payload', inner.readInt32BE(11) === 2147483647);
   check('tail cursor: inner base64 is URL-safe', !/[+/]/.test(outer.cursor));
+}
+
+{
+  // Live-wiring (14 Jul 2026): channelStubContact — LIVE conversations carry no
+  // contact object, so the stub must lift contactName + the channel identifier
+  // (phone for phone-ish channels, email when the identifier is an address,
+  // neither for opaque social handles) so the F4 customer match can still run.
+  const sms = channelStubContact({ contactName: 'Will Fleming', channel: { type: 'sms', identifier: '+61400999888' } });
+  check('stub: sms channel → name + phone', sms.name === 'Will Fleming' && sms.phone === '+61400999888' && sms.email === null);
+  const mail = channelStubContact({ contactName: 'Edna', channel: { type: 'email', identifier: 'edna@example.com' } });
+  check('stub: email identifier → email, no phone', mail.email === 'edna@example.com' && mail.phone === null);
+  const fb = channelStubContact({ contactName: 'FB Person', channel: { type: 'facebook', identifier: 'fb:someone' } });
+  check('stub: social handle → neither phone nor email, name kept', fb.name === 'FB Person' && fb.phone === null && fb.email === null);
+  const bare = channelStubContact(null);
+  check('stub: no conversation → empty stub', bare.name === null && bare.phone === null && bare.email === null && bare.uid === null);
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
