@@ -19,11 +19,11 @@
 
 process.env.PODIUM_MOCK = 'true';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke_secret';
-process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
+process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021.04.01';
 
 const jwt = (await import('jsonwebtoken')).default;
 const { clampLimit, filterUpdatedSince, resolveSelfPodiumUid, normalizeBucket, normalizeStatus } = await import('../lib/podiumInbox.js');
-const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote } = await import('../lib/podium.js');
+const { listConversations, listMessages, sendMessage, listMessageTemplates, postInternalNote, normalizeConversation, conversationMatchesFilters } = await import('../lib/podium.js');
 const { buildConversationIdentity, identityMatchesSearch } = await import('../lib/podiumContact.js');
 const inboxHandler = (await import('../lib/podiumRoutes/inbox.js')).default;
 
@@ -446,6 +446,51 @@ console.log('\nF14 conversation search:');
   check('identity: portal customer matched on podium_contact_id', id.matchedBy === 'podium_contact_id');
   check('identity: customerName preferred for the display name', id.displayName === 'Maria P (portal)' && id.customerName === 'Maria P (portal)');
   check('identity: search matches the matched portal customer name', identityMatchesSearch(id, c1, 'portal') === true);
+}
+
+{
+  // Live-wiring (14 Jul 2026): normalizeConversation maps the VERIFIED live §15
+  // conversation shape (closed / assignedUserUid / assigneeUids / lastItemAt — see
+  // docs.podium.com/reference/the-conversation-object) onto the mock-era fields the
+  // routes and UI read (status / assignedUser / assignees / lastMessageAt).
+  const live = {
+    uid: 'c1',
+    closed: false,
+    assignedUserUid: 'u1',
+    assigneeUids: ['u1', 'u2'],
+    lastItemAt: '2026-07-14T10:00:00Z',
+    updatedAt: '2026-07-14T09:00:00Z',
+    channel: { type: 'phone', identifier: '+61400111222' },
+    contactName: 'Maria P',
+  };
+  const n = normalizeConversation(live);
+  check('normalize: closed=false → status open', n.status === 'open');
+  check('normalize: assigneeUids → assignees[{uid}]', n.assignees.length === 2 && n.assignees[1].uid === 'u2');
+  check('normalize: primary assignee → assignedUser', n.assignedUser?.uid === 'u1');
+  check('normalize: lastItemAt → lastMessageAt', n.lastMessageAt === '2026-07-14T10:00:00Z');
+  check('normalize: original live fields kept', n.closed === false && n.assigneeUids.length === 2);
+
+  const nClosed = normalizeConversation({ uid: 'c2', closed: true, assignedUserUid: 'u3', updatedAt: '2026-07-14T08:00:00Z' });
+  check('normalize: closed=true → status closed', nClosed.status === 'closed');
+  check('normalize: single assignedUserUid → one assignee', nClosed.assignees.length === 1 && nClosed.assignees[0].uid === 'u3');
+  check('normalize: no lastItemAt falls back to updatedAt', nClosed.lastMessageAt === '2026-07-14T08:00:00Z');
+
+  const nBare = normalizeConversation({ uid: 'c3' });
+  check('normalize: bare row → open + unassigned', nBare.status === 'open' && nBare.assignees.length === 0 && nBare.assignedUser === null);
+
+  const mockRow = normalizeConversation({ uid: 'c4', status: 'closed', assignees: [{ uid: 'u9' }], assignedUser: { uid: 'u9' }, lastMessageAt: 'x' });
+  check('normalize: mock-shaped row passes through unchanged', mockRow.status === 'closed' && mockRow.assignees[0].uid === 'u9' && mockRow.lastMessageAt === 'x');
+
+  // conversationMatchesFilters — the LIVE-path bucket/status filter (live GET
+  // /conversations accepts only cursor/limit/locationUid; anything else 400s).
+  check('live filter: mine matches any assignee in the set', conversationMatchesFilters(n, { assigneeUid: 'u2' }) === true);
+  check('live filter: mine rejects a non-assignee', conversationMatchesFilters(n, { assigneeUid: 'u9' }) === false);
+  check('live filter: unassigned rejects an assigned row', conversationMatchesFilters(n, { unassigned: true }) === false);
+  check('live filter: unassigned matches a bare row', conversationMatchesFilters(nBare, { unassigned: true }) === true);
+  check('live filter: status open matches', conversationMatchesFilters(n, { status: 'open' }) === true);
+  check('live filter: status closed rejects an open row', conversationMatchesFilters(n, { status: 'closed' }) === false);
+  check('live filter: mine+open combined', conversationMatchesFilters(n, { assigneeUid: 'u1', status: 'open' }) === true);
+  check('live filter: no filters matches everything', conversationMatchesFilters(nClosed, {}) === true);
 }
 
 console.log(`\n✅ inbox smoke: ${passed} checks passed`);
