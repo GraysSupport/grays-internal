@@ -141,6 +141,19 @@ console.log('\nbest-effort (sender throws):');
   check('failure recorded on the audit row', client.calls.some((c) => LOG_UPD_RE.test(c.sql) && /'failed'/i.test(c.sql)));
 }
 
+console.log('\npost-send bookkeeping failure (SMS already away):');
+{
+  // Send succeeds, but the follow-up "mark sent" UPDATE throws. The customer WAS texted,
+  // so it must count as notified (not failed) and the claim row still blocks any re-send.
+  const client = makeClient([
+    { match: SELECT_RE, result: { rowCount: 1, rows: [activeRow()] } },
+    { match: CLAIM_RE, result: { rowCount: 1, rows: [{ id: 5 }] } },
+    { match: /status = 'sent'/i, throws: new Error('db blip after send') },
+  ]);
+  const out = await notifyWaitlistBackInStock(client, ['TM-95T'], { send: async () => ({ status: 'sent' }) });
+  check('counts as notified, not failed', out.notified === 1 && out.failed === 0, JSON.stringify(out));
+}
+
 console.log('\nend-to-end through the REAL sendSystemSms (mock mode):');
 {
   const client = okClient([activeRow()]);
