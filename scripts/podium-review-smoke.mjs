@@ -110,6 +110,19 @@ console.log('\neligibility gate (completed AND paid):');
   const paidLater = okClient([eligibleRow({ outstanding_balance: '0.00' })]);
   const out3 = await notifyReviewRequest(paidLater, 42, { send: async (m) => { sent.push(m); return {}; } });
   check('numeric-string balance 0.00 counts as paid', out3.notified === 1 && sent.length === 1);
+
+  // A credit/overpayment is still "nothing owing" — the customer has paid.
+  const credit = okClient([eligibleRow({ outstanding_balance: '-50.00' })]);
+  const out4 = await notifyReviewRequest(credit, 42, { send: async (m) => { sent.push(m); return {}; } });
+  check('credit balance (overpaid) counts as paid', out4.notified === 1, JSON.stringify(out4));
+
+  // Defence in depth: workorder.outstanding_balance is NOT NULL today, but Number(null)
+  // is 0 — a nullable balance must never read as "paid in full" and burn the claim.
+  const sent5 = [];
+  const nullBal = okClient([eligibleRow({ outstanding_balance: null })]);
+  const out5 = await notifyReviewRequest(nullBal, 42, { send: async (m) => { sent5.push(m); return {}; } });
+  check('null balance is NOT treated as paid', out5.notified === 0 && sent5.length === 0);
+  check('null balance → NOT claimed', !nullBal.calls.some((c) => CLAIM_RE.test(c.sql)));
 }
 
 console.log('\nidempotency (already claimed):');
@@ -129,6 +142,8 @@ console.log('\ncontact resolution:');
   const phoneOnly = okClient([eligibleRow({ podium_contact_id: null })]);
   const out = await notifyReviewRequest(phoneOnly, 42, { send: async (m) => { sent.push(m); return {}; } });
   check('no contact uid but phone present → invite by phone channel', out.notified === 1 && sent[0].channel === '0400000000' && !sent[0].contactUid);
+  const phoneClaim = phoneOnly.calls.find((c) => CLAIM_RE.test(c.sql));
+  check('P1: phone number is not written to the audit payload', !!phoneClaim && !/0400000000/.test(phoneClaim.params?.[1] || ''));
 
   const sent2 = [];
   const neither = okClient([eligibleRow({ podium_contact_id: null, customer_phone: null })]);
