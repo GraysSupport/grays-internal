@@ -13,6 +13,7 @@
 process.env.JWT_SECRET = 'test-secret-for-integrations-smoke';
 
 const jwt = (await import('jsonwebtoken')).default;
+const { deepStrictEqual } = await import('node:assert/strict');
 const handler = (await import('../lib/handlers/integrations.js')).default;
 
 let passed = 0;
@@ -46,9 +47,15 @@ const LOG_ROW = (over = {}) => ({
   error: null, created_at: '2026-07-17T01:00:00.000Z', ...over,
 });
 
-// Scripted client: LIST_RE returns rows, SUMMARY_RE returns status counts.
-const LIST_RE = /FROM integration_sync_log/i;
-const SUMMARY_RE = /count\(\*\)/i;
+// NB: every query hits integration_sync_log, so match on what's UNIQUE to each —
+// the summary has count(*) FILTER, the list has LIMIT, the matching-count has count(*)
+// without a FILTER. Getting this wrong once already masked a real assertion.
+const ANY_RE = /FROM integration_sync_log/i;
+const LIST_RE = /LIMIT/i;
+const SUMMARY_RE = /FILTER \(WHERE status/i;
+const COUNT_RE = (sql) => /count\(\*\) AS n/i.test(sql);
+const pickList = (client) => client.calls.find((c) => LIST_RE.test(c.sql));
+const pickSummary = (client) => client.calls.find((c) => SUMMARY_RE.test(c.sql));
 function makeClient(scripts = []) {
   const calls = [];
   return {
@@ -134,14 +141,54 @@ console.log('\nfilters are parameterised (never string-interpolated):');
     resource: 'sync-log', status: 'failed', source: 'podium',
     event_type: 'workorder.review_request', q: "review_request:42'; DROP TABLE users;--",
   }), res, [], deps(client));
-  // NB: pick the LIST query specifically — the summary query legitimately contains the
-  // literal 'failed' inside its count(*) FILTER, which would mask an interpolation bug.
-  const list = client.calls.find((c) => LIST_RE.test(c.sql) && /LIMIT/i.test(c.sql));
-  check('status filter is a bound param', list.params.includes('failed') && !/status = 'failed'/.test(list.sql));
-  check('source filter is a bound param', list.params.includes('podium') && !/'podium'/.test(list.sql));
-  check('event_type filter is a bound param', list.params.includes('workorder.review_request'));
+  // NB: pick the LIST query specifically — the summary legitimately contains the literal
+  // 'failed' inside its count(*) FILTER, which would mask an interpolation bug.
+  const list = pickList(client);
+  // Position-blind `includes` would pass even if the placeholders were transposed, and
+  // $n numbering is the whole point — assert the exact params, in order.
+  deepStrictEqual(list.params, ['podium', 'workorder.review_request', "%review\\_request:42'; DROP TABLE users;--%", 'failed', 100]);
+  check('list params bind source, event_type, q, status, limit in $1..$5 order', true);
+  check('placeholders are sequential $1..$5', /source = \$1/.test(list.sql) && /event_type = \$2/.test(list.sql) && /\$3 ESCAPE/.test(list.sql) && /status = \$4/.test(list.sql) && /LIMIT \$5/.test(list.sql));
+  check('no filter value is interpolated into the SQL text', !/'podium'/.test(list.sql) && !/status = 'failed'/.test(list.sql));
   check('a SQL-injection attempt stays in params, never in the SQL text', !/DROP TABLE/i.test(list.sql));
-  check('reference search uses a bound LIKE pattern', list.params.some((p) => String(p).includes('DROP TABLE')));
+  check('LIKE metacharacters in user text are escaped', list.params[2].includes('review\\_request'));
+}
+
+console.log('\nthe tiles keep telling the truth while you filter:');
+{
+  // The health tiles ARE the status filter buttons. If the summary were narrowed by
+  // `status` too, clicking "Failed" would zero every other tile and destroy the health
+  // picture the page exists to show. The summary must stay status-agnostic.
+  const client = makeClient([
+    { match: SUMMARY_RE, result: { rowCount: 1, rows: [{ total: '6', sent: '3', failed: '1', pending: '1', skipped: '1', received: '0', processed: '0' }] } },
+    { match: LIST_RE, result: { rowCount: 1, rows: [LOG_ROW({ status: 'failed' })] } },
+  ]);
+  const res = resSpy();
+  await handler(reqFor(['superadmin'], { resource: 'sync-log', status: 'failed', source: 'podium' }), res, [], deps(client));
+
+  const summary = pickSummary(client);
+  check('summary is NOT narrowed by status', !summary.params.includes('failed') && !/status = \$/.test(summary.sql));
+  check('summary still applies the non-status filters', summary.params.includes('podium'));
+  check('so the other tiles survive a status filter', res.out.body.summary.sent === 3 && res.out.body.summary.total === 6);
+  check('while the rows ARE narrowed', pickList(client).params.includes('failed'));
+
+  // Inbound rows (F2 webhook) use received/processed — counting only the outbound four
+  // would leave them inside `total` but in no bucket, so the tiles wouldn't add up.
+  check('summary counts the inbound statuses too', /FILTER \(WHERE status = 'received'\)/.test(summary.sql) && /FILTER \(WHERE status = 'processed'\)/.test(summary.sql));
+  check('`other` reconciles total against the known buckets', res.out.body.summary.other === 0);
+}
+
+console.log('\ntruncation is surfaced, not silent:');
+{
+  const client = makeClient([
+    { match: SUMMARY_RE, result: { rowCount: 1, rows: [{ total: '1234', sent: '1234' }] } },
+    { match: LIST_RE, result: { rowCount: 1, rows: [LOG_ROW()] } },
+    { match: COUNT_RE, result: { rowCount: 1, rows: [{ n: '1234' }] } },
+  ]);
+  const res = resSpy();
+  await handler(reqFor(['superadmin'], { resource: 'sync-log' }), res, [], deps(client));
+  check('returns `matching` so the page can say "100 of 1,234"', res.out.body.matching === 1234);
+  check('returns the effective limit', res.out.body.limit === 100);
 }
 
 console.log('\nlimit:');

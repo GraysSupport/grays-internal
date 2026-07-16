@@ -19,7 +19,7 @@
 // P1: the log holds envelope metadata only (ids, SKUs, event types) — no chat bodies were
 // ever written to it, so nothing here can leak message content.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import BackButton from '../components/backbutton';
@@ -29,20 +29,26 @@ import { parseMaybeJson } from '../utils/http';
 
 const ADMIN_ROLES = ['superadmin'];
 
-const STATUSES = ['', 'sent', 'failed', 'pending', 'skipped'];
+// Outbound (F8 automations): pending → sent | failed | skipped.
+// Inbound  (F2 webhook):     received → processed | failed.
+const STATUSES = ['', 'sent', 'failed', 'pending', 'skipped', 'received', 'processed'];
 
-// Plain-English labels for the event types the integrations actually write.
+// Plain-English labels for the event types the integrations write. `delivery.booked` and
+// `workorder.review_request` arrive with PRs #72/#73; today only the first two occur.
 const EVENT_LABELS = {
   'waitlist.back_in_stock': 'Waitlist — back in stock SMS',
-  'delivery_booked': 'Delivery booked SMS',
+  'message.received': 'Inbound message',
+  'message.sent': 'Outbound message',
   'delivery.booked': 'Delivery booked SMS',
   'workorder.review_request': 'Review request',
 };
 
 const STATUS_STYLES = {
   sent: 'bg-green-100 text-green-800',
+  processed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
   pending: 'bg-amber-100 text-amber-800',
+  received: 'bg-blue-100 text-blue-800',
   skipped: 'bg-gray-100 text-gray-700',
 };
 
@@ -77,12 +83,23 @@ export default function Integrations() {
 
   const [authorized, setAuthorized] = useState(false);
   const [rows, setRows] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, sent: 0, failed: 0, pending: 0, skipped: 0 });
+  const [summary, setSummary] = useState({ total: 0, sent: 0, failed: 0, pending: 0, skipped: 0, received: 0, processed: 0, other: 0 });
+  const [matching, setMatching] = useState(0);
   const [unavailable, setUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [expanded, setExpanded] = useState(null);
+  // Guards against out-of-order responses: only the newest request may set state.
+  const reqIdRef = useRef(0);
+
+  // Debounce the free-text box — otherwise every keystroke fires a query (mirrors the
+  // F14 inbox search).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   useEffect(() => {
     if (!getToken()) { navigate('/'); return; }
@@ -95,25 +112,29 @@ export default function Integrations() {
   }, [navigate]);
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    const myReq = ++reqIdRef.current;
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({ resource: 'sync-log' });
       if (status) params.set('status', status);
-      if (q.trim()) params.set('q', q.trim());
+      if (debouncedQ) params.set('q', debouncedQ);
       const res = await fetch(`/api/integrations?${params.toString()}`, { headers: authHeaders() });
       if (res.status === 401) { navigate('/'); return; }
       if (res.status === 403) { toast.error('Integrations is for superadmins'); navigate('/dashboard'); return; }
       const data = await parseMaybeJson(res);
+      if (myReq !== reqIdRef.current) return; // a newer request won; drop this response
       if (!res.ok) { toast.error(data?.error || 'Could not load the integration log'); return; }
       setRows(Array.isArray(data?.rows) ? data.rows : []);
-      setSummary(data?.summary || { total: 0, sent: 0, failed: 0, pending: 0, skipped: 0 });
+      setSummary(data?.summary || { total: 0, sent: 0, failed: 0, pending: 0, skipped: 0, received: 0, processed: 0, other: 0 });
+      setMatching(Number(data?.matching || 0));
       setUnavailable(!!data?.unavailable);
+      setExpanded(null);
     } catch {
       toast.error('Server error loading the integration log');
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && myReq === reqIdRef.current) setLoading(false);
     }
-  }, [navigate, status, q]);
+  }, [navigate, status, debouncedQ]);
 
   useEffect(() => {
     if (authorized) load();
@@ -160,13 +181,22 @@ export default function Integrations() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        {/* The tiles are status-agnostic on the server, so they keep showing the whole
+            health picture even while you're filtered into one status. */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-1">
           <Tile label="Total" value={summary.total} onClick={() => setStatus('')} active={status === ''} />
-          <Tile label="Sent" value={summary.sent} tone="good" onClick={() => toggleStatus('sent')} active={status === 'sent'} />
           <Tile label="Failed" value={summary.failed} tone="bad" onClick={() => toggleStatus('failed')} active={status === 'failed'} />
           <Tile label="Pending" value={summary.pending} tone="warn" onClick={() => toggleStatus('pending')} active={status === 'pending'} />
+          <Tile label="Sent" value={summary.sent} tone="good" onClick={() => toggleStatus('sent')} active={status === 'sent'} />
           <Tile label="Skipped" value={summary.skipped} onClick={() => toggleStatus('skipped')} active={status === 'skipped'} />
+          <Tile label="Received" value={summary.received} tone="warn" onClick={() => toggleStatus('received')} active={status === 'received'} />
+          <Tile label="Processed" value={summary.processed} tone="good" onClick={() => toggleStatus('processed')} active={status === 'processed'} />
         </div>
+        <p className="text-xs text-gray-500 mb-4">
+          Sent / Pending / Skipped are messages we send out. Received / Processed are events Podium
+          sends us. Failed covers both.
+          {summary.other > 0 && ` (${summary.other} with another status — use the dropdown.)`}
+        </p>
 
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <select
@@ -185,7 +215,11 @@ export default function Integrations() {
             className="text-sm rounded border border-gray-300 px-2 py-1.5 bg-white flex-1 min-w-[12rem]"
           />
           <span className="text-sm text-gray-500">
-            {loading ? 'Loading…' : `${rows.length} shown`}
+            {loading
+              ? 'Loading…'
+              : matching > rows.length
+                ? `Showing the most recent ${rows.length} of ${matching}`
+                : `${rows.length} shown`}
           </span>
         </div>
 
@@ -248,8 +282,9 @@ export default function Integrations() {
         </div>
 
         <p className="text-xs text-gray-500 mt-3">
-          Newest first, most recent {rows.length} shown. Only what was sent is recorded — never the
-          text of a customer conversation (Podium holds that).
+          Newest first{matching > rows.length ? `, ${rows.length} of ${matching} shown — narrow the filters to see older entries` : ''}.
+          Only the fact of a message is recorded — never the text of a customer conversation
+          (Podium holds that).
         </p>
       </div>
     </div>
