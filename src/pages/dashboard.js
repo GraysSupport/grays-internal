@@ -50,6 +50,9 @@ export default function Dashboard() {
   // F7b: the Awaiting-Workorder queue is a logistics tool (the server also gates
   // /api/logistics). superadmin sees it too.
   const canUseLogistics = hasAnyRole(getRoles(), ['logistics', 'superadmin']);
+  // F10: the Integrations log is an ops/observability tool (the server also gates
+  // /api/integrations to superadmin).
+  const canUseIntegrations = hasAnyRole(getRoles(), ['superadmin']);
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -314,6 +317,13 @@ export default function Dashboard() {
             <Link to="/peloton" className="text-gray-700 hover:bg-gray-200 p-2 rounded flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-black flex-shrink-0" />
               Peloton
+            </Link>
+          )}
+
+          {/* Integrations observability — superadmin (F10) */}
+          {canUseIntegrations && (
+            <Link to="/integrations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
+              Integrations
             </Link>
           )}
 

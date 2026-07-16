@@ -9,6 +9,7 @@ import Settings from './pages/settings';
 import Inbox from './pages/inbox';
 import Leads from './pages/leads';
 import AwaitingWorkorder from './pages/logistics/awaiting-workorder';
+import Integrations from './pages/integrations';
 
 import ProductsPage from './pages/products';
 import EditProduct from './pages/products/edit';
@@ -111,6 +112,7 @@ function App() {
         <Route path="/inbox" element={<Inbox />} />
         <Route path="/leads" element={<Leads />} />
         <Route path="/logistics/awaiting-workorder" element={<AwaitingWorkorder />} />
+        <Route path="/integrations" element={<Integrations />} />
 
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/:sku/edit" element={<EditProduct />} />
