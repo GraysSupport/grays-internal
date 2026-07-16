@@ -5,9 +5,10 @@
 // Columns are New → Contacted → Quoted → Won / Lost ('Payment Received' was merged
 // into 'Won'). Moving a card PUTs /api/leads/:id/stage (which appends a stage-log
 // row); moving to Lost prompts for a structured reason (dropdown + "Other" note) so
-// losses are quantifiable. The board is GLOBAL (all reps' leads) with a My/All filter,
-// and each card shows its owner. A "+ New lead" form makes the funnel demonstrable, and
-// clicking a card opens the linked Podium conversation in the Inbox.
+// losses are quantifiable. Moving to Quoted opens the F7a "raise quote" modal to record
+// the MYOB invoice number (POST /api/leads/:id/quote). The board is GLOBAL (all reps'
+// leads) with a My/All filter, and each card shows its owner. A "+ New lead" form makes
+// the funnel demonstrable, and clicking a card opens the linked Podium conversation.
 //
 // Gated to sales/superadmin (display-only here; /api/leads re-checks server-side and
 // runs on the login JWT). No message bodies are touched — leads are CRM metadata.
@@ -76,6 +77,13 @@ export default function Leads() {
   const [lostFor, setLostFor] = useState(null); // the lead being marked Lost | null
   const [lostCategory, setLostCategory] = useState('');
   const [lostNote, setLostNote] = useState('');
+
+  // Raise-quote modal (F7a): capture the MYOB invoice number (+ optional order total),
+  // then POST /api/leads/:id/quote which records it and moves the lead → Quoted.
+  const [quoteFor, setQuoteFor] = useState(null); // the lead being quoted | null
+  const [quoteInvoice, setQuoteInvoice] = useState('');
+  const [quoteTotal, setQuoteTotal] = useState('');
+  const [quoting, setQuoting] = useState(false);
 
   useEffect(() => {
     if (!getToken()) { navigate('/'); return; }
@@ -158,7 +166,48 @@ export default function Leads() {
       setLostFor(lead);
       return;
     }
+    if (toStage === 'Quoted') {
+      // F7a — moving to Quoted raises a Quote/Invoice: capture the MYOB invoice number.
+      openQuote(lead);
+      return;
+    }
     await submitStage(lead.lead_id, toStage);
+  };
+
+  // Open the raise-quote modal, pre-filling any invoice/total already on the lead
+  // (so a re-quote edits rather than blanks).
+  const openQuote = (lead) => {
+    setQuoteInvoice(lead.quote_invoice_id || '');
+    setQuoteTotal(lead.order_total == null ? '' : String(lead.order_total));
+    setQuoteFor(lead);
+  };
+
+  const submitQuote = async () => {
+    if (!quoteFor) return;
+    const invoice = quoteInvoice.trim();
+    if (!invoice) { toast.error('Enter the MYOB invoice number'); return; }
+    setQuoting(true);
+    try {
+      const payload = { quote_invoice_id: invoice };
+      if (quoteTotal !== '') payload.order_total = Number(quoteTotal);
+      const res = await fetch(`/api/leads/${quoteFor.lead_id}/quote`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) { toast.error(data?.error || 'Could not raise the quote'); return; }
+      upsertLead(data);
+      toast.success(`Quote raised (invoice ${invoice})`);
+      setQuoteFor(null);
+      setQuoteInvoice('');
+      setQuoteTotal('');
+    } catch {
+      toast.error('Server error raising the quote');
+    } finally {
+      setQuoting(false);
+    }
   };
 
   const confirmLost = async () => {
@@ -275,6 +324,7 @@ export default function Leads() {
                           saving={savingId === lead.lead_id}
                           onChangeStage={onChangeStage}
                           onOpenChat={openChat}
+                          onEditQuote={openQuote}
                         />
                       ))}
                     </div>
@@ -418,12 +468,67 @@ export default function Leads() {
           </div>
         </div>
       )}
+
+      {/* Raise-quote modal (F7a) — record the MYOB invoice number the rep raised (+ an
+          optional order total). MYOB is stubbed (FEATURE_MYOB=false) so this is manual
+          for now; when the MYOB phase lands the number is filled automatically. */}
+      {quoteFor && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5 space-y-3">
+            <h2 className="text-lg font-bold">Raise quote / invoice</h2>
+            <p className="text-sm text-gray-600">
+              Raise the invoice in MYOB, then record its number here. The lead moves to
+              <span className="font-semibold"> Quoted</span> and the number carries through to
+              the workorder when logistics confirm payment.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">MYOB invoice number *</label>
+              <input
+                type="text"
+                value={quoteInvoice}
+                onChange={(e) => setQuoteInvoice(e.target.value)}
+                placeholder="e.g. 20431"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Order total (AUD, optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={quoteTotal}
+                onChange={(e) => setQuoteTotal(e.target.value)}
+                placeholder="e.g. 3590"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => { setQuoteFor(null); setQuoteInvoice(''); setQuoteTotal(''); }}
+                className="px-4 py-2 rounded text-sm border border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitQuote}
+                disabled={quoting}
+                className="px-4 py-2 rounded text-sm bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
+              >
+                {quoting ? 'Saving…' : 'Raise quote'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
 // A single lead card: click the body to open its chat; a stage mover in the footer.
-function LeadCard({ lead, saving, onChangeStage, onOpenChat }) {
+function LeadCard({ lead, saving, onChangeStage, onOpenChat, onEditQuote }) {
   const title = lead.customer_name || lead.product_interest || `Lead #${lead.lead_id}`;
   const est = money(lead.value_est);
   const channel = lead.source_channel ? (CHANNELS[String(lead.source_channel).toLowerCase()] || lead.source_channel) : null;
@@ -468,6 +573,25 @@ function LeadCard({ lead, saving, onChangeStage, onOpenChat }) {
       {lead.stage === 'Lost' && lostText && (
         <div className="text-[11px] text-red-600 mt-1 truncate" title={lostText}>
           Lost: {lostText}
+        </div>
+      )}
+
+      {/* F7a — a Quoted lead shows its MYOB invoice number, with a quick "edit" to
+          re-record it. */}
+      {lead.stage === 'Quoted' && (
+        <div className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+          {lead.quote_invoice_id
+            ? <span className="truncate">Invoice #{lead.quote_invoice_id}</span>
+            : <span className="text-gray-400">No invoice recorded</span>}
+          {onEditQuote && (
+            <button
+              type="button"
+              onClick={() => onEditQuote(lead)}
+              className="text-amber-600 hover:text-amber-800 underline shrink-0"
+            >
+              edit
+            </button>
+          )}
         </div>
       )}
       <div className="mt-2">
