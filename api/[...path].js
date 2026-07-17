@@ -13,6 +13,7 @@ import collectionsHandler from '../lib/handlers/collections.js';
 import winningsHandler from '../lib/handlers/winnings.js';
 import leadsHandler from '../lib/handlers/leads.js';
 import logisticsHandler from '../lib/handlers/logistics.js';
+import integrationsHandler from '../lib/handlers/integrations.js';
 import lotsHandler from '../lib/handlers/lots.js';
 import { buildJourney } from '../lib/customerJourney.js';
 
@@ -99,6 +100,10 @@ export default async function handler(req, res) {
       // multi-segment routing). JWT-gated to logistics/superadmin.
       case 'logistics':
         return logisticsHandler(req, res, parts.slice(1));
+      // Integration observability (F10) — the superadmin read of integration_sync_log.
+      // Same query-form convention as `logistics`. JWT-gated to superadmin.
+      case 'integrations':
+        return integrationsHandler(req, res, parts.slice(1));
       case 'delivery':
         return deliveryHandler(req, res);
       case 'collections':
