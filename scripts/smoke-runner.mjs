@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, basename, join } from 'node:path';
+import { dirname, basename, join, resolve } from 'node:path';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const SELF = basename(fileURLToPath(import.meta.url));
@@ -30,12 +30,14 @@ export function discoverSuites(dir = SCRIPTS_DIR) {
 
 // Run one suite as a child `node <file>`, inheriting stdio so CI shows its output.
 // Resolves true on exit 0, false otherwise. Never rejects — a crashed suite is a failure,
-// not a runner error.
-function runOne(file) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [file], { stdio: 'inherit' });
-    child.on('error', () => resolve(false));
-    child.on('close', (code) => resolve(code === 0));
+// not a runner error. Exported so the self-test can prove the real exit-code → boolean
+// mapping, not just the injected-`run` aggregation.
+export function runOne(file, opts = {}) {
+  const stdio = opts.stdio || 'inherit';
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [file], { stdio });
+    child.on('error', () => done(false));
+    child.on('close', (code) => done(code === 0));
   });
 }
 
@@ -58,7 +60,15 @@ export async function runSuites(files, opts = {}) {
 // Run directly (node scripts/smoke-runner.mjs), not when imported by the self-test.
 const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (invokedDirectly) {
-  const suites = discoverSuites();
+  // Optional dir arg lets the self-test point the real runner at fixture suites; normal
+  // runs (npm run smoke) pass nothing and scan scripts/.
+  const dirArg = process.argv[2];
+  const suites = discoverSuites(dirArg ? resolve(dirArg) : undefined);
+  // No suites at all is a misconfiguration, not a pass — never let CI go green on nothing.
+  if (suites.length === 0) {
+    console.error('❌ no *-smoke.mjs suites found — refusing to report success.');
+    process.exit(1);
+  }
   console.log(`Running ${suites.length} smoke suites…\n`);
   const { failed } = await runSuites(suites);
   console.log(`\n${suites.length - failed.length}/${suites.length} suites passed.`);

@@ -3,13 +3,21 @@
 // The runner (scripts/smoke-runner.mjs) is what CI calls via `npm run smoke`. Its whole
 // job is: discover every offline suite and FAIL THE PROCESS if any one of them fails. If
 // that exit-code contract ever breaks, CI would go green over a red suite — the exact
-// regression F24 exists to prevent — so the contract itself needs coverage. No network,
-// no database, no child processes: runSuites takes an injected `run`, so we test the
-// aggregation/exit logic directly.
+// regression F24 exists to prevent — so the contract itself needs coverage.
+//
+// Most checks are pure (injected `run`, no processes). A few deliberately spawn the real
+// runner against fixture suites, because the two links that actually make CI go red — the
+// real exit-code → boolean mapping in runOne(), and the process.exit(1) in the main block
+// — can only be proven with real child processes, not an injected run().
 //
 //   node scripts/smoke-runner-smoke.mjs
 
-import { runSuites, discoverSuites } from './smoke-runner.mjs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { runSuites, discoverSuites, runOne } from './smoke-runner.mjs';
+
+const fixture = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+const RUNNER = fixture('./smoke-runner.mjs');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -20,7 +28,7 @@ function check(name, cond, detail) {
 
 const silent = () => {};
 
-console.log('smoke-runner smoke — no DB, no network, no child processes\n');
+console.log('smoke-runner smoke — no DB, no network (a few real child processes for the exit-code path)\n');
 
 console.log('exit-code contract (a failing suite must fail the run):');
 {
@@ -55,14 +63,34 @@ console.log('\nevery suite runs (no silent truncation — F24 exists because sui
   check('runSuites invokes run() once per file, in order', seen.join(',') === '1-smoke.mjs,2-smoke.mjs,3-smoke.mjs');
 }
 
+console.log('\nreal exit-code mapping (runOne spawns a real child — this is what CI trusts):');
+{
+  // stdio:'ignore' keeps the throwing fixture's stack out of the CI log; real runs inherit.
+  check('runOne: a suite that exits 0 → true', (await runOne(fixture('./fixtures/green/ok-smoke.mjs'), { stdio: 'ignore' })) === true);
+  check('runOne: a suite that throws (exit 1) → false', (await runOne(fixture('./fixtures/red/broken-smoke.mjs'), { stdio: 'ignore' })) === false);
+}
+
+console.log('\nend-to-end (the runner PROCESS exits non-zero when a suite fails):');
+{
+  const runnerExit = (dir) =>
+    new Promise((res) => {
+      const c = spawn(process.execPath, [RUNNER, dir], { stdio: 'ignore' });
+      c.on('close', (code) => res(code));
+    });
+  check('an all-green fixture dir → runner exits 0', (await runnerExit(fixture('./fixtures/green'))) === 0);
+  check('a fixture dir with one red suite → runner exits non-zero', (await runnerExit(fixture('./fixtures/red'))) !== 0);
+}
+
 console.log('\ndiscovery (auto-find suites so a new one is never forgotten):');
 {
   const suites = discoverSuites().map((p) => p.replace(/\\/g, '/'));
   const bases = suites.map((p) => p.split('/').pop());
   check('discovers a non-empty set of suites', suites.length > 0);
+  // The real suite count is well into double digits; a threshold catches accidental
+  // narrowing of the glob without pinning every filename.
+  check('discovers the full suite set, not a narrowed subset', suites.length >= 10, `found ${suites.length}`);
   check('every discovered file is a *-smoke.mjs', bases.every((b) => b.endsWith('-smoke.mjs')));
   check('includes a known existing suite', bases.includes('podium-rbac-smoke.mjs'));
-  check('includes a second known suite', bases.includes('podium-leads-smoke.mjs'));
   // Recursion guard: the runner ends in "-runner.mjs", not "-smoke.mjs", so it must never
   // discover (and re-spawn) itself.
   check('does NOT discover the runner itself', !bases.includes('smoke-runner.mjs'));
