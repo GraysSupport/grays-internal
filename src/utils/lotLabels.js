@@ -1,9 +1,32 @@
-// G4 — printable lot labels for the HotLabel HL-M6 (50 mm × 30 mm).
-// Generates a Code 128 barcode of the lot number (universal for USB scanners)
-// plus a human-readable lot number, SKU and product name, then opens a print
-// window sized to the sticker. The barcode SVG is generated in-app and injected
-// as self-contained markup, so the print window needs no scripts/libraries.
+// G4 — printable lot labels for the HotLabel HL-M6.
+//
+// Stock: 80 mm × 50 mm (changed from 50 × 30 on 17 Jul 2026 at Nick's request).
+//
+// Generates a Code 128 barcode of the lot number (universal for USB scanners) plus a
+// human-readable lot number, SKU and product name, then opens a print window sized to the
+// sticker. The barcode SVG is generated in-app and injected as self-contained markup, so
+// the print window needs no scripts/libraries.
 import JsBarcode from 'jsbarcode';
+
+// ---- Sticker geometry -------------------------------------------------------
+// One place, because @page and .label MUST agree: if they drift the printer either clips
+// the label or spreads it across two stickers. Everything else is derived from these, so
+// a future stock change is LABEL_W/LABEL_H + a reprint test, not a hunt through the CSS.
+const LABEL_W = 80;   // mm
+const LABEL_H = 50;   // mm
+const PADDING = 2.5;  // mm — keeps ink off the die-cut edge
+
+// The barcode is the whole point of the label, so give it the usable width: wider modules
+// scan more reliably on a worn or angled sticker. 2.5mm of slack each side of the padding.
+const BARCODE_W = LABEL_W - PADDING * 2 - 5; // 70mm
+const BARCODE_H = 18;                        // mm
+
+// Text stack, in print order. Sizes scaled ~1.6× with the stock (50→80 wide, 30→50 tall).
+const TEXT = {
+  lotnum: { size: 19, lineHeight: 1 },                 // read-by-eye fallback — biggest
+  sku: { size: 11, lineHeight: 1.1 },
+  name: { size: 9, lineHeight: 1.05, maxHeight: 10 },  // mm — clipped, never overflows
+};
 
 function esc(s) {
   return String(s ?? '').replace(/[<>&"]/g, (c) => (
@@ -33,40 +56,55 @@ function barcodeSvgString(text) {
   }
 }
 
-// lots: array of { lot_number, product_sku, product_name }
-export function printLotLabels(lots) {
-  const list = (lots || []).filter((l) => l && l.lot_number);
-  if (!list.length) return;
-
-  const labels = list.map((l) => `
+/**
+ * Build the print document. PURE — no DOM, no window — so the geometry can be checked
+ * offline (scripts/lot-label-smoke.mjs) instead of by burning stickers. `barcodeFor`
+ * returns the barcode SVG markup for a lot number; printLotLabels passes the real one.
+ * @param {Array<{lot_number:string, product_sku:string, product_name:string}>} lots
+ * @param {(lotNumber:string) => string} barcodeFor
+ */
+export function buildLotLabelsHtml(lots, barcodeFor) {
+  const labels = (lots || []).map((l) => `
     <div class="label">
-      <div class="bc">${barcodeSvgString(l.lot_number)}</div>
+      <div class="bc">${barcodeFor(l.lot_number)}</div>
       <div class="lotnum">${esc(l.lot_number)}</div>
       <div class="sku">${esc(l.product_sku)}</div>
       <div class="name">${esc(l.product_name)}</div>
     </div>`).join('');
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Lot labels</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Lot labels</title>
   <style>
-    @page { size: 50mm 30mm; margin: 0; }
+    @page { size: ${LABEL_W}mm ${LABEL_H}mm; margin: 0; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
     .label {
-      width: 50mm; height: 30mm; padding: 1.5mm;
+      width: ${LABEL_W}mm; height: ${LABEL_H}mm; padding: ${PADDING}mm;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       page-break-after: always; overflow: hidden;
       font-family: Arial, Helvetica, sans-serif; text-align: center;
     }
     .label:last-child { page-break-after: auto; }
-    .bc svg { width: 44mm; height: 11mm; }
-    .lotnum { font-family: 'Courier New', monospace; font-weight: 700; font-size: 12pt; line-height: 1; margin-top: 0.5mm; }
-    .sku { font-size: 7pt; line-height: 1.1; }
-    .name { font-size: 6pt; line-height: 1.05; max-height: 6mm; overflow: hidden; }
+    .bc svg { width: ${BARCODE_W}mm; height: ${BARCODE_H}mm; }
+    .lotnum { font-family: 'Courier New', monospace; font-weight: 700; font-size: ${TEXT.lotnum.size}pt; line-height: ${TEXT.lotnum.lineHeight}; margin-top: 1mm; }
+    .sku { font-size: ${TEXT.sku.size}pt; line-height: ${TEXT.sku.lineHeight}; }
+    .name { font-size: ${TEXT.name.size}pt; line-height: ${TEXT.name.lineHeight}; max-height: ${TEXT.name.maxHeight}mm; overflow: hidden; }
   </style></head><body>${labels}
   <script>window.onload=function(){window.focus();window.print();};</script>
   </body></html>`;
+}
 
-  const w = window.open('', '_blank', 'width=420,height=320');
+/** The geometry, exported so the smoke can assert it adds up. */
+export const LABEL_GEOMETRY = { LABEL_W, LABEL_H, PADDING, BARCODE_W, BARCODE_H, TEXT };
+
+// lots: array of { lot_number, product_sku, product_name }
+export function printLotLabels(lots) {
+  const list = (lots || []).filter((l) => l && l.lot_number);
+  if (!list.length) return;
+
+  const html = buildLotLabelsHtml(list, barcodeSvgString);
+
+  // Roughly the sticker's aspect, scaled up with the stock (was 420×320 for 50×30).
+  const w = window.open('', '_blank', 'width=660,height=500');
   if (!w) {
     alert('Please allow pop-ups to print lot labels.');
     return;

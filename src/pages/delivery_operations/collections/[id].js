@@ -571,7 +571,7 @@ export default function CollectionDetailPage() {
                 <button
                   onClick={() => printLotLabels(lots.filter((l) => l.status !== 'Void'))}
                   className="rounded border px-3 py-1 text-sm hover:bg-gray-50"
-                  title="Print a 50×30mm barcode label for every lot"
+                  title="Print an 80×50mm barcode label for every lot"
                 >
                   🖨 Print all labels
                 </button>
