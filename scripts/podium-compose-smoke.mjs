@@ -129,13 +129,21 @@ console.log('\nend-to-end against the typed mock (PODIUM_MOCK):');
 {
   process.env.PODIUM_MOCK = 'true';
   const { composeConversation: realCompose } = await import('../lib/podiumCompose.js');
+  const { fixtures } = await import('../lib/podium.mock.js');
   // Maria (+61400111222) is a mock fixture with an OPEN conversation → reuse.
   const reuse = await realCompose('GA', { to: '+61400111222', channel: 'phone', body: 'Hi Maria' });
   check('mock: an existing fixture contact reuses its conversation', reuse.reused === true && !!reuse.conversationId);
+  // Linda's ONLY thread (pod_cnv_00004, instagram) is CLOSED → reopen, not duplicate.
+  const beforeReopen = fixtures.CONVERSATIONS.length;
+  const reopened = await realCompose('GA', { to: '+61400555666', channel: 'phone', body: 'Hi Linda' });
+  check('mock: a contact whose only thread is closed is REOPENED', reopened.reused === true && reopened.reopened === true);
+  check('mock: reopen did NOT append a duplicate conversation', fixtures.CONVERSATIONS.length === beforeReopen);
   // A brand-new number → create contact + open a new conversation.
-  const fresh = await realCompose('GA', { to: '+61400000123', channel: 'sms', body: 'New lead' });
+  const beforeCreate = fixtures.CONVERSATIONS.length;
+  const fresh = await realCompose('GA', { to: '+61400000123', channel: 'phone', body: 'New lead' });
   check('mock: a new number creates a new conversation', fresh.reused === false && !!fresh.conversationId);
-  check('mock: the new conversation is readable back', fresh.conversationId !== reuse.conversationId);
+  check('mock: create DID append exactly one conversation', fixtures.CONVERSATIONS.length === beforeCreate + 1);
+  check('mock: the new conversation id differs from the reused one', fresh.conversationId !== reuse.conversationId);
 }
 
 console.log(`\n✅ compose smoke: ${passed} checks passed`);
