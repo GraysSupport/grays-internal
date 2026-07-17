@@ -12,11 +12,15 @@ const ORDERED_STATES = ['VIC', 'NSW', 'QLD', 'ACT', 'WA', 'SA', 'TAS', 'NT'];
  * F8b (Nick, 17 Jul 2026): booking a delivery no longer texts the customer automatically.
  * This panel shows logistics the EXACT text first; nothing is sent until they choose.
  *
- * Deliberately not dismissible by backdrop or Esc — the booking has already saved, the row
- * is about to leave this list, and this is the only moment the decision can be made. Both
- * outcomes are recorded, so "Don't send" is a real answer, not a way to duck the question.
+ * Send and Don't-send are both recorded, so the panel asks a real question rather than
+ * letting the decision drift. It is NOT modal-with-no-exit though: "Decide later" always
+ * closes it client-side without touching the server. That escape hatch is deliberate —
+ * both real buttons call a login-gated endpoint, so without it an expired session (the
+ * login token lasts 1h; the SPA session slides on activity) would leave the operator
+ * locked in an unclosable dialog with the page unusable. A page you can't use is worse
+ * than a question you can defer.
  */
-function BookingSmsPanel({ sms, busy, onSend, onSkip }) {
+function BookingSmsPanel({ sms, busy, onSend, onSkip, onDismiss }) {
   if (!sms) return null;
   const eligible = sms.eligible !== false;
   return createPortal(
@@ -52,9 +56,18 @@ function BookingSmsPanel({ sms, busy, onSend, onSkip }) {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
           {eligible ? (
             <>
+              {/* Always available, never touches the server — the way out if the session
+                  has expired or the API is down. Leaves no record: no text is sent. */}
+              <button
+                type="button"
+                onClick={onDismiss}
+                className="mr-auto text-sm text-gray-500 underline hover:text-gray-700"
+              >
+                Decide later
+              </button>
               <button
                 type="button"
                 onClick={onSkip}
@@ -74,11 +87,13 @@ function BookingSmsPanel({ sms, busy, onSend, onSkip }) {
               </button>
             </>
           ) : (
+            // Nothing can be sent, so there is nothing to decline — a pure client-side
+            // dismiss. (Recording this as "declined by …" would misreport a missing phone
+            // number as a human decision.)
             <button
               type="button"
-              onClick={onSkip}
-              disabled={busy}
-              className="rounded border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              onClick={onDismiss}
+              className="rounded border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               Close
             </button>
@@ -430,9 +445,26 @@ export default function ToBeBookedDeliveriesPage() {
         }
       );
       const data = await res.json().catch(() => ({}));
+
+      // The login token lasts 1h while the SPA session slides on activity, so a long
+      // shift CAN outlive the token. Say so and get out of the way — never trap the
+      // operator in a dialog whose only buttons need the server.
+      if (res.status === 401) {
+        toast.error('Your session has expired — sign in again to send the text');
+        setBookingSms(null);
+        navigate('/');
+        return;
+      }
+      // Already sent (e.g. a double-click, or someone else confirmed it). Nothing to do —
+      // closing with "No text sent" here would be a lie.
+      if (res.status === 409 && data?.outcome?.alreadySent) {
+        toast('That text was already sent', { icon: 'ℹ️' });
+        setBookingSms(null);
+        return;
+      }
       if (!res.ok) {
         toast.error(data?.error || 'Could not send the text');
-        return; // keep the panel open so the decision isn't silently lost
+        return; // keep the panel open — the decision hasn't been made yet
       }
       toast.success(action === 'send' ? 'Text sent to the customer' : 'No text sent');
       setBookingSms(null);
@@ -441,7 +473,7 @@ export default function ToBeBookedDeliveriesPage() {
     } finally {
       setSmsBusy(false);
     }
-  }, [bookingSms]);
+  }, [bookingSms, navigate]);
 
   const saveWorkorderPayment = useCallback(async (workorder_id, newOutstanding) => {
     if (!workorder_id) return;
@@ -921,6 +953,7 @@ export default function ToBeBookedDeliveriesPage() {
         busy={smsBusy}
         onSend={() => resolveBookingSms('send')}
         onSkip={() => resolveBookingSms('skip')}
+        onDismiss={() => setBookingSms(null)}
       />
     </div>
   );

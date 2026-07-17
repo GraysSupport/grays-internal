@@ -87,10 +87,10 @@ console.log('\nhappy path:');
   const sel = client.calls.find((c) => SELECT_RE.test(c.sql));
   check('lookup joins delivery + customer', !!sel && /JOIN customers c/i.test(sel.sql));
   const claim = client.calls.find((c) => CLAIM_RE.test(c.sql));
-  // The claim is an upsert, NOT DO NOTHING: a declined text was never sent, so it must
-  // stay sendable — while an already-'sent' row can never be reopened. See the
-  // confirmation-panel section below.
-  check('claim reclaims anything not already sent', !!claim && /ON CONFLICT/i.test(claim.sql) && /DO UPDATE/i.test(claim.sql) && /status <> 'sent'/i.test(claim.sql));
+  // The claim is an upsert rather than DO NOTHING so that a DECLINED text stays sendable —
+  // but ONLY a declined one. See "never text twice" below for why the predicate is
+  // exactly 'skipped' and not `<> 'sent'`.
+  check('claim only reclaims an explicitly declined row', !!claim && /ON CONFLICT/i.test(claim.sql) && /DO UPDATE/i.test(claim.sql) && /status = 'skipped'/i.test(claim.sql));
   check('reference_id is per-delivery', !!claim && (claim.params || []).includes('delivery_booked:42'));
   check('payload is envelope-only (no body)', !!claim && /"invoice_id"/.test(claim.params?.[1] || '') && !/booked for delivery/i.test(claim.params?.[1] || ''));
   check('marked sent', client.calls.some((c) => LOG_UPD_RE.test(c.sql) && /'sent'/i.test(c.sql)));
@@ -171,40 +171,57 @@ console.log('\npreview (what the confirmation panel shows) — reads only, never
 
 console.log('\ndecline ("Don\'t send") — records the decision, sends nothing:');
 {
-  const sent = [];
+  // NB: declineDeliveryBookedSms takes NO sender — asserting "nothing was sent" against an
+  // injected sender here would be a check that cannot fail. The real guarantee is that the
+  // decline path issues no send at all, so assert on what it DOES: claim + mark skipped.
   const client = okClient(bookedRow());
-  const out = await declineDeliveryBookedSms(client, 42, { actorId: 'BR', send: async (m) => { sent.push(m); } });
-  check('nothing is sent', sent.length === 0 && out.skipped === 1);
+  const out = await declineDeliveryBookedSms(client, 42, { actorId: 'BR' });
+  check('decline records a skip', out.skipped === 1 && out.notified === 0);
   const claim = client.calls.find((c) => CLAIM_RE.test(c.sql));
   check('the decision is audited under the same reference', (claim.params || []).includes('delivery_booked:42'));
+  check('the decliner is recorded in the envelope', /"declined_by":"BR"/.test(claim.params?.[1] || ''));
   check('recorded as skipped, attributed to the person who declined',
     client.calls.some((c) => LOG_UPD_RE.test(c.sql) && /'skipped'/i.test(c.sql) && (c.params || []).some((p) => String(p).includes('BR'))));
+  check('a decline never marks the row sent', !client.calls.some((c) => LOG_UPD_RE.test(c.sql) && /'sent'/i.test(c.sql)));
+
+  const notBooked = okClient(bookedRow({ delivery_status: 'Delivery Completed' }));
+  const out2 = await declineDeliveryBookedSms(notBooked, 42, { actorId: 'BR' });
+  check('nothing to decline on an unbooked delivery → no claim', out2.skipped === 1 && !notBooked.calls.some((c) => CLAIM_RE.test(c.sql)));
 }
 
-console.log('\nnever text twice — even with a human in the loop:');
+console.log('\nnever text twice — the gate the confirmation panel depends on:');
 {
-  // The claim is now an upsert that REFUSES to reopen a row already marked 'sent'
-  // (rowCount 0), so a double-click or a second confirm can't double-text.
-  const sent = [];
+  // ⚠️ The reclaim predicate is EXACTLY 'skipped'. `<> 'sent'` would look equivalent and
+  // is NOT: the claim autocommits as 'pending' BEFORE the Podium round-trip, so a second
+  // confirm (double-click, two users, a retry after a timeout) would see 'pending',
+  // reclaim, and send a SECOND text to the customer. Only an explicitly declined text
+  // may be reopened.
+  const claimSql = (client) => client.calls.find((c) => CLAIM_RE.test(c.sql)).sql;
+
   const client = makeClient([
     { match: SELECT_RE, result: { rowCount: 1, rows: [bookedRow()] } },
-    { match: CLAIM_RE, result: { rowCount: 0, rows: [] } }, // already 'sent'
+    { match: CLAIM_RE, result: { rowCount: 0, rows: [] } }, // predicate didn't match
   ]);
+  const sent = [];
   const out = await notifyDeliveryBooked(client, 42, { send: async (m) => { sent.push(m); } });
-  check('already sent → no second text', sent.length === 0 && out.notified === 0);
+  check('claim refused → no text', sent.length === 0 && out.notified === 0);
   check('reports alreadySent so the UI can say so', out.alreadySent === true);
 
-  const claim = client.calls.find((c) => CLAIM_RE.test(c.sql));
-  check('claim refuses to reopen a sent row', /DO UPDATE/i.test(claim.sql) && /status <> 'sent'/i.test(claim.sql));
+  const sql = claimSql(client);
+  check('only a DECLINED row can be reclaimed', /DO UPDATE/i.test(sql) && /status = 'skipped'/i.test(sql));
+  check('an in-flight (pending) or failed row is NOT reclaimable — no double-text', !/status <> 'sent'/i.test(sql));
 }
 
 console.log('\na declined text can still be sent later (it was never sent):');
 {
   const sent = [];
   const client = okClient(bookedRow()); // claim upsert succeeds (row was 'skipped')
-  const out = await notifyDeliveryBooked(client, 42, { actorId: 'BR', send: async (m) => { sent.push(m); } });
+  const out = await notifyDeliveryBooked(client, 42, { actorId: 'GS', send: async (m) => { sent.push(m); } });
   check('reclaiming a declined row sends the first text', out.notified === 1 && sent.length === 1);
-  check('at-most-once still holds — the gate is "was it SENT", not "was it claimed"', out.alreadySent !== true);
+  check('not reported as alreadySent', out.alreadySent !== true);
+  const claim = client.calls.find((c) => CLAIM_RE.test(c.sql));
+  check('the sender is attributed (why the endpoint demands a login)', /"confirmed_by":"GS"/.test(claim.params?.[1] || ''));
+  check('the envelope still carries no message body (P1)', !/booked for delivery/i.test(claim.params?.[1] || ''));
 }
 
 console.log(`\n✅ delivery-booked smoke: ${passed} checks passed`);
