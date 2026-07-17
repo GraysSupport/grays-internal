@@ -3,9 +3,107 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { authHeaders } from '../../utils/auth';
 
 const EDITABLE_STATUSES = ['To Be Booked', 'Booked for Delivery'];
 const ORDERED_STATES = ['VIC', 'NSW', 'QLD', 'ACT', 'WA', 'SA', 'TAS', 'NT'];
+
+/**
+ * F8b (Nick, 17 Jul 2026): booking a delivery no longer texts the customer automatically.
+ * This panel shows logistics the EXACT text first; nothing is sent until they choose.
+ *
+ * Send and Don't-send are both recorded, so the panel asks a real question rather than
+ * letting the decision drift. It is NOT modal-with-no-exit though: "Decide later" always
+ * closes it client-side without touching the server. That escape hatch is deliberate —
+ * both real buttons call a login-gated endpoint, so without it an expired session (the
+ * login token lasts 1h; the SPA session slides on activity) would leave the operator
+ * locked in an unclosable dialog with the page unusable. A page you can't use is worse
+ * than a question you can defer.
+ */
+function BookingSmsPanel({ sms, busy, onSend, onSkip, onDismiss }) {
+  if (!sms) return null;
+  const eligible = sms.eligible !== false;
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+        <div className="border-b border-gray-200 px-5 py-3">
+          <h2 className="text-lg font-semibold text-gray-900">
+            {eligible ? 'Send booking confirmation text?' : 'No text can be sent'}
+          </h2>
+          <p className="mt-0.5 text-sm text-gray-600">
+            The delivery is booked. {eligible ? 'Nothing has been sent yet.' : ''}
+          </p>
+        </div>
+
+        <div className="px-5 py-4">
+          {eligible ? (
+            <>
+              <div className="mb-3 text-sm text-gray-700">
+                To <span className="font-medium">{sms.customer_name || 'the customer'}</span>{' '}
+                on <span className="font-mono">{sms.to}</span>
+              </div>
+              <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-800 whitespace-pre-wrap">
+                {sms.body}
+              </div>
+              <p className="mt-3 text-xs text-gray-500">
+                Sent from the shared Grays number. It can only be sent once.
+              </p>
+            </>
+          ) : (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {sms.reason || 'This delivery is not eligible for a booking text.'}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
+          {eligible ? (
+            <>
+              {/* Always available, never touches the server — the way out if the session
+                  has expired or the API is down. Leaves no record: no text is sent. */}
+              <button
+                type="button"
+                onClick={onDismiss}
+                className="mr-auto text-sm text-gray-500 underline hover:text-gray-700"
+              >
+                Decide later
+              </button>
+              <button
+                type="button"
+                onClick={onSkip}
+                disabled={busy}
+                className="rounded border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                Don’t send
+              </button>
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={busy}
+                className="rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                style={{ backgroundColor: '#B50B1D' }}
+              >
+                {busy ? 'Sending…' : 'Send text'}
+              </button>
+            </>
+          ) : (
+            // Nothing can be sent, so there is nothing to decline — a pure client-side
+            // dismiss. (Recording this as "declined by …" would misreport a missing phone
+            // number as a human decision.)
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="rounded border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 // Row navigation helpers
 const useRowNav = (navigate) => {
@@ -139,6 +237,9 @@ export default function ToBeBookedDeliveriesPage() {
   const [search, setSearch] = useState('');
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
+  // F8b: the pending booking-text decision (null = no panel open).
+  const [bookingSms, setBookingSms] = useState(null);
+  const [smsBusy, setSmsBusy] = useState(false);
 
   const currentUserId = useMemo(() => {
     try {
@@ -301,6 +402,10 @@ export default function ToBeBookedDeliveriesPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Save failed');
 
+      // F8b: the booking just saved and the server handed back the text it WOULD send.
+      // Ask before anything goes out.
+      if (data?.booking_sms) setBookingSms({ ...data.booking_sms, delivery_id: deliveryId });
+
       setDeliveries((list) => {
         if ('delivery_status' in patch && patch.delivery_status !== 'To Be Booked') {
           return list.filter((r) => r.delivery_id !== deliveryId);
@@ -322,6 +427,53 @@ export default function ToBeBookedDeliveriesPage() {
       });
     }
   }, [currentUserId]);
+
+  // F8b: resolve the booking-text decision. `action` is 'send' or 'skip'; both are
+  // recorded, and the panel only closes once the server has answered — so a failed send
+  // can't be mistaken for a sent one.
+  const resolveBookingSms = useCallback(async (action) => {
+    const deliveryId = bookingSms?.delivery_id;
+    if (!deliveryId) { setBookingSms(null); return; }
+    setSmsBusy(true);
+    try {
+      const res = await fetch(
+        `/api/delivery?resource=booking-sms&id=${encodeURIComponent(deliveryId)}`,
+        {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ action }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+
+      // The login token lasts 1h while the SPA session slides on activity, so a long
+      // shift CAN outlive the token. Say so and get out of the way — never trap the
+      // operator in a dialog whose only buttons need the server.
+      if (res.status === 401) {
+        toast.error('Your session has expired — sign in again to send the text');
+        setBookingSms(null);
+        navigate('/');
+        return;
+      }
+      // Already sent (e.g. a double-click, or someone else confirmed it). Nothing to do —
+      // closing with "No text sent" here would be a lie.
+      if (res.status === 409 && data?.outcome?.alreadySent) {
+        toast('That text was already sent', { icon: 'ℹ️' });
+        setBookingSms(null);
+        return;
+      }
+      if (!res.ok) {
+        toast.error(data?.error || 'Could not send the text');
+        return; // keep the panel open — the decision hasn't been made yet
+      }
+      toast.success(action === 'send' ? 'Text sent to the customer' : 'No text sent');
+      setBookingSms(null);
+    } catch {
+      toast.error('Server error — the text was not sent');
+    } finally {
+      setSmsBusy(false);
+    }
+  }, [bookingSms, navigate]);
 
   const saveWorkorderPayment = useCallback(async (workorder_id, newOutstanding) => {
     if (!workorder_id) return;
@@ -794,6 +946,15 @@ export default function ToBeBookedDeliveriesPage() {
       </div>
 
       <DeliveryTabs />
+
+      {/* F8b: nothing is texted to a customer until this is answered. */}
+      <BookingSmsPanel
+        sms={bookingSms}
+        busy={smsBusy}
+        onSend={() => resolveBookingSms('send')}
+        onSkip={() => resolveBookingSms('skip')}
+        onDismiss={() => setBookingSms(null)}
+      />
     </div>
   );
 }
