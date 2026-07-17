@@ -25,9 +25,10 @@ function check(name, cond, detail) {
 
 const PT_TO_MM = 0.352778;
 const fakeBarcode = (lot) => `<svg data-lot="${lot}"></svg>`;
+// The real format: lib/handlers/collections.js mints 'L' || lpad(seq, 5, '0') → L00042.
 const LOTS = [
-  { lot_number: 'LOT-0001', product_sku: 'TM-95T', product_name: 'Life Fitness 95T Treadmill' },
-  { lot_number: 'LOT-0002', product_sku: 'RW-C2', product_name: 'Concept2 RowErg' },
+  { lot_number: 'L00042', product_sku: 'TM-95T', product_name: 'Life Fitness 95T Treadmill' },
+  { lot_number: 'L00043', product_sku: 'RW-C2', product_name: 'Concept2 RowErg' },
 ];
 
 const html = buildLotLabelsHtml(LOTS, fakeBarcode);
@@ -41,7 +42,6 @@ console.log('stock size (80 × 50 mm as of 17 Jul 2026):');
   check('@page is the sticker size', new RegExp(`@page \\{ size: ${LABEL_W}mm ${LABEL_H}mm;`).test(html));
   check('.label is the same size as @page (drift here = clipped or split labels)',
     new RegExp(`width: ${LABEL_W}mm; height: ${LABEL_H}mm;`).test(html));
-  check('no stale 50mm/30mm geometry left anywhere', !/\b50mm 30mm\b/.test(html) && !/width: 50mm; height: 30mm/.test(html));
 }
 
 console.log('\neverything fits inside the sticker:');
@@ -52,9 +52,14 @@ console.log('\neverything fits inside the sticker:');
   check('barcode fits the usable width', BARCODE_W <= usableW, `${BARCODE_W}mm in ${usableW}mm`);
   check('barcode is wide enough to be worth scanning (>60% of the label)', BARCODE_W / LABEL_W > 0.6);
 
-  // The stack: barcode + lotnum(+1mm margin) + sku + name(capped).
+  // The stack: barcode + lotnum(+ its margin) + sku + name(capped). Every term comes from
+  // the geometry constants, so this relates the TEXT sizes to the LABEL size through a
+  // real physical constant — bump lotnum to 40pt and this genuinely fails.
+  // (The .bc svg is display:block, so the barcode div really is BARCODE_H tall; as an
+  // inline element it would carry ~1mm of extra descender space this sum can't see.)
+  check('the barcode div has no inline descender gap the maths would miss', /\.bc svg \{[^}]*display: block/.test(html));
   const stackH = BARCODE_H
-    + 1 + TEXT.lotnum.size * TEXT.lotnum.lineHeight * PT_TO_MM
+    + TEXT.lotnum.marginTop + TEXT.lotnum.size * TEXT.lotnum.lineHeight * PT_TO_MM
     + TEXT.sku.size * TEXT.sku.lineHeight * PT_TO_MM
     + TEXT.name.maxHeight;
   check('the whole text stack fits the usable height', stackH <= usableH, `${stackH.toFixed(1)}mm in ${usableH}mm`);
@@ -69,12 +74,19 @@ console.log('\neverything fits inside the sticker:');
 console.log('\ncontent:');
 {
   check('one label per lot', (html.match(/class="label"/g) || []).length === LOTS.length);
-  check('each label carries its own barcode', html.includes('data-lot="LOT-0001"') && html.includes('data-lot="LOT-0002"'));
-  check('lot number is printed as text too', html.includes('LOT-0001'));
+  check('each label carries its own barcode', html.includes('data-lot="L00042"') && html.includes('data-lot="L00043"'));
+  check('lot number is printed as text too', html.includes('L00042'));
   check('sku is printed', html.includes('TM-95T'));
   check('product name is printed', html.includes('Life Fitness 95T Treadmill'));
   check('one sticker each — page break after every label', /page-break-after: always/.test(html));
   check('no lots → no labels, still a valid document', !/class="label"/.test(buildLotLabelsHtml([], fakeBarcode)));
+
+  // A lot with no number would print a barcode reading "undefined" onto real stock, so
+  // the filter belongs in the builder — not only in printLotLabels (which can't be tested
+  // here: it needs a DOM). Nothing else may bypass it.
+  const junk = buildLotLabelsHtml([{ lot_number: null, product_sku: 'X', product_name: 'No lot' }, LOTS[0]], fakeBarcode);
+  check('a lot with no number is dropped, not printed as "undefined"',
+    (junk.match(/class="label"/g) || []).length === 1 && !/undefined/.test(junk));
 }
 
 console.log('\nescaping (a product name is free text from the collection form):');

@@ -18,12 +18,17 @@ const PADDING = 2.5;  // mm — keeps ink off the die-cut edge
 
 // The barcode is the whole point of the label, so give it the usable width: wider modules
 // scan more reliably on a worn or angled sticker. 2.5mm of slack each side of the padding.
+// At 70mm a real lot number (L00042) prints a ~30 mil X-dimension — very comfortable.
 const BARCODE_W = LABEL_W - PADDING * 2 - 5; // 70mm
+// NB this is a BOUNDING BOX, not the bar height. JsBarcode sets a viewBox and no
+// preserveAspectRatio, so the SVG scales uniformly (no distortion) and letterboxes: a
+// short lot number is WIDTH-constrained, inking ~15.6mm and centring the rest. Raising
+// this alone therefore buys dead space, not taller bars — widen the label instead.
 const BARCODE_H = 18;                        // mm
 
 // Text stack, in print order. Sizes scaled ~1.6× with the stock (50→80 wide, 30→50 tall).
 const TEXT = {
-  lotnum: { size: 19, lineHeight: 1 },                 // read-by-eye fallback — biggest
+  lotnum: { size: 19, lineHeight: 1, marginTop: 1 },   // read-by-eye fallback — biggest
   sku: { size: 11, lineHeight: 1.1 },
   name: { size: 9, lineHeight: 1.05, maxHeight: 10 },  // mm — clipped, never overflows
 };
@@ -64,7 +69,9 @@ function barcodeSvgString(text) {
  * @param {(lotNumber:string) => string} barcodeFor
  */
 export function buildLotLabelsHtml(lots, barcodeFor) {
-  const labels = (lots || []).map((l) => `
+  // Filter here, not in the caller: a lot with no number would print a barcode reading
+  // "undefined" onto physical stock. This is the function anything else should call.
+  const labels = (lots || []).filter((l) => l && l.lot_number).map((l) => `
     <div class="label">
       <div class="bc">${barcodeFor(l.lot_number)}</div>
       <div class="lotnum">${esc(l.lot_number)}</div>
@@ -84,8 +91,10 @@ export function buildLotLabelsHtml(lots, barcodeFor) {
       font-family: Arial, Helvetica, sans-serif; text-align: center;
     }
     .label:last-child { page-break-after: auto; }
-    .bc svg { width: ${BARCODE_W}mm; height: ${BARCODE_H}mm; }
-    .lotnum { font-family: 'Courier New', monospace; font-weight: 700; font-size: ${TEXT.lotnum.size}pt; line-height: ${TEXT.lotnum.lineHeight}; margin-top: 1mm; }
+    /* display:block so the SVG isn't an inline element — inline adds ~1mm of descender
+       space below the baseline, which silently eats the stack's slack. */
+    .bc svg { width: ${BARCODE_W}mm; height: ${BARCODE_H}mm; display: block; }
+    .lotnum { font-family: 'Courier New', monospace; font-weight: 700; font-size: ${TEXT.lotnum.size}pt; line-height: ${TEXT.lotnum.lineHeight}; margin-top: ${TEXT.lotnum.marginTop}mm; }
     .sku { font-size: ${TEXT.sku.size}pt; line-height: ${TEXT.sku.lineHeight}; }
     .name { font-size: ${TEXT.name.size}pt; line-height: ${TEXT.name.lineHeight}; max-height: ${TEXT.name.maxHeight}mm; overflow: hidden; }
   </style></head><body>${labels}
@@ -98,6 +107,7 @@ export const LABEL_GEOMETRY = { LABEL_W, LABEL_H, PADDING, BARCODE_W, BARCODE_H,
 
 // lots: array of { lot_number, product_sku, product_name }
 export function printLotLabels(lots) {
+  // buildLotLabelsHtml filters too; this early return just avoids opening an empty popup.
   const list = (lots || []).filter((l) => l && l.lot_number);
   if (!list.length) return;
 
