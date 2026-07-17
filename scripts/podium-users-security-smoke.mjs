@@ -16,7 +16,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { USERS_PUBLIC_COLUMNS, usersSelectList, buildUserUpdate } from '../lib/usersAdmin.js';
+import { USERS_PUBLIC_COLUMNS, usersSelectList, buildUserUpdate, isBcryptHash } from '../lib/usersAdmin.js';
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -57,6 +57,17 @@ console.log('\nPUT hashes a genuinely new password (never stores it raw):');
   check('the stored value is the HASH, never the raw password', withPw.params.includes('HASHED::plaintext-secret') && !withPw.params.includes('plaintext-secret'));
   check('the password is hashed with cost 10', hashedArgs && hashedArgs[0] === 'plaintext-secret' && hashedArgs[1] === 10);
   check('id is still the WHERE param', withPw.params[withPw.params.length - 1] === 'GS');
+}
+
+console.log('\ndeploy-cutover guard — an already-hashed value round-tripped by a stale tab is not re-hashed:');
+{
+  const realHash = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+  check('isBcryptHash recognises a bcrypt hash', isBcryptHash(realHash) === true);
+  check('isBcryptHash rejects a normal password', isBcryptHash('hunter2') === false);
+  const stale = await buildUserUpdate({ id: 'GS', name: 'n', email: 'e', primary: 'staff', password: realHash },
+    { hash: async () => 'DOUBLE_HASH_SHOULD_NOT_HAPPEN' });
+  check('a round-tripped hash is treated as "no change" (no double-hash lockout)', !/password/.test(stale.text));
+  check('and the hash function is never called on it', !stale.params.includes('DOUBLE_HASH_SHOULD_NOT_HAPPEN'));
 }
 
 console.log('\nwiring — api/[...path].js handleUsers actually uses the safe helpers:');
