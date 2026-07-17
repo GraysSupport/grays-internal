@@ -3,10 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import toast from 'react-hot-toast';
+import { authHeaders, getToken, getRoles, hasAnyRole } from '../utils/auth';
 
 // F0b: single-user-multi-role. Keep in sync with lib/rbac.js ROLES (precedence order).
 // users.access mirrors the primary (highest-precedence) role server-side.
 const ROLES = ['superadmin', 'admin', 'logistics', 'sales', 'staff', 'technician', 'workshop'];
+
+// F9: user administration (create/edit/delete + role assignment) is superadmin-only.
+// This check is DISPLAY-ONLY — the server re-verifies every write against the login JWT.
+const ADMIN_ROLES = ['superadmin'];
 
 function RoleCheckboxes({ selected, onToggle }) {
   const set = new Set(selected || []);
@@ -38,20 +43,22 @@ export default function Register() {
   });
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
 
   const navigate = useNavigate();
 
+  // F9: superadmin-only. Reads the role SET signed into the login JWT (P10) rather than
+  // the single localStorage `user.access`, so an admin who holds superadmin alongside
+  // other roles is judged on the same set the server gates on. Display-only — every
+  // write is re-checked server-side against the JWT.
   useEffect(() => {
-    const stored = localStorage.getItem('user');
-    if (!stored) {
-      navigate('/');
+    if (!getToken()) { navigate('/'); return; }
+    if (!hasAnyRole(getRoles(), ADMIN_ROLES)) {
+      toast.error('User administration is for superadmins');
+      navigate('/dashboard');
       return;
     }
-    const u = JSON.parse(stored);
-    if (u?.access !== 'superadmin') {
-      toast.error('Insufficient permissions');
-      navigate('/dashboard');
-    }
+    setAuthorized(true);
   }, [navigate]);
 
   const handleChange = (e) =>
@@ -82,7 +89,7 @@ export default function Register() {
     try {
       const res = await fetch('/api/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(formData),
       });
 
@@ -111,7 +118,7 @@ export default function Register() {
   const fetchUsers = async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch('/api/users');
+      const res = await fetch('/api/users', { headers: authHeaders() });
       if (!res.ok) throw new Error('Failed to fetch users');
       const data = await res.json();
       // Ensure every row has a roles array (falls back to [access]).
@@ -148,7 +155,7 @@ export default function Register() {
     try {
       const res = await fetch('/api/users', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(row),
       });
 
@@ -167,8 +174,11 @@ export default function Register() {
   };
 
   useEffect(() => {
-    if (activeTab === 'update') fetchUsers();
-  }, [activeTab]);
+    if (authorized && activeTab === 'update') fetchUsers();
+  }, [authorized, activeTab]);
+
+  // Don't paint the user-admin UI before the role check has passed (mirrors /leads).
+  if (!authorized) return null;
 
   return (
     <>

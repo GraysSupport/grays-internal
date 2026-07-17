@@ -89,3 +89,33 @@ Use only if Ops must reach Production before Podium. Slightly messier ledger (00
 | 0003_customer_type (+seed) | Ops G1 | ✅ applied + recorded | ✅ 10 Jul 2026 (seed: 568 rows) |
 | 0004_delivery_type | Ops G2 | ✅ applied + recorded | ✅ 10 Jul 2026 |
 | 0005_product_lots | Ops G3 | ✅ applied + recorded | ✅ 10 Jul 2026 |
+| 0006_user_roles_granted_by_fk | Podium F9 | ✅ applied 17 Jul 2026 (up + down both verified) | ✅ **17 Jul 2026** (backup branch `backup-pre-0006-granted-by-fk-2026-07-17`) |
+
+> **0006 is not optional if F9 ships.** F9 starts writing `user_roles.granted_by` (it was
+> always NULL before). The original FK has no `ON DELETE` clause, so once an admin has
+> granted a role, deleting that admin raises `23503` and `DELETE /api/users` fails with a
+> 500. `0006` switches the FK to `ON DELETE SET NULL` (keeps the grant, clears the
+> attribution). Per rule 5 it was run on Production **before** the F9 PR merged.
+>
+> **Applied to Production 17 Jul 2026** via `npm run migrate` (Nick-directed), after
+> branching Production to `backup-pre-0006-granted-by-fk-2026-07-17`. Verified after:
+> `user_roles_granted_by_fkey` is `ON DELETE SET NULL`; `user_roles_user_id_fkey` still
+> `ON DELETE CASCADE`; 18 users / 18 role rows unchanged (the migration moves no data).
+
+## ⚠️ Bootstrap: a database with no users cannot create one (F9, 17 Jul 2026)
+
+F9 gates `POST /api/register` to superadmin, and there is **no seeded superadmin** in any
+migration. On an EMPTY `users` table that is a deadlock: no user → no login → no token →
+no superadmin → registration is 401 forever.
+
+Production and every Neon branch cloned from it already have users, so this affects only a
+genuinely fresh database. It is deliberately **not** solved with an "open registration
+when there are no users" code path — that is a hole waiting to be re-opened. Instead,
+seed the first superadmin directly:
+
+```sql
+-- bcrypt the password out-of-band, then:
+INSERT INTO users (id, name, email, password, access)
+VALUES ('GS', 'Grays Support', 'support@graysfitness.com.au', '<bcrypt-hash>', 'superadmin');
+INSERT INTO user_roles (user_id, role, granted_by) VALUES ('GS', 'superadmin', NULL);
+```

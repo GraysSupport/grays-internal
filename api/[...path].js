@@ -2,7 +2,7 @@
 import { compare, hash } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
-import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole } from '../lib/rbac.js';
+import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole, requireRoles } from '../lib/rbac.js';
 // Formerly standalone /api functions (workorder/delivery/collections/winnings),
 // relocated under lib/handlers/ and routed here so they don't each consume one of the
 // Vercel Hobby plan's 12 Serverless-Function slots. Their handler logic is unchanged;
@@ -421,6 +421,13 @@ async function handleAuth(req, res, action) {
 
     if (action === 'register') {
       if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+
+      // F9: creating a user (and choosing its roles) is a superadmin action. Server-
+      // authoritative — without this an unauthenticated caller could POST themselves a
+      // superadmin account, which would make every other role gate decorative.
+      const gate = requireRoles(req, ['superadmin']);
+      if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+
       const { id, name, email, password } = req.body;
 
       const existing = await client.query('SELECT 1 FROM users WHERE email = $1', [email]);
@@ -438,7 +445,7 @@ async function handleAuth(req, res, action) {
         'INSERT INTO users (id, name, email, password, access) VALUES ($1,$2,$3,$4,$5)',
         [id, name, email, hashed, primary]
       );
-      await syncUserRoles(client, id, roles, null); // granted_by unknown (no acting-admin identity here)
+      await syncUserRoles(client, id, roles, gate.auth.id); // F9: granted_by = the acting admin
       return res.status(200).json({ message: 'User registered successfully', roles });
     }
 
@@ -468,6 +475,24 @@ async function handleAuth(req, res, action) {
   } finally {
     client.release();
   }
+}
+
+/**
+ * F9 lockout guard: would removing superadmin from (or deleting) user `id` leave the
+ * portal with NO superadmin at all? That state is unrecoverable through the UI — user
+ * administration is superadmin-gated, so nobody could ever grant it back without direct
+ * SQL. Uses users.access (always populated; primaryRole puts superadmin first, so any
+ * superadmin-holder mirrors to access='superadmin') rather than user_roles, so it also
+ * works on a DB that hasn't run the F0 migration.
+ */
+async function wouldOrphanSuperadmin(client, id) {
+  const target = await client.query('SELECT access FROM users WHERE id = $1', [id]);
+  if (!target.rowCount || target.rows[0].access !== 'superadmin') return false;
+  const others = await client.query(
+    `SELECT count(*)::int AS n FROM users WHERE access = 'superadmin' AND id <> $1`,
+    [id]
+  );
+  return others.rows[0].n === 0;
 }
 
 /* ---------- USERS ---------- */
@@ -506,6 +531,10 @@ async function handleUsers(req, res) {
     }
 
     if (method === 'PUT') {
+      // F9: editing a user's roles is a superadmin action (see the register gate).
+      const gate = requireRoles(req, ['superadmin']);
+      if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+
       const { id, name, email, password, access } = body;
       if (!id) return res.status(400).json({ error: 'User ID is required' });
       // F0b: role set from the multi-select; users.access mirrors the primary role.
@@ -513,19 +542,41 @@ async function handleUsers(req, res) {
       if (!roles.length && access) roles = sanitizeRoles([access]);
       if (!roles.length) roles = ['staff'];
       const primary = primaryRole(roles);
+
+      // F9: never demote the last superadmin — including yourself. The UI renders role
+      // checkboxes for every row, so this is one click away, and the current JWT keeps
+      // working for up to an hour afterwards, hiding the damage until the next login.
+      if (primary !== 'superadmin' && (await wouldOrphanSuperadmin(client, id))) {
+        return res.status(409).json({
+          error: 'Cannot remove the last superadmin — grant superadmin to another user first',
+        });
+      }
+
       await client.query(
         `UPDATE users
            SET name=$1, email=$2, password=$3, access=$4
          WHERE id=$5`,
         [name, email, password, primary, id]
       );
-      await syncUserRoles(client, id, roles, null);
+      await syncUserRoles(client, id, roles, gate.auth.id); // F9: granted_by = the acting admin
       return res.status(200).json({ message: 'User updated successfully', roles });
     }
 
     if (method === 'DELETE') {
+      // F9: deleting a user is a superadmin action.
+      const gate = requireRoles(req, ['superadmin']);
+      if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+
       const { id } = body;
       if (!id) return res.status(400).json({ error: 'User ID is required' });
+
+      // F9: same lockout guard as the demotion path (see wouldOrphanSuperadmin).
+      if (await wouldOrphanSuperadmin(client, id)) {
+        return res.status(409).json({
+          error: 'Cannot delete the last superadmin — grant superadmin to another user first',
+        });
+      }
+
       await client.query('DELETE FROM users WHERE id = $1', [id]);
       return res.status(200).json({ message: 'User deleted successfully' });
     }
