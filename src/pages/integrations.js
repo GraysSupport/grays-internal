@@ -33,14 +33,14 @@ const ADMIN_ROLES = ['superadmin'];
 // Inbound  (F2 webhook):     received → processed | failed.
 const STATUSES = ['', 'sent', 'failed', 'pending', 'skipped', 'received', 'processed'];
 
-// Plain-English labels for the event types the integrations write. `delivery.booked` and
-// `workorder.review_request` arrive with PRs #72/#73; today only the first two occur.
+// Plain-English labels for the event types the integrations write. `delivery.booked`
+// arrives with PR #72; today only the first three occur. Anything unmapped falls back to
+// its raw event_type, so a new writer is never invisible here.
 const EVENT_LABELS = {
   'waitlist.back_in_stock': 'Waitlist — back in stock SMS',
   'message.received': 'Inbound message',
   'message.sent': 'Outbound message',
   'delivery.booked': 'Delivery booked SMS',
-  'workorder.review_request': 'Review request',
 };
 
 const STATUS_STYLES = {

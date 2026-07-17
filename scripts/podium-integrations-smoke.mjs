@@ -41,9 +41,11 @@ function resSpy() {
   };
 }
 
+// A real row: F8a is the writer that's actually on main, and its reference_id is
+// underscore-heavy, which is exactly what the LIKE-escaping below has to survive.
 const LOG_ROW = (over = {}) => ({
-  id: 9, source: 'podium', direction: 'outbound', event_type: 'workorder.review_request',
-  reference_id: 'review_request:42', status: 'sent', payload: { workorder_id: 42 },
+  id: 9, source: 'podium', direction: 'outbound', event_type: 'waitlist.back_in_stock',
+  reference_id: 'waitlist_back_in_stock:12', status: 'sent', payload: { waitlist_id: 12, sku: 'TM-95T' },
   error: null, created_at: '2026-07-17T01:00:00.000Z', ...over,
 });
 
@@ -139,19 +141,19 @@ console.log('\nfilters are parameterised (never string-interpolated):');
   const res = resSpy();
   await handler(reqFor(['superadmin'], {
     resource: 'sync-log', status: 'failed', source: 'podium',
-    event_type: 'workorder.review_request', q: "review_request:42'; DROP TABLE users;--",
+    event_type: 'waitlist.back_in_stock', q: "waitlist_back_in_stock:12'; DROP TABLE users;--",
   }), res, [], deps(client));
   // NB: pick the LIST query specifically — the summary legitimately contains the literal
   // 'failed' inside its count(*) FILTER, which would mask an interpolation bug.
   const list = pickList(client);
   // Position-blind `includes` would pass even if the placeholders were transposed, and
   // $n numbering is the whole point — assert the exact params, in order.
-  deepStrictEqual(list.params, ['podium', 'workorder.review_request', "%review\\_request:42'; DROP TABLE users;--%", 'failed', 100]);
+  deepStrictEqual(list.params, ['podium', 'waitlist.back_in_stock', "%waitlist\\_back\\_in\\_stock:12'; DROP TABLE users;--%", 'failed', 100]);
   check('list params bind source, event_type, q, status, limit in $1..$5 order', true);
   check('placeholders are sequential $1..$5', /source = \$1/.test(list.sql) && /event_type = \$2/.test(list.sql) && /\$3 ESCAPE/.test(list.sql) && /status = \$4/.test(list.sql) && /LIMIT \$5/.test(list.sql));
   check('no filter value is interpolated into the SQL text', !/'podium'/.test(list.sql) && !/status = 'failed'/.test(list.sql));
   check('a SQL-injection attempt stays in params, never in the SQL text', !/DROP TABLE/i.test(list.sql));
-  check('LIKE metacharacters in user text are escaped', list.params[2].includes('review\\_request'));
+  check('LIKE metacharacters in user text are escaped', list.params[2].includes('waitlist\\_back\\_in\\_stock'));
 }
 
 console.log('\nthe tiles keep telling the truth while you filter:');
