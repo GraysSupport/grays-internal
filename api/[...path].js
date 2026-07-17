@@ -3,6 +3,7 @@ import { compare, hash } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
 import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole, requireRoles } from '../lib/rbac.js';
+import { usersSelectList, buildUserUpdate } from '../lib/usersAdmin.js';
 // Formerly standalone /api functions (workorder/delivery/collections/winnings),
 // relocated under lib/handlers/ and routed here so they don't each consume one of the
 // Vercel Hobby plan's 12 Serverless-Function slots. Their handler logic is unchanged;
@@ -505,12 +506,16 @@ async function handleUsers(req, res) {
       const access = (req.query?.access || '').toString();
       // F0b: return each user's full role set alongside the legacy columns.
       // Falls back to [access] if user_roles is absent (undefined_table).
+      // F23: SELECT an explicit allow-list of columns (never a wildcard select) — the users
+      // list is fetched token-less by the workorder/technician dropdowns, so it must never
+      // carry the bcrypt password hash. (id is the PK, so the explicit columns stay valid
+      // under GROUP BY u.id via functional dependency.)
       try {
         const params = [];
         let where = '';
         if (access) { params.push(access); where = 'WHERE u.access = $1'; }
         const r = await client.query(
-          `SELECT u.*,
+          `SELECT ${usersSelectList('u')},
                   COALESCE(array_agg(ur.role) FILTER (WHERE ur.role IS NOT NULL),
                            ARRAY[]::text[]) AS roles
              FROM users u
@@ -524,8 +529,8 @@ async function handleUsers(req, res) {
       } catch (err) {
         if (err?.code !== '42P01') throw err; // only fall back when user_roles is missing
         const r = access
-          ? await client.query('SELECT * FROM users WHERE access = $1', [access])
-          : await client.query('SELECT * FROM users');
+          ? await client.query(`SELECT ${usersSelectList()} FROM users WHERE access = $1`, [access])
+          : await client.query(`SELECT ${usersSelectList()} FROM users`);
         return res.status(200).json(r.rows.map((u) => ({ ...u, roles: u.access ? [u.access] : [] })));
       }
     }
@@ -552,12 +557,12 @@ async function handleUsers(req, res) {
         });
       }
 
-      await client.query(
-        `UPDATE users
-           SET name=$1, email=$2, password=$3, access=$4
-         WHERE id=$5`,
-        [name, email, password, primary, id]
-      );
+      // F23: the list no longer returns the password hash, so the admin page's edit no
+      // longer round-trips it. buildUserUpdate preserves the existing password when none is
+      // supplied (no lockout on a name/role edit) and hashes a genuinely new one (the raw
+      // write this replaced would have stored plaintext and broken login).
+      const upd = await buildUserUpdate({ id, name, email, primary, password }, { hash });
+      await client.query(upd.text, upd.params);
       await syncUserRoles(client, id, roles, gate.auth.id); // F9: granted_by = the acting admin
       return res.status(200).json({ message: 'User updated successfully', roles });
     }
