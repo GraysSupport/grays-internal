@@ -155,7 +155,7 @@ console.log('\nend-to-end against the typed mock (PODIUM_MOCK):');
 // through both and asserts they agree, rather than testing the client mirror in isolation.
 console.log('\nincrement 2 — client target validation (src/utils/compose.js):');
 {
-  const { classifyComposeTarget, isValidComposeTarget, composeResultMessage } =
+  const { classifyComposeTarget, isValidComposeTarget, MIN_PHONE_DIGITS } =
     await import('../src/utils/compose.js');
 
   check('a spaced phone is accepted', isValidComposeTarget('+61 400 111 222') === true);
@@ -167,16 +167,36 @@ console.log('\nincrement 2 — client target validation (src/utils/compose.js):'
   check('email is classified as email', classifyComposeTarget('a@b.co')?.kind === 'email');
   check('classify returns null for junk (never throws in render)', classifyComposeTarget('nope') === null);
 
-  // Parity with the server's classifyTarget across the same corpus.
+  // Parity with the server's classifyTarget.
+  //
+  // The corpus alone is NOT enough: every realistic number carries 10-11 digits, so a client
+  // threshold anywhere from 6 to 10 classifies all of them identically and would ship green
+  // while blocking a short local number the server accepts. So the corpus is padded with
+  // cases that sit exactly ON the boundary, and the threshold itself is asserted equal.
+  check(`client MIN_PHONE_DIGITS (${MIN_PHONE_DIGITS}) equals the server's threshold`,
+    classifyTarget('1'.repeat(MIN_PHONE_DIGITS)).kind === 'phone'
+    && classifyComposeTarget('1'.repeat(MIN_PHONE_DIGITS))?.kind === 'phone'
+    && await throwsCode(() => classifyTarget('1'.repeat(MIN_PHONE_DIGITS - 1)), 'INVALID_COMPOSE_TARGET')
+    && classifyComposeTarget('1'.repeat(MIN_PHONE_DIGITS - 1)) === null);
+
   const corpus = [
     '+61 400 111 222', '0400111222', '(03) 8360 7047', '+61-3-8360-7047',
     'maria@example.com', '  Maria@Example.COM ', 'a@b.co',
-    'hello there', '', '   ', '12345', 'not@anemail', '@nope.com',
+    'hello there', '', '   ', 'not@anemail', '@nope.com',
+    // digit-count boundary (either side of MIN_PHONE_DIGITS = 6) and awkward-but-valid emails
+    '12345', '123456', '1234567', 'a@b.c', 'first.last+tag@sub.example.co.uk',
   ];
   let agreed = 0;
   for (const input of corpus) {
     let serverKind = null;
-    try { serverKind = classifyTarget(input).kind; } catch { serverKind = null; }
+    try {
+      serverKind = classifyTarget(input).kind;
+    } catch (e) {
+      // Only a rejection counts as "server says invalid" — swallowing ANY throw would let a
+      // genuine crash inside the server helper read as agreement with the client's null.
+      if (e?.code !== 'INVALID_COMPOSE_TARGET') throw e;
+      serverKind = null;
+    }
     const clientKind = classifyComposeTarget(input)?.kind ?? null;
     if (serverKind !== clientKind) {
       throw new Error(`FAIL: client/server target parity — "${input}" server=${serverKind} client=${clientKind}`);
@@ -201,6 +221,13 @@ console.log('\nincrement 2 — compose result messaging (proves dedupe to the re
     composeResultMessage({ reused: true, reopened: true }) !== composeResultMessage({ reused: true, reopened: false }));
   check('a null result still returns a string (never renders "undefined")',
     typeof composeResultMessage(null) === 'string' && composeResultMessage(null).length > 0);
+  // parseMaybeJson yields {raw:'…'} for a non-JSON 200 (proxy-mangled body). Falling through
+  // to "started" there would claim a fresh thread when one may have been REUSED — the exact
+  // mis-signal this message exists to prevent, so an unreadable result must not say "started".
+  check('an unreadable response does not claim a thread was started',
+    !/started/i.test(composeResultMessage({ raw: '<html>502</html>' })));
+  check('an unreadable response still returns something a rep can read',
+    composeResultMessage({ raw: 'x' }).length > 0);
 }
 
 console.log(`\n✅ compose smoke: ${passed} checks passed`);

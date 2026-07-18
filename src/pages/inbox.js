@@ -53,6 +53,7 @@ import { classifyComposeTarget, isValidComposeTarget, composeResultMessage } fro
 
 const INBOX_ROLES = ['sales', 'superadmin'];
 const POLL_MS = 8000;
+const COMPOSE_TIMEOUT_MS = 30000; // give up on a stalled compose rather than lock the modal
 
 // Channel presentation (label + Tailwind classes). Falls back to the raw type.
 const CHANNELS = {
@@ -180,6 +181,7 @@ export default function Inbox() {
   // an existing thread for that number/address is reopened and continued, never duplicated.
   const [showCompose, setShowCompose] = useState(false);
   const [composeSending, setComposeSending] = useState(false);
+  const composeSendingRef = useRef(false); // synchronous double-submit guard (see submitCompose)
 
   // F17 — workorder detail modal (opened from a workorder card in the panel).
   const [woDetail, setWoDetail] = useState(null);
@@ -335,8 +337,31 @@ export default function Inbox() {
   // fetches it directly, then opens its thread + panel. Used by the funnel deep-link and
   // (F20 incr 2) after composing, where the resulting thread may sit outside the active
   // filters (e.g. bucket=mine but Podium hasn't assigned the new thread to this rep yet).
+  const clearAttachments = useCallback(() => {
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.url));
+      return [];
+    });
+  }, []);
+
+  // Everything the rep may have typed for the PREVIOUS thread. Reset whenever the open
+  // conversation changes, so a draft (or an active internal-note mode) can't follow them
+  // into a different customer's thread.
+  const resetComposerState = useCallback(() => {
+    setComposerMode('reply');
+    setShowTemplates(false);
+    setDraft('');
+    clearAttachments();
+  }, [clearAttachments]);
+
   const openConversationById = useCallback(async (convId) => {
     if (!convId) return false;
+    // Reset the composer before switching threads. Without this, a half-typed reply to
+    // customer A (and, worse, an active internal-note mode) survives into customer B's
+    // thread — one Send away from a genuine mis-send. Reaching a thread WITHOUT clicking a
+    // list item is new here, so this path clears; the pre-existing openConversation click
+    // path has the same gap and is recorded in the backlog rather than fixed in passing.
+    resetComposerState();
     try {
       const res = await fetch(
         `/api/podium/inbox?resource=conversation&conversationId=${encodeURIComponent(convId)}`,
@@ -354,7 +379,7 @@ export default function Inbox() {
     } catch {
       return false;
     }
-  }, [navigate, loadThread, loadPanel, loadAssignees]);
+  }, [navigate, loadThread, loadPanel, loadAssignees, resetComposerState]);
 
   // Fetch the timeline whenever the panel resolves a lead.
   useEffect(() => {
@@ -516,13 +541,6 @@ export default function Inbox() {
     });
   };
 
-  const clearAttachments = useCallback(() => {
-    setAttachments((prev) => {
-      prev.forEach((a) => URL.revokeObjectURL(a.url));
-      return [];
-    });
-  }, []);
-
   // F12 — insert a Podium message template into the reply draft.
   const insertTemplate = (tpl) => {
     setComposerMode('reply');
@@ -542,10 +560,7 @@ export default function Inbox() {
     setLeadHistory([]);
     setAssignees([]);
     setShowAssign(false);
-    setComposerMode('reply');
-    setShowTemplates(false);
-    setDraft('');
-    clearAttachments();
+    resetComposerState();
   };
 
   const switchBucket = (next) => {
@@ -574,13 +589,23 @@ export default function Inbox() {
   // duplicate), so the response tells us which happened and the toast reports it back:
   // silently reusing a thread while saying "started" would read as an accidental duplicate.
   const submitCompose = async ({ to, channel, body }) => {
-    if (composeSending) return;
+    // Guard on a ref, not on composeSending: the state value is captured at render, so two
+    // submits dispatched before React re-renders (key-repeat on Enter in the To field) would
+    // both read `false`. Dedupe would keep them to ONE thread but the customer would still
+    // receive the message twice.
+    if (composeSendingRef.current) return;
+    composeSendingRef.current = true;
     setComposeSending(true);
+    // A stalled connection (warehouse wifi, hotspot handover) would otherwise leave the
+    // modal locked with no way out but a reload, which loses the draft anyway.
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), COMPOSE_TIMEOUT_MS);
     try {
       const res = await fetch('/api/podium/inbox?resource=compose', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ to, channel, body }),
+        signal: abort.signal,
       });
       if (res.status === 401) { navigate('/'); return; }
       const data = await parseMaybeJson(res);
@@ -591,10 +616,33 @@ export default function Inbox() {
       setShowCompose(false);
       toast.success(composeResultMessage(data));
       loadConversations({ silent: true });
-      if (data?.conversationId) await openConversationById(data.conversationId);
-    } catch {
-      toast.error('Server error starting the conversation');
+      // Landing the rep in the thread is an acceptance criterion, so a failure here must be
+      // said out loud — the modal and the draft are already gone, and on bucket=mine the new
+      // thread may not be in the list either, leaving them with no way back to it.
+      const opened = data?.conversationId
+        ? await openConversationById(data.conversationId)
+        : false;
+      if (!opened) {
+        toast('Started — find it under All conversations', { icon: 'ℹ️' });
+      } else if (bucket !== 'all') {
+        // Widen the list so the thread the rep is now reading is actually in it (Podium may
+        // not have assigned a brand-new conversation to them yet). Same reasoning as the
+        // funnel deep-link; setBucket directly, since switchBucket would clear the selection.
+        setBucket('all');
+      }
+    } catch (err) {
+      // The server sends to Podium BEFORE it responds, so a lost response does not mean a
+      // lost message. Saying "server error" here invites a retry that texts the customer a
+      // second time — dedupe protects the thread, not the message.
+      toast.error(
+        err?.name === 'AbortError'
+          ? 'Timed out — the message may already have been sent. Check the inbox before retrying.'
+          : "Couldn't confirm — the message may already have been sent. Check the inbox before retrying.",
+      );
+      loadConversations({ silent: true }); // so the thread shows up if it did land
     } finally {
+      clearTimeout(timeout);
+      composeSendingRef.current = false;
       setComposeSending(false);
     }
   };
@@ -1766,10 +1814,20 @@ function ComposeModal({ sending, onSubmit, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [sending, onClose]);
 
+  // Backdrop-to-close only while nothing has been typed. Selecting text in the textarea and
+  // releasing outside the form fires a click on the BACKDROP (the form's stopPropagation
+  // can't help — the backdrop is the target), which would discard the message with no undo.
+  // Escape, Cancel and × remain, so nothing is trapped.
+  const closeOnBackdrop = () => {
+    if (sending) return;
+    if (to.trim() || body.trim()) return;
+    onClose();
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={() => { if (!sending) onClose(); }}
+      onClick={closeOnBackdrop}
     >
       <form
         className="bg-white rounded-lg shadow-lg w-full max-w-md flex flex-col"
