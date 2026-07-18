@@ -146,4 +146,61 @@ console.log('\nend-to-end against the typed mock (PODIUM_MOCK):');
   check('mock: the new conversation id differs from the reused one', fresh.conversationId !== reuse.conversationId);
 }
 
+// --- increment 2: the client-side helpers behind the compose UI ----------------------
+//
+// The modal validates the recipient in the browser so a typo is caught before a round-trip.
+// That duplicates lib/podiumCompose.js classifyTarget — and a DIVERGENCE is the real risk:
+// if the client is stricter the rep can't send something the server would accept, and if
+// it's looser they get an opaque 400. So the parity block below runs the SAME inputs
+// through both and asserts they agree, rather than testing the client mirror in isolation.
+console.log('\nincrement 2 — client target validation (src/utils/compose.js):');
+{
+  const { classifyComposeTarget, isValidComposeTarget, composeResultMessage } =
+    await import('../src/utils/compose.js');
+
+  check('a spaced phone is accepted', isValidComposeTarget('+61 400 111 222') === true);
+  check('an email is accepted', isValidComposeTarget('  Maria@Example.COM ') === true);
+  check('junk is rejected', isValidComposeTarget('hello there') === false);
+  check('empty is rejected', isValidComposeTarget('') === false);
+  check('a too-short number is rejected', isValidComposeTarget('12345') === false);
+  check('phone is classified as phone', classifyComposeTarget('0400 111 222')?.kind === 'phone');
+  check('email is classified as email', classifyComposeTarget('a@b.co')?.kind === 'email');
+  check('classify returns null for junk (never throws in render)', classifyComposeTarget('nope') === null);
+
+  // Parity with the server's classifyTarget across the same corpus.
+  const corpus = [
+    '+61 400 111 222', '0400111222', '(03) 8360 7047', '+61-3-8360-7047',
+    'maria@example.com', '  Maria@Example.COM ', 'a@b.co',
+    'hello there', '', '   ', '12345', 'not@anemail', '@nope.com',
+  ];
+  let agreed = 0;
+  for (const input of corpus) {
+    let serverKind = null;
+    try { serverKind = classifyTarget(input).kind; } catch { serverKind = null; }
+    const clientKind = classifyComposeTarget(input)?.kind ?? null;
+    if (serverKind !== clientKind) {
+      throw new Error(`FAIL: client/server target parity — "${input}" server=${serverKind} client=${clientKind}`);
+    }
+    agreed += 1;
+  }
+  check(`client and server classify all ${corpus.length} target cases identically`, agreed === corpus.length);
+}
+
+console.log('\nincrement 2 — compose result messaging (proves dedupe to the rep):');
+{
+  const { composeResultMessage } = await import('../src/utils/compose.js');
+  // The toast is the ONLY signal that dedupe happened — a rep who sees "Conversation
+  // started" after we actually reused a thread would reasonably think they'd duplicated it.
+  check('a created thread reads as started',
+    /started/i.test(composeResultMessage({ reused: false, reopened: false })));
+  check('a reused OPEN thread says it continued an existing conversation',
+    /existing/i.test(composeResultMessage({ reused: true, reopened: false })));
+  check('a REOPENED thread says reopened (distinct from plain reuse)',
+    /reopen/i.test(composeResultMessage({ reused: true, reopened: true })));
+  check('reopened and reused messages differ',
+    composeResultMessage({ reused: true, reopened: true }) !== composeResultMessage({ reused: true, reopened: false }));
+  check('a null result still returns a string (never renders "undefined")',
+    typeof composeResultMessage(null) === 'string' && composeResultMessage(null).length > 0);
+}
+
 console.log(`\n✅ compose smoke: ${passed} checks passed`);

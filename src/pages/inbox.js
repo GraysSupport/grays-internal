@@ -49,6 +49,7 @@ import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import { authHeaders, getToken, getRoles, hasAnyRole } from '../utils/auth';
 import { parseMaybeJson } from '../utils/http';
+import { classifyComposeTarget, isValidComposeTarget, composeResultMessage } from '../utils/compose';
 
 const INBOX_ROLES = ['sales', 'superadmin'];
 const POLL_MS = 8000;
@@ -174,6 +175,11 @@ export default function Inbox() {
   const [creating, setCreating] = useState(false);
   const [createEmail, setCreateEmail] = useState('');
   const [needEmail, setNeedEmail] = useState(false);
+
+  // F20 incr 2 — compose a new conversation (to a phone/email). The server dedupes:
+  // an existing thread for that number/address is reopened and continued, never duplicated.
+  const [showCompose, setShowCompose] = useState(false);
+  const [composeSending, setComposeSending] = useState(false);
 
   // F17 — workorder detail modal (opened from a workorder card in the panel).
   const [woDetail, setWoDetail] = useState(null);
@@ -325,6 +331,31 @@ export default function Inbox() {
     }
   }, []);
 
+  // Open a conversation by uid even when it isn't in the current bucket/status list —
+  // fetches it directly, then opens its thread + panel. Used by the funnel deep-link and
+  // (F20 incr 2) after composing, where the resulting thread may sit outside the active
+  // filters (e.g. bucket=mine but Podium hasn't assigned the new thread to this rep yet).
+  const openConversationById = useCallback(async (convId) => {
+    if (!convId) return false;
+    try {
+      const res = await fetch(
+        `/api/podium/inbox?resource=conversation&conversationId=${encodeURIComponent(convId)}`,
+        { headers: authHeaders() },
+      );
+      if (res.status === 401) { navigate('/'); return false; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok || !data?.conversation) return false;
+      setSelectedId(convId);
+      setSelectedConv(data.conversation);
+      loadThread(convId);
+      loadPanel(convId);
+      loadAssignees(convId);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [navigate, loadThread, loadPanel, loadAssignees]);
+
   // Fetch the timeline whenever the panel resolves a lead.
   useEffect(() => {
     loadLeadHistory(panel?.lead?.lead_id || null);
@@ -386,24 +417,8 @@ export default function Inbox() {
     if (!convId) return;
     deepLinkedRef.current = true;
     setBucket('all'); // widen the list so the deep-linked thread isn't behind a notLinked prompt
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/podium/inbox?resource=conversation&conversationId=${encodeURIComponent(convId)}`,
-          { headers: authHeaders() },
-        );
-        if (res.status === 401) { navigate('/'); return; }
-        const data = await parseMaybeJson(res);
-        if (res.ok && data?.conversation) {
-          setSelectedId(convId);
-          setSelectedConv(data.conversation);
-          loadThread(convId);
-          loadPanel(convId);
-          loadAssignees(convId);
-        }
-      } catch { /* deep-link is best-effort */ }
-    })();
-  }, [authorized, navigate, loadThread, loadPanel, loadAssignees]);
+    openConversationById(convId); // best-effort; swallows its own errors
+  }, [authorized, openConversationById]);
 
   // ---- Poll: refresh the list (and the open thread) for new activity -------------
   const pollNow = useCallback(async () => {
@@ -553,6 +568,35 @@ export default function Inbox() {
     loadThread(c.uid);
     loadPanel(c.uid);
     loadAssignees(c.uid);
+  };
+
+  // F20 incr 2 — start a new conversation. The SERVER dedupes (reopen-and-continue over
+  // duplicate), so the response tells us which happened and the toast reports it back:
+  // silently reusing a thread while saying "started" would read as an accidental duplicate.
+  const submitCompose = async ({ to, channel, body }) => {
+    if (composeSending) return;
+    setComposeSending(true);
+    try {
+      const res = await fetch('/api/podium/inbox?resource=compose', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ to, channel, body }),
+      });
+      if (res.status === 401) { navigate('/'); return; }
+      const data = await parseMaybeJson(res);
+      if (!res.ok) {
+        toast.error(data?.error || 'Could not start the conversation');
+        return; // leave the modal open with the draft intact so the rep can correct it
+      }
+      setShowCompose(false);
+      toast.success(composeResultMessage(data));
+      loadConversations({ silent: true });
+      if (data?.conversationId) await openConversationById(data.conversationId);
+    } catch {
+      toast.error('Server error starting the conversation');
+    } finally {
+      setComposeSending(false);
+    }
   };
 
   // Feedback (8 Jul): a salesperson opens/closes the selected conversation. It then
@@ -874,6 +918,15 @@ export default function Inbox() {
                   </button>
                 ))}
               </div>
+              {/* F20 incr 2 — start a new conversation to a phone/email (server dedupes). */}
+              <button
+                type="button"
+                onClick={() => setShowCompose(true)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-500 text-sm text-white hover:bg-blue-600"
+                title="Start a new conversation with a phone number or email"
+              >
+                <span aria-hidden="true">✉️</span> New conversation
+              </button>
               {/* F15 — in-inbox product price/stock lookup (list cached client-side). */}
               <button
                 type="button"
@@ -1238,6 +1291,15 @@ export default function Inbox() {
           detail={woDetail}
           loading={woLoading}
           onClose={closeWorkorder}
+        />
+      )}
+
+      {/* F20 incr 2 — compose a new conversation (phone/email; the server dedupes). */}
+      {showCompose && (
+        <ComposeModal
+          sending={composeSending}
+          onSubmit={submitCompose}
+          onClose={() => setShowCompose(false)}
         />
       )}
 
@@ -1668,6 +1730,133 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- Compose a new conversation (F20 incr 2) ------------------------------------
+// A rep starts a chat to a phone number or email. The DEDUPE lives on the server
+// (POST ?resource=compose reopens and continues an existing thread rather than creating a
+// duplicate), so this component deliberately makes no create/reuse decision of its own —
+// it collects the recipient + first message, and reports back what the server did.
+//
+// The recipient is validated in the browser only to catch a typo before the round-trip;
+// src/utils/compose.js mirrors the server's rule and the smoke asserts they agree.
+function ComposeModal({ sending, onSubmit, onClose }) {
+  const [to, setTo] = useState('');
+  const [body, setBody] = useState('');
+
+  const target = classifyComposeTarget(to);
+  const touched = to.trim().length > 0;
+  const targetInvalid = touched && !isValidComposeTarget(to);
+  const canSend = !sending && isValidComposeTarget(to) && body.trim().length > 0;
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!canSend) return;
+    // Channel follows the recipient type — the server defaults the same way, but sending
+    // it explicitly keeps the composed thread's ChannelBadge predictable.
+    onSubmit({ to: to.trim(), channel: target.kind, body: body.trim() });
+  };
+
+  // Escape closes — but never mid-send, or the rep loses the draft with a request in flight.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !sending) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sending, onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={() => { if (!sending) onClose(); }}
+    >
+      <form
+        className="bg-white rounded-lg shadow-lg w-full max-w-md flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={submit}
+      >
+        <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <h2 className="text-lg font-bold">New conversation</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="text-gray-400 hover:text-gray-700 text-xl leading-none disabled:opacity-40"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label htmlFor="compose-to" className="block text-sm font-medium text-gray-700 mb-1">
+              To
+            </label>
+            <input
+              id="compose-to"
+              type="text"
+              autoFocus
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="Phone number or email address"
+              className={`w-full text-sm border rounded-md px-3 py-2 focus:outline-none focus:ring-2 ${
+                targetInvalid
+                  ? 'border-red-400 focus:ring-red-300'
+                  : 'border-gray-300 focus:ring-blue-400'
+              }`}
+            />
+            {targetInvalid && (
+              <p className="mt-1 text-xs text-red-600">
+                Enter a valid phone number or email address.
+              </p>
+            )}
+            {target && (
+              <p className="mt-1 text-xs text-gray-500">
+                Sending by {target.kind === 'email' ? 'email' : 'text message'}.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="compose-body" className="block text-sm font-medium text-gray-700 mb-1">
+              Message
+            </label>
+            <textarea
+              id="compose-body"
+              rows={4}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Type the first message…"
+              className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+
+          <p className="text-[11px] text-gray-500">
+            If this customer already has a conversation, it will be reopened and continued
+            rather than duplicated.
+          </p>
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSend}
+            className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm hover:bg-blue-600 disabled:opacity-40 disabled:hover:bg-blue-500"
+          >
+            {sending ? 'Starting…' : 'Start conversation'}
+          </button>
+        </footer>
+      </form>
     </div>
   );
 }
