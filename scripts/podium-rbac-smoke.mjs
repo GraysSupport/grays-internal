@@ -14,7 +14,7 @@
 process.env.JWT_SECRET = 'test-secret-for-rbac-smoke';
 
 const jwt = (await import('jsonwebtoken')).default;
-const { requireRoles, syncUserRoles, hasAnyRole, primaryRole, sanitizeRoles } = await import('../lib/rbac.js');
+const { requireRoles, syncUserRoles, hasAnyRole, primaryRole, sanitizeRoles, BOOKING_SMS_ROLES } = await import('../lib/rbac.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -126,6 +126,115 @@ console.log('\ngate is actually WIRED IN (not just sound in isolation):');
   // If someone gates reads, these pages must start sending authHeaders() first.
   check('GET /api/users is deliberately left ungated (see the F9 report)',
     !/method === 'GET'[\s\S]{0,400}requireRoles/.test(usersBlock));
+}
+
+console.log('\ndelivery-booked SMS is superadmin-only (temporary lockdown, 20 Jul 2026):');
+{
+  // WHY: PODIUM_MOCK=false on Production (found 20 Jul), so this endpoint sends REAL
+  // texts to REAL customers with copy that has not been signed off. Until it is, only
+  // superadmin may send or decline one. F8b originally gated on authentication ALONE —
+  // deliberately, because the `logistics` role wasn't assigned to anyone yet — which
+  // means every logged-in staff member could text a customer.
+  const fs = await import('node:fs/promises');
+  const url = await import('node:url');
+
+  const handlerSrc = await fs.readFile(
+    url.fileURLToPath(new URL('../lib/handlers/delivery.js', import.meta.url)), 'utf8');
+
+  check('delivery handler imports requireRoles + the shared role list',
+    /import\s*\{[^}]*requireRoles[^}]*BOOKING_SMS_ROLES[^}]*\}\s*from\s*'\.\.\/rbac\.js'/.test(handlerSrc));
+
+  // STRUCTURAL, not presence-based. An earlier version of this block sliced out the
+  // booking-sms branch and asked "does a gate appear inside it?" — which a reviewer
+  // defeated twice: once by adding a SECOND, ungated dispatch above the real one using
+  // double quotes to dodge the string anchor, and once by leaving the guard's tokens in
+  // place while moving them out of the `if`. Both let a non-superadmin send, and both
+  // passed 46/46. So the assertions below count call sites across the WHOLE file.
+  const dispatches = handlerSrc.match(/resource[^=]*===\s*['"]booking-sms['"]/g) || [];
+  check('exactly ONE booking-sms dispatch exists in the file', dispatches.length === 1,
+    `found ${dispatches.length} — a second dispatch could bypass the gate entirely`);
+
+  const sendCalls = handlerSrc.match(/notifyDeliveryBooked\s*\(/g) || [];
+  const skipCalls = handlerSrc.match(/declineDeliveryBookedSms\s*\(/g) || [];
+  check('notifyDeliveryBooked is called exactly once in the file', sendCalls.length === 1, `found ${sendCalls.length}`);
+  check('declineDeliveryBookedSms is called exactly once in the file', skipCalls.length === 1, `found ${skipCalls.length}`);
+
+  const start = handlerSrc.indexOf("=== 'booking-sms'");
+  check('booking-sms branch exists', start > -1);
+  // indexOf returning -1 would make slice(start,-1) silently mean "rest of the file",
+  // quietly widening every assertion below — so require the end marker explicitly.
+  const end = handlerSrc.indexOf("if (method === 'GET')", start);
+  check('the booking-sms block has a locatable end marker', end > start,
+    'without this the block silently widens to the rest of the file');
+  const smsBlock = handlerSrc.slice(start, end);
+
+  check('booking-sms gates on the shared role list',
+    /requireRoles\(req,\s*BOOKING_SMS_ROLES\)/.test(smsBlock),
+    'without this, any logged-in user can text a customer');
+  check('booking-sms returns the gate status (401 vs 403), not a blanket 401',
+    /gate\.status/.test(smsBlock));
+  check('booking-sms no longer relies on bare getAuthUser for authorisation',
+    !/getAuthUser\(req\)/.test(smsBlock));
+  check('the acting superadmin is recorded on the envelope',
+    (smsBlock.match(/actorId:\s*gate\.auth\.id/g) || []).length === 2,
+    'both send and skip must attribute the decision to the gated user');
+
+  // Both actions must be behind the gate — 'skip' writes an audit row attributing the
+  // decision to a person, so it is not a harmless read.
+  const gateIdx = smsBlock.search(/requireRoles\(req,\s*BOOKING_SMS_ROLES\)/);
+  check('the gate precedes BOTH send and skip',
+    gateIdx > -1 && gateIdx < smsBlock.indexOf('declineDeliveryBookedSms')
+      && gateIdx < smsBlock.indexOf('notifyDeliveryBooked'));
+
+  // The preview carries the customer's phone number and the un-signed-off copy, so it
+  // must not be handed to a caller who could not send it. Both emit sites are gated.
+  const previewGates = handlerSrc.match(/requireRoles\(req,\s*BOOKING_SMS_ROLES\)\.ok/g) || [];
+  check('both booking_sms preview emit sites are gated', previewGates.length === 2,
+    `found ${previewGates.length} — POST-create and PUT-update must both withhold it`);
+
+  // Client side: don't offer a button the server will 403.
+  const pageSrc = await fs.readFile(
+    url.fileURLToPath(new URL('../src/pages/delivery_operations/to-be-booked.js', import.meta.url)), 'utf8');
+  check('to-be-booked imports the role helpers', /from\s*'\.\.\/\.\.\/utils\/auth'/.test(pageSrc));
+
+  // Pin the guarded STATEMENT, and require it to be the only way the panel opens —
+  // otherwise the guard can be left present-but-bypassed.
+  check('the confirmation panel only opens for the allowed roles',
+    /if \(data\?\.booking_sms && hasAnyRole\(getRoles\(\), BOOKING_SMS_ROLES\)\) \{/.test(pageSrc),
+    'a non-superadmin must never be shown the send/skip panel');
+  const opens = pageSrc.match(/setBookingSms\(\{\s*\.\.\.data\.booking_sms/g) || [];
+  check('there is exactly one place the panel is opened from a response', opens.length === 1,
+    `found ${opens.length}`);
+  check('the client role list is declared once, as a constant',
+    /^const BOOKING_SMS_ROLES = \['superadmin'\];$/m.test(pageSrc));
+  check('the booking save sends the token (else superadmins lose the preview too)',
+    /headers: authHeaders\(\{ 'Content-Type': 'application\/json' \}\)/.test(pageSrc));
+  check('a 403 closes the panel instead of looping on a raw role string',
+    /res\.status === 403\b/.test(pageSrc) && /restricted to an administrator/.test(pageSrc));
+}
+
+console.log('\nbehaviour: the delivery-SMS gate, asserted against the shared constant:');
+{
+  // Asserted against BOOKING_SMS_ROLES rather than a hardcoded ['superadmin'], so
+  // LIFTING the lockdown (adding 'logistics') does not read as a test regression.
+  check('BOOKING_SMS_ROLES is a non-empty array', Array.isArray(BOOKING_SMS_ROLES) && BOOKING_SMS_ROLES.length > 0);
+  check('superadmin is always allowed', requireRoles(reqWith(tokenFor(['superadmin'])), BOOKING_SMS_ROLES).ok === true);
+
+  // Every role NOT on the list must be refused. Written as a sweep so a future widening
+  // is a one-line constant change, not a rewrite of the expectations.
+  for (const role of ['staff', 'sales', 'logistics', 'technician', 'workshop']) {
+    const expectAllowed = BOOKING_SMS_ROLES.includes(role);
+    const r = requireRoles(reqWith(tokenFor([role])), BOOKING_SMS_ROLES);
+    check(`${role} alone → ${expectAllowed ? 'allowed' : '403'}`,
+      expectAllowed ? r.ok === true : (r.ok === false && r.status === 403));
+  }
+
+  check('a listed role held alongside others still passes (P10 multi-role)',
+    requireRoles(reqWith(tokenFor(['logistics', ...BOOKING_SMS_ROLES])), BOOKING_SMS_ROLES).ok === true);
+  check('no token → 401, not 403 (fails closed)',
+    requireRoles({ headers: {} }, BOOKING_SMS_ROLES).status === 401);
+  check('a forged token claiming the role → 401, never a pass',
+    requireRoles(reqWith(jwt.sign({ id: 'XX', roles: BOOKING_SMS_ROLES }, 'wrong-secret')), BOOKING_SMS_ROLES).status === 401);
 }
 
 console.log('\nrole helpers (used by the nav + gates):');

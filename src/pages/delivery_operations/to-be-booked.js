@@ -3,7 +3,13 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
-import { authHeaders } from '../../utils/auth';
+import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
+
+// ⛔ TEMPORARY LOCKDOWN (Nick, 20 Jul 2026): only these roles are offered the
+// delivery-booked customer SMS. Must stay in step with BOOKING_SMS_ROLES in lib/rbac.js —
+// the server is the real gate; this only decides what to show. (Kept as a literal rather
+// than imported: lib/ is server-side and is not part of the CRA client bundle.)
+const BOOKING_SMS_ROLES = ['superadmin'];
 
 const EDITABLE_STATUSES = ['To Be Booked', 'Booked for Delivery'];
 const ORDERED_STATES = ['VIC', 'NSW', 'QLD', 'ACT', 'WA', 'SA', 'TAS', 'NT'];
@@ -394,9 +400,13 @@ export default function ToBeBookedDeliveriesPage() {
     const toastId = startToast('saveDelivery', deliveryId);
     setSavingIds((prev) => new Set(prev).add(deliveryId));
     try {
+      // The token is sent so the server can decide whether to hand back the booking-text
+      // preview (it carries the customer's phone number and the un-signed-off copy).
+      // The booking itself is NOT gated on it — this legacy endpoint still identifies the
+      // actor from `user_id` — so an expired session still books, it just gets no panel.
       const res = await fetch(`/api/delivery?id=${encodeURIComponent(deliveryId)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ ...patch, user_id: currentUserId }),
       });
       const data = await res.json().catch(() => ({}));
@@ -404,7 +414,15 @@ export default function ToBeBookedDeliveriesPage() {
 
       // F8b: the booking just saved and the server handed back the text it WOULD send.
       // Ask before anything goes out.
-      if (data?.booking_sms) setBookingSms({ ...data.booking_sms, delivery_id: deliveryId });
+      //
+      // ⛔ TEMPORARY LOCKDOWN (Nick, 20 Jul 2026): superadmin only. The send endpoint is
+      // gated server-side, so this is presentation only — but without it a non-superadmin
+      // would be shown a panel whose buttons both 403. The booking itself is unaffected:
+      // it has already saved. The customer simply gets no text until the SMS copy is
+      // signed off. Widen this and the server gate together when lifting.
+      if (data?.booking_sms && hasAnyRole(getRoles(), BOOKING_SMS_ROLES)) {
+        setBookingSms({ ...data.booking_sms, delivery_id: deliveryId });
+      }
 
       setDeliveries((list) => {
         if ('delivery_status' in patch && patch.delivery_status !== 'To Be Booked') {
@@ -459,6 +477,15 @@ export default function ToBeBookedDeliveriesPage() {
       // closing with "No text sent" here would be a lie.
       if (res.status === 409 && data?.outcome?.alreadySent) {
         toast('That text was already sent', { icon: 'ℹ️' });
+        setBookingSms(null);
+        return;
+      }
+      // 403: the lockdown (booking texts are superadmin-only until the copy is signed
+      // off). Reachable from a stale tab or a role change mid-session. Close the panel —
+      // retrying cannot succeed, and repeating a raw "Requires one of: superadmin"
+      // leaks the role name and reads as a bug.
+      if (res.status === 403) {
+        toast('Booking texts are restricted to an administrator for now', { icon: 'ℹ️' });
         setBookingSms(null);
         return;
       }
