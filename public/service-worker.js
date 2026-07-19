@@ -71,8 +71,29 @@ function precacheUrlsFrom(assetManifest) {
     urls.push(entry.startsWith('/') ? entry : `/${entry}`);
   }
 
+  // Lazy-loaded chunks are not entrypoints, but a warehouse phone that installs
+  // the app and then goes offline still needs them — /scan's camera scanner is
+  // a ~120 kB dynamic import, and without this it simply never loads offline.
+  const files = assetManifest && assetManifest.files && typeof assetManifest.files === 'object'
+    ? Object.values(assetManifest.files)
+    : [];
+  for (const f of files) {
+    if (typeof f !== 'string') continue;
+    if (!/\.(js|css)$/.test(f)) continue;
+    urls.push(f.startsWith('/') ? f : `/${f}`);
+  }
+
   // De-duplicate: '/index.html' can appear in both halves.
-  return urls.filter((u, i) => urls.indexOf(u) === i);
+  const deduped = urls.filter((u, i) => urls.indexOf(u) === i);
+
+  // P1 DEFENCE IN DEPTH: every cache write in this file is gated on the policy,
+  // and that has to include the precache. Without this line, one '/api/...'
+  // path added to PRECACHE_URLS (or arriving via a stale/hostile
+  // asset-manifest.json, which is fetched over the network) would write an API
+  // response — possibly a chat body — to disk on every install.
+  return deduped.filter(
+    (u) => cachePolicyForUrl(new URL(u, self.location.origin).href) !== 'network-only',
+  );
 }
 
 /**
@@ -165,17 +186,27 @@ self.addEventListener('fetch', (event) => {
     // the cached shell is the offline fallback. The response is NOT cached per
     // route — '/index.html' from the precache serves every route.
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html').then(
-        (cached) => cached || caches.match('/'),
-      )),
+      fetch(request)
+        // A 502/503 from the host resolves successfully, so .catch() alone
+        // would hand the user an error page instead of the offline shell.
+        .then((res) => {
+          if (res && (res.ok || res.status === 304)) return res;
+          throw new Error(`bad navigation response: ${res && res.status}`);
+        })
+        .catch(() => caches.open(CACHE_NAME).then((cache) => cache
+          .match('/index.html')
+          .then((cached) => cached || cache.match('/')))),
     );
     return;
   }
 
   // 'cacheable' — static asset. Cache-first (hashed filenames make these
   // immutable), falling back to the network and populating on the way.
+  // Scoped to OUR cache: a bare caches.match() searches every cache on the
+  // origin, so a stale or future cache could serve a response this policy never
+  // approved.
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.open(CACHE_NAME).then((cache) => cache.match(request)).then((cached) => {
       if (cached) return cached;
 
       return fetch(request).then((response) => {

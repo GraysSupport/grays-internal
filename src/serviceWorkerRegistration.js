@@ -9,13 +9,6 @@
  * serves unhashed assets and a cached shell makes changes appear not to apply.
  */
 
-const isLocalhost = Boolean(
-  typeof window !== 'undefined'
-    && (window.location.hostname === 'localhost'
-      || window.location.hostname === '[::1]'
-      || /^127(?:\.\d{1,3}){3}$/.test(window.location.hostname)),
-);
-
 /**
  * @param {{onUpdate?: (registration: ServiceWorkerRegistration) => void,
  *          onSuccess?: (registration: ServiceWorkerRegistration) => void}} config
@@ -64,10 +57,6 @@ export function register(config = {}) {
         console.error('Service worker registration failed:', error);
       });
   });
-
-  if (isLocalhost) {
-    // No-op branch kept for clarity: production guard above already returned.
-  }
 }
 
 /**
@@ -81,11 +70,18 @@ export function applyUpdate(registration) {
   }
 
   let reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
+  const reloadOnce = () => {
     if (reloaded) return;
     reloaded = true;
+    navigator.serviceWorker.removeEventListener('controllerchange', reloadOnce);
     window.location.reload();
-  });
+  };
+
+  navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+
+  // If the waiting worker never activates, the user has dismissed the toast and
+  // has no way back to it — reload anyway rather than stranding them.
+  setTimeout(reloadOnce, 3000);
 
   registration.waiting.postMessage({ type: 'SKIP_WAITING' });
 }

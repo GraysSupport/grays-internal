@@ -90,6 +90,8 @@ for (const icon of icons) {
   check(`manifest icon exists on disk: ${icon.src}`, rel !== '' && existsSync(path.join(repo, 'public', rel)));
 }
 check('manifest references at least 3 icons', icons.length >= 3);
+check('manifest icons are all PNG (an .ico can win icon selection on some densities)',
+  icons.every((i) => (i.type || '') === 'image/png'));
 
 // ---------------------------------------------------------------------------
 // 2. index.html — iOS install path + brand
@@ -104,6 +106,11 @@ check('index.html drops the CRA boilerplate description', !/created using create
 
 check('index.html sets apple-mobile-web-app-capable', /apple-mobile-web-app-capable/i.test(html));
 check('index.html sets apple-mobile-web-app-status-bar-style', /apple-mobile-web-app-status-bar-style/i.test(html));
+// black-translucent puts content under the notch, and the safe-area insets that
+// compensate are increment 2. Until then it must stay "default".
+check('status bar style is not translucent while safe-area insets are unimplemented',
+  !/apple-mobile-web-app-status-bar-style["'][^>]*black-translucent/i.test(html));
+check('viewport does not opt into the notch area yet', !/viewport-fit=cover/i.test(html));
 check('index.html sets apple-mobile-web-app-title', /apple-mobile-web-app-title/i.test(html));
 
 const appleIcon = html.match(/<link[^>]+rel=["']apple-touch-icon["'][^>]*href=["']([^"']+)["']/i);
@@ -123,31 +130,101 @@ const swPath = path.join(repo, 'public', 'service-worker.js');
 check('service-worker.js exists', existsSync(swPath));
 
 const swSource = existsSync(swPath) ? readFileSync(swPath, 'utf8') : '';
-let policy = null;
-let swListeners = [];
 
-if (swSource) {
+const ORIGIN = 'https://portal.example.com';
+
+/**
+ * Evaluate the REAL service worker in an isolated context and hand back both
+ * its pure functions AND its event handlers, plus a recording cache double.
+ *
+ * Capturing the handlers (not just their names) is what lets the behavioural
+ * tests below drive the actual install/fetch code paths. An earlier version of
+ * this file only unit-tested cachePolicyForUrl, which meant a Podium message
+ * endpoint added straight to PRECACHE_URLS — or an ungated cache.put in the
+ * fetch handler — passed the whole suite green. Both are P1 violations.
+ *
+ * @param {{assetManifest?: object|null, fetchImpl?: Function}} opts
+ */
+function loadServiceWorker(opts = {}) {
+  const { assetManifest = { entrypoints: ['static/js/main.abc.js'] }, fetchImpl } = opts;
+
   const listeners = [];
+  const handlers = {};
+  /** every URL written to Cache Storage, by any route */
+  const written = [];
+  const caches_ = new Map();
+
+  const makeCache = (name) => ({
+    add: async (u) => {
+      written.push(String(u));
+      caches_.get(name).set(String(u), { url: String(u) });
+    },
+    put: async (req, res) => {
+      const u = typeof req === 'string' ? req : req.url;
+      written.push(String(u));
+      caches_.get(name).set(String(u), res);
+    },
+    match: async (req) => caches_.get(name).get(typeof req === 'string' ? req : req.url),
+    keys: async () => [...caches_.get(name).keys()].map((u) => ({ url: u })),
+    delete: async (req) => caches_.get(name).delete(typeof req === 'string' ? req : req.url),
+  });
+
   const sandbox = {
     self: {
-      addEventListener: (evt) => listeners.push(evt),
-      skipWaiting: () => {},
-      clients: { claim: () => {}, matchAll: async () => [] },
+      addEventListener: (evt, fn) => { listeners.push(evt); handlers[evt] = fn; },
+      skipWaiting: () => { sandbox.__skipWaitingCalled = true; },
+      clients: { claim: async () => { sandbox.__claimCalled = true; }, matchAll: async () => [] },
       registration: {},
-      location: { origin: 'https://portal.example.com' },
+      location: { origin: ORIGIN },
     },
-    caches: { open: async () => ({}), keys: async () => [], match: async () => undefined },
-    fetch: async () => ({}),
+    caches: {
+      open: async (name) => {
+        if (!caches_.has(name)) caches_.set(name, new Map());
+        return makeCache(name);
+      },
+      keys: async () => [...caches_.keys()],
+      delete: async (name) => caches_.delete(name),
+      match: async () => undefined,
+    },
+    fetch: fetchImpl || (async (url) => {
+      const u = typeof url === 'string' ? url : url.url;
+      if (String(u).includes('asset-manifest.json')) {
+        return {
+          ok: assetManifest !== null,
+          status: assetManifest !== null ? 200 : 404,
+          json: async () => assetManifest,
+        };
+      }
+      return { ok: true, status: 200, type: 'basic', url: String(u), clone() { return this; } };
+    }),
     URL,
     console: { log() {}, warn() {}, error() {} },
   };
   sandbox.globalThis = sandbox;
+
+  vm.createContext(sandbox);
+  vm.runInContext(swSource, sandbox, { timeout: 5000 });
+
+  return {
+    sandbox,
+    listeners,
+    handlers,
+    written,
+    caches_,
+    policy: sandbox.cachePolicyForUrl,
+    precache: sandbox.precacheUrlsFrom,
+  };
+}
+
+let policy = null;
+let swListeners = [];
+
+if (swSource) {
   try {
-    vm.createContext(sandbox);
-    vm.runInContext(swSource, sandbox, { timeout: 5000 });
+    const loaded = loadServiceWorker();
     check('service-worker.js evaluates cleanly', true);
-    policy = sandbox.cachePolicyForUrl || sandbox.self.cachePolicyForUrl;
-    swListeners = listeners;
+    policy = loaded.policy;
+    swListeners = loaded.listeners;
   } catch (err) {
     check('service-worker.js evaluates cleanly', false, err.message);
   }
@@ -234,29 +311,10 @@ if (typeof policy === 'function') {
 // The hashed names must be derived from CRA's asset-manifest.json at install.
 // Pull the function straight out of the evaluated SW.
 let precache = null;
-{
-  const listeners2 = [];
-  const sandbox2 = {
-    self: {
-      addEventListener: (evt) => listeners2.push(evt),
-      skipWaiting: () => {},
-      clients: { claim: () => {}, matchAll: async () => [] },
-      registration: {},
-      location: { origin: 'https://portal.example.com' },
-    },
-    caches: { open: async () => ({}), keys: async () => [], match: async () => undefined },
-    fetch: async () => ({}),
-    URL,
-    console: { log() {}, warn() {}, error() {} },
-  };
-  sandbox2.globalThis = sandbox2;
-  try {
-    vm.createContext(sandbox2);
-    vm.runInContext(swSource, sandbox2, { timeout: 5000 });
-    precache = sandbox2.precacheUrlsFrom;
-  } catch (err) {
-    /* already reported above */
-  }
+try {
+  precache = loadServiceWorker().precache;
+} catch (err) {
+  /* already reported above */
 }
 
 check('service worker exposes precacheUrlsFrom()', typeof precache === 'function');
@@ -316,8 +374,226 @@ if (typeof precache === 'function') {
 check('install handler reads asset-manifest.json', /asset-manifest\.json/.test(swSource),
   'hashed bundle names can only come from there');
 
-// The SW source itself must not contain a blanket "cache every GET" fallback.
-check('service worker has no blanket cache-all response handler', !/cache\.put\(\s*(event\.)?request\s*,\s*response/i.test(swSource) || /cachePolicyForUrl/.test(swSource), 'every cache.put must be policy-gated');
+if (typeof precache === 'function') {
+  // --- P1 defence in depth: the precache list is policy-gated too ------------
+  // Without this, one '/api/...' line in PRECACHE_URLS — or a stale/hostile
+  // asset-manifest.json, which is fetched over the network — writes an API
+  // response to disk at install.
+  const poisoned = precache({
+    entrypoints: ['/api/podium/inbox?resource=messages', 'static/js/ok.js'],
+    files: { bad: '/api/users.js', good: '/static/js/chunk.js' },
+  });
+  check('precache refuses an api entrypoint', !poisoned.some((u) => u.startsWith('/api')),
+    JSON.stringify(poisoned.filter((u) => u.startsWith('/api'))));
+  check('precache keeps the legitimate entries alongside the rejected one',
+    poisoned.includes('/static/js/ok.js') && poisoned.includes('/static/js/chunk.js'));
+
+  // --- lazy chunks must be precached, or /scan's camera dies offline --------
+  const withChunks = precache({
+    entrypoints: ['static/js/main.abc.js'],
+    files: {
+      'main.js': '/static/js/main.abc.js',
+      'static/js/490.zxing.chunk.js': '/static/js/490.zxing.chunk.js',
+      'index.html': '/index.html',
+      'someImage': '/static/media/pic.png',
+    },
+  });
+  check('precache includes code-split chunks from files{}',
+    withChunks.includes('/static/js/490.zxing.chunk.js'),
+    '/scan camera scanner is a lazy chunk; without it the scanner never loads offline');
+  check('precache does not hoover up non-js/css assets',
+    !withChunks.includes('/static/media/pic.png'));
+  check('precache still de-duplicates across entrypoints and files',
+    withChunks.filter((u) => u === '/static/js/main.abc.js').length === 1);
+}
+
+// ---------------------------------------------------------------------------
+// 3c. Per-build cache version (the update flow depends on it)
+// ---------------------------------------------------------------------------
+const stampPath = path.join(repo, 'scripts', 'stamp-service-worker.mjs');
+check('scripts/stamp-service-worker.mjs exists', existsSync(stampPath));
+
+let stamp = {};
+try {
+  stamp = await import(pathToFileURL(stampPath).href);
+} catch (err) {
+  check('stamp-service-worker imports cleanly', false, err.message);
+}
+
+if (typeof stamp.stampVersion === 'function') {
+  const { source: stamped, replaced } = stamp.stampVersion(swSource, 'abc123def456');
+  check('stamper replaces the CACHE_VERSION literal in the real SW source', replaced === true,
+    'if this stops matching, every deploy ships a byte-identical worker and the update toast never fires again');
+  check('stamped source carries the new version', /const CACHE_VERSION = 'abc123def456';/.test(stamped));
+  check('stamped source no longer carries the placeholder', !/const CACHE_VERSION = 'v1';/.test(stamped));
+
+  const missing = stamp.stampVersion('const NOTHING = 1;', 'x');
+  check('stamper reports when it cannot find the literal', missing.replaced === false);
+}
+
+if (typeof stamp.versionFromAssets === 'function') {
+  const a = stamp.versionFromAssets('{"entrypoints":["a.js"]}');
+  const b = stamp.versionFromAssets('{"entrypoints":["b.js"]}');
+  check('version is stable for identical assets', a === stamp.versionFromAssets('{"entrypoints":["a.js"]}'));
+  check('version changes when the assets change', a !== b);
+  check('version is a short hex token', /^[0-9a-f]{12}$/.test(a));
+}
+
+// package.json must actually run the stamper, or none of the above happens.
+const pkg = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8'));
+check('package.json runs the stamper on postbuild',
+  /stamp-service-worker/.test((pkg.scripts && pkg.scripts.postbuild) || ''),
+  'without postbuild the SW bytes never change between deploys');
+check('package.json exposes the pwa smoke', Boolean(pkg.scripts && pkg.scripts['smoke:pwa']));
+
+// ---------------------------------------------------------------------------
+// 3b. BEHAVIOURAL P1 — drive the real install + fetch handlers.
+//
+// Classifying a URL correctly is not the same as never writing it. These tests
+// run the actual handlers against a recording cache and assert on what was
+// WRITTEN. Without them, adding an /api/ path to PRECACHE_URLS, or replacing
+// the gated cache.put with an unconditional one, passes every other check here.
+// ---------------------------------------------------------------------------
+
+const P1_URLS = [
+  `${ORIGIN}/api/podium/inbox?resource=messages&conversationId=abc`,
+  `${ORIGIN}/api/podium/inbox?resource=poll&since=2026-07-20T00:00:00Z`,
+  `${ORIGIN}/api/podium/inbox?resource=conversation&id=abc`,
+  `${ORIGIN}/api/podium/inbox?resource=note`,
+  `${ORIGIN}/api/podium/contact?conversationId=abc`,
+  `${ORIGIN}/api/customers/26/journey`,
+  `${ORIGIN}/api/users`,
+];
+
+/** Run the fetch handler for one URL and report whether it intercepted. */
+async function driveFetch(sw, url, { method = 'GET', mode = 'cors' } = {}) {
+  let responded = false;
+  const event = {
+    request: { url, method, mode, clone() { return this; } },
+    respondWith: (p) => { responded = true; return Promise.resolve(p).catch(() => undefined); },
+    waitUntil: (p) => Promise.resolve(p).catch(() => undefined),
+  };
+  const out = sw.handlers.fetch ? sw.handlers.fetch(event) : undefined;
+  await Promise.resolve(out).catch(() => undefined);
+  // Let any respondWith chain settle so a deferred cache.put is recorded.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  return responded;
+}
+
+if (swSource && typeof policy === 'function') {
+  // --- install must never precache anything API-shaped -----------------------
+  {
+    const sw = loadServiceWorker();
+    let installed = Promise.resolve();
+    const event = { waitUntil: (p) => { installed = Promise.resolve(p).catch(() => undefined); } };
+    if (sw.handlers.install) sw.handlers.install(event);
+    await installed;
+
+    const apiWrites = sw.written.filter((u) => u.includes('/api'));
+    check('install writes nothing API-shaped to Cache Storage', apiWrites.length === 0, JSON.stringify(apiWrites));
+    check('install precaches the app shell', sw.written.includes('/index.html'), JSON.stringify(sw.written));
+    check('install precaches the hashed bundle from asset-manifest',
+      sw.written.includes('/static/js/main.abc.js'), JSON.stringify(sw.written));
+    check('install does NOT call skipWaiting (no swap under an open tab)', !sw.sandbox.__skipWaitingCalled);
+  }
+
+  // --- install must survive a missing asset-manifest -------------------------
+  {
+    const sw = loadServiceWorker({ assetManifest: null });
+    let installed = Promise.resolve();
+    if (sw.handlers.install) sw.handlers.install({ waitUntil: (p) => { installed = Promise.resolve(p).catch(() => undefined); } });
+    let threw = false;
+    try { await installed; } catch (err) { threw = true; }
+    check('install survives a 404 asset-manifest', !threw);
+    check('install still precaches the shell without a manifest', sw.written.includes('/index.html'));
+  }
+
+  // --- P1: the fetch handler must not touch, or cache, any API response ------
+  {
+    const sw = loadServiceWorker();
+    for (const u of P1_URLS) {
+      // eslint-disable-next-line no-await-in-loop
+      const responded = await driveFetch(sw, u);
+      check(`fetch does not intercept ${u.replace(ORIGIN, '')}`, responded === false,
+        'network-only must fall through untouched');
+    }
+    const apiWrites = sw.written.filter((w) => w.includes('/api'));
+    check('fetch handler writes NO api response to Cache Storage', apiWrites.length === 0, JSON.stringify(apiWrites));
+    check('fetch handler wrote nothing at all for api urls', sw.written.length === 0, JSON.stringify(sw.written));
+  }
+
+  // --- a static asset SHOULD be intercepted and cached ----------------------
+  {
+    const sw = loadServiceWorker();
+    const responded = await driveFetch(sw, `${ORIGIN}/static/js/main.abc.js`);
+    check('fetch intercepts a static asset', responded === true);
+    check('fetch caches the static asset', sw.written.some((u) => u.includes('/static/js/main.abc.js')),
+      JSON.stringify(sw.written));
+  }
+
+  // --- a redirect that lands on an API path must not be cached ---------------
+  {
+    const sw = loadServiceWorker({
+      fetchImpl: async (url) => {
+        const u = typeof url === 'string' ? url : url.url;
+        if (String(u).includes('asset-manifest')) return { ok: false, status: 404, json: async () => null };
+        // Requested an asset; the response actually came from an API path.
+        return {
+          ok: true, status: 200, type: 'basic',
+          url: `${ORIGIN}/api/podium/inbox?resource=messages`,
+          clone() { return this; },
+        };
+      },
+    });
+    await driveFetch(sw, `${ORIGIN}/static/js/redirected.js`);
+    const leaked = sw.written.filter((u) => u.includes('/api'));
+    check('a response redirected to an API url is not cached', leaked.length === 0, JSON.stringify(leaked));
+  }
+
+  // --- opaque (cross-origin, no-cors) responses must not be cached -----------
+  {
+    const sw = loadServiceWorker({
+      fetchImpl: async (url) => {
+        const u = typeof url === 'string' ? url : url.url;
+        if (String(u).includes('asset-manifest')) return { ok: false, status: 404, json: async () => null };
+        return { ok: true, status: 200, type: 'opaque', url: '', clone() { return this; } };
+      },
+    });
+    await driveFetch(sw, `${ORIGIN}/static/js/opaque.js`);
+    check('an opaque response is not cached', sw.written.length === 0, JSON.stringify(sw.written));
+  }
+
+  // --- non-GET must never be intercepted ------------------------------------
+  {
+    const sw = loadServiceWorker();
+    const responded = await driveFetch(sw, `${ORIGIN}/static/js/main.abc.js`, { method: 'POST' });
+    check('a POST is never intercepted', responded === false);
+    check('a POST writes nothing', sw.written.length === 0);
+  }
+
+  // --- activate evicts only our own stale caches ----------------------------
+  {
+    const sw = loadServiceWorker();
+    sw.caches_.set('grays-portal-shell-OLD', new Map());
+    sw.caches_.set('some-other-app-cache', new Map());
+    let done = Promise.resolve();
+    if (sw.handlers.activate) sw.handlers.activate({ waitUntil: (p) => { done = Promise.resolve(p).catch(() => undefined); } });
+    await done;
+    check('activate evicts the stale shell cache', !sw.caches_.has('grays-portal-shell-OLD'));
+    check('activate leaves unrelated caches alone', sw.caches_.has('some-other-app-cache'));
+    check('activate claims clients', sw.sandbox.__claimCalled === true);
+  }
+
+  // --- skip-waiting only on the explicit message ----------------------------
+  {
+    const sw = loadServiceWorker();
+    if (sw.handlers.message) sw.handlers.message({ data: { type: 'SOMETHING_ELSE' } });
+    check('an unrelated message does not skipWaiting', !sw.sandbox.__skipWaitingCalled);
+    if (sw.handlers.message) sw.handlers.message({ data: { type: 'SKIP_WAITING' } });
+    check('SKIP_WAITING message calls skipWaiting', sw.sandbox.__skipWaitingCalled === true);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 4. Install UI decision logic (src/utils/pwa.js)
@@ -336,15 +612,15 @@ try {
   pwa = {};
 }
 
-if (typeof pwa.isIosSafari === 'function') {
-  check('detects iPhone Safari', pwa.isIosSafari(IOS_UA, false) === true);
-  check('does not flag Android as iOS', pwa.isIosSafari(ANDROID_UA, false) === false);
-  check('does not flag desktop Chrome as iOS', pwa.isIosSafari(DESKTOP_UA, false) === false);
+if (typeof pwa.isIosWebkit === 'function') {
+  check('detects iPhone Safari', pwa.isIosWebkit(IOS_UA, false) === true);
+  check('does not flag Android as iOS', pwa.isIosWebkit(ANDROID_UA, false) === false);
+  check('does not flag desktop Chrome as iOS', pwa.isIosWebkit(DESKTOP_UA, false) === false);
   // iPadOS 13+ reports a desktop Mac UA; the touch-points hint is what distinguishes it.
-  check('detects iPadOS via touch hint', pwa.isIosSafari(IPADOS_UA, true) === true);
-  check('plain Mac Safari is not iOS', pwa.isIosSafari(IPADOS_UA, false) === false);
+  check('detects iPadOS via touch hint', pwa.isIosWebkit(IPADOS_UA, true) === true);
+  check('plain Mac Safari is not iOS', pwa.isIosWebkit(IPADOS_UA, false) === false);
 } else {
-  check('pwa.isIosSafari is exported', false);
+  check('pwa.isIosWebkit is exported', false);
 }
 
 if (typeof pwa.installUiState === 'function') {
@@ -384,6 +660,26 @@ if (typeof pwa.isStandalone === 'function') {
 } else {
   check('pwa.isStandalone is exported', false);
 }
+
+// The iOS steps are shown to Chrome/Edge-on-iOS users too, so they must not
+// name Safari specifically.
+if (Array.isArray(pwa.IOS_INSTALL_STEPS)) {
+  check('iOS steps do not name a specific browser',
+    !pwa.IOS_INSTALL_STEPS.some((s) => /safari/i.test(s)),
+    'Chrome/Edge on iOS reach the same Add-to-Home-Screen flow');
+  check('iOS steps mention Add to Home Screen',
+    pwa.IOS_INSTALL_STEPS.some((s) => /Add to Home Screen/i.test(s)));
+} else {
+  check('pwa.IOS_INSTALL_STEPS is exported', false);
+}
+
+// The kiosk display and the one-handed warehouse scan page must never get a
+// floating overlay: the kiosk never reloads, so it could never be dismissed.
+const promptsSrc = existsSync(path.join(repo, 'src', 'components', 'PwaPrompts.js'))
+  ? readFileSync(path.join(repo, 'src', 'components', 'PwaPrompts.js'), 'utf8')
+  : '';
+check('install prompt is suppressed on /workshop', /'\/workshop'/.test(promptsSrc));
+check('install prompt is suppressed on /scan', /'\/scan'/.test(promptsSrc));
 
 // ---------------------------------------------------------------------------
 // 5. Registration wiring

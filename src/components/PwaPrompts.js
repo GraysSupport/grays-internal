@@ -1,9 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { installUiState, isStandalone, IOS_INSTALL_STEPS } from '../utils/pwa';
 import { applyUpdate } from '../serviceWorkerRegistration';
 
 const DISMISS_KEY = 'pwaInstallDismissedAt';
+
+// Routes that must never show a floating install panel:
+//   /workshop — the kiosk display. Nobody interacts with it and it never
+//               reloads, so an un-dismissed panel would sit there permanently.
+//   /scan     — held in one hand in the warehouse; a bottom-left overlay
+//               competes with the scanner viewfinder.
+const SUPPRESSED_PATHS = ['/workshop', '/scan'];
 // Re-offer the install a fortnight after a dismissal rather than never again —
 // staff change phones, and a permanently hidden button is unfindable.
 const DISMISS_FOR_MS = 14 * 24 * 60 * 60 * 1000;
@@ -24,6 +32,7 @@ function wasRecentlyDismissed() {
  * screen — reps install the app before they have a session.
  */
 export default function PwaPrompts() {
+  const location = useLocation();
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [installed, setInstalled] = useState(false);
   const [dismissed, setDismissed] = useState(wasRecentlyDismissed);
@@ -52,6 +61,8 @@ export default function PwaPrompts() {
   // A new service worker is waiting — offer the refresh rather than forcing it.
   useEffect(() => {
     const showUpdateToast = (registration) => {
+      // Consume the stash so it cannot re-fire on a later mount.
+      window.__pwaWaitingRegistration = null;
       toast(
         (t) => (
           <span className="flex items-center gap-3">
@@ -113,7 +124,11 @@ export default function PwaPrompts() {
     hasTouch: typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1,
   });
 
-  if (state === 'hidden' || dismissed) return null;
+  const suppressedHere = SUPPRESSED_PATHS.some(
+    (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
+  );
+
+  if (state === 'hidden' || dismissed || suppressedHere) return null;
 
   return (
     <div className="fixed bottom-4 left-4 z-50 max-w-xs">

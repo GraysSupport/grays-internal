@@ -7,8 +7,12 @@
  */
 
 /**
- * True for iPhone/iPad Safari, where there is NO beforeinstallprompt event and
- * installing means Share > Add to Home Screen.
+ * True for any iOS/iPadOS browser, where there is NO beforeinstallprompt event
+ * and installing means Share > Add to Home Screen.
+ *
+ * Named "WebKit" rather than "Safari" on purpose: Chrome, Firefox and Edge on
+ * iOS are all WebKit underneath and behave identically here, so this matches
+ * them too — and the install copy must not name Safari specifically.
  *
  * iPadOS 13+ reports a desktop macOS user-agent, so a Mac UA with touch points
  * is treated as iPad — that is the only signal available without UA-CH.
@@ -16,11 +20,9 @@
  * @param {string} userAgent
  * @param {boolean} hasTouch true when navigator.maxTouchPoints > 1
  */
-export function isIosSafari(userAgent = '', hasTouch = false) {
+export function isIosWebkit(userAgent = '', hasTouch = false) {
   const ua = String(userAgent);
 
-  // Chrome/Firefox/Edge on iOS are WebKit underneath and behave the same for
-  // install purposes, so no browser-brand check is needed here.
   if (/iPhone|iPad|iPod/i.test(ua)) return true;
 
   // iPadOS 13+ masquerading as macOS.
@@ -77,15 +79,20 @@ export function installUiState(state = {}) {
   if (deferredPrompt) return 'android-install';
 
   // No prompt and never will be one: iOS installs manually.
-  if (isIosSafari(userAgent, hasTouch)) return 'ios-hint';
+  if (isIosWebkit(userAgent, hasTouch)) return 'ios-hint';
 
   // Desktop/unsupported browser, or the prompt has not fired yet.
   return 'hidden';
 }
 
-/** Short, platform-correct install instructions for the iOS hint. */
+/**
+ * Short, platform-correct install instructions for the iOS hint.
+ * Says "your browser", not "Safari": Chrome and Edge on iOS reach the same
+ * Add-to-Home-Screen flow, and naming Safari sends those users looking for an
+ * app they are not in.
+ */
 export const IOS_INSTALL_STEPS = [
-  'Tap the Share button in Safari’s toolbar.',
+  'Tap the Share button in your browser’s toolbar.',
   'Scroll down and tap “Add to Home Screen”.',
   'Tap “Add” — the portal appears as an app.',
 ];
