@@ -579,6 +579,17 @@ export default function Inbox() {
   };
 
   const openConversation = (c) => {
+    // F27 — clear the composer when the rep moves to a DIFFERENT thread. Without this a
+    // half-typed reply to customer A followed them into customer B's thread, one Send away
+    // from the wrong customer receiving it; and an active internal-note mode followed too, so
+    // the next Send posted a team-only note instead of a reply (or the reverse). Both are
+    // silent. openConversationById (compose / deep-link) already did this since F20 incr 2 —
+    // this is the same fix on the older list-click path.
+    //
+    // Guarded on the id CHANGING on purpose: re-clicking the thread you are already in, or a
+    // list re-render, must not discard work in progress. Wiping a draft with no undo is the
+    // same class of harm, just pointed the other way.
+    if (c.uid !== selectedId) resetComposerState();
     setSelectedId(c.uid);
     setSelectedConv(c);
     loadThread(c.uid);
