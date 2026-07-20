@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
+import PwaPrompts from './components/PwaPrompts';
 import Dashboard from './pages/dashboard';
 import Register from './pages/register';
 import LandingPage from './pages/landingpage';
@@ -103,6 +104,7 @@ function App() {
           },
         }}
       />
+      <PwaPrompts />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/scan" element={<ScanPage />} />

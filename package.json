@@ -27,10 +27,12 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "postbuild": "node scripts/stamp-service-worker.mjs",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "smoke": "node scripts/smoke-runner.mjs",
     "smoke:labels": "node scripts/lot-label-smoke.mjs",
+    "smoke:pwa": "node scripts/podium-pwa-smoke.mjs",
     "migrate": "node db/migrate.js up",
     "migrate:status": "node db/migrate.js status",
     "migrate:down": "node db/migrate.js down"
