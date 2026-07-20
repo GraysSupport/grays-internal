@@ -14,7 +14,17 @@
 
 process.env.PODIUM_MOCK = 'true'; // real sendSystemSms short-circuits to the typed mock
 
-const { notifyWaitlistBackInStock, backInStockMessage } = await import('../lib/waitlistNotify.js');
+// ⛔ F8a is DISABLED BY DEFAULT (Nick, 20 Jul 2026) — see the kill-switch block at the
+// bottom of this file. Every test above that block is about what happens when sending is
+// switched ON, so opt in explicitly here. If this line is deleted, those tests fail
+// loudly rather than silently asserting nothing.
+process.env.WAITLIST_SMS_ENABLED = 'true';
+
+const {
+  notifyWaitlistBackInStock,
+  backInStockMessage,
+  isWaitlistSmsEnabled,
+} = await import('../lib/waitlistNotify.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -159,6 +169,101 @@ console.log('\nend-to-end through the REAL sendSystemSms (mock mode):');
   const client = okClient([activeRow()]);
   const out = await notifyWaitlistBackInStock(client, ['TM-95T']); // no injected send → real mock
   check('real mock send path notifies without error', out.notified === 1 && out.failed === 0);
+}
+
+// ---------------------------------------------------------------------------
+// ⛔ KILL SWITCH — F8a sends NOTHING unless WAITLIST_SMS_ENABLED === 'true'
+//
+// WHY: F8a is the only customer-facing automation with NO human in the loop. F8b asks
+// logistics to confirm; F8a fires straight off an apply-inventory. On 20 Jul 2026 we
+// found PODIUM_MOCK=false on Production, which means the next restock of a waitlisted
+// SKU would have texted real customers using copy nobody had signed off.
+//
+// A role gate is the wrong instrument here — the trigger is a routine warehouse action,
+// not a "send text" button — so the control is a flag that defaults to OFF.
+//
+// The critical property: suppression must leave NO trace that would block a later
+// legitimate send. No claim row (the claim is the at-most-once gate, so claiming now
+// would permanently silence that customer) and no Active → Notified flip.
+//
+// ⚠️ Note what these tests do NOT claim: suppressed is not DEFERRED. The trigger is a
+// one-shot 0 → positive stock edge, so a suppressed restock is not re-sent when the
+// switch is armed — those customers need a phone call. See lib/waitlistNotify.js.
+// ---------------------------------------------------------------------------
+console.log('\nkill switch (F8a is off unless explicitly enabled):');
+{
+  const saved = process.env.WAITLIST_SMS_ENABLED;
+
+  check('exported flag reader exists', typeof isWaitlistSmsEnabled === 'function');
+
+  delete process.env.WAITLIST_SMS_ENABLED;
+  check('unset ⇒ disabled (safe default)', isWaitlistSmsEnabled() === false);
+  process.env.WAITLIST_SMS_ENABLED = 'false';
+  check("'false' ⇒ disabled", isWaitlistSmsEnabled() === false);
+  process.env.WAITLIST_SMS_ENABLED = 'yes';
+  check("'yes' ⇒ disabled (only the exact word 'true' arms it)", isWaitlistSmsEnabled() === false);
+  process.env.WAITLIST_SMS_ENABLED = '1';
+  check("'1' ⇒ disabled", isWaitlistSmsEnabled() === false);
+  process.env.WAITLIST_SMS_ENABLED = 'TRUE';
+  check("'TRUE' ⇒ enabled (case-insensitive)", isWaitlistSmsEnabled() === true);
+  process.env.WAITLIST_SMS_ENABLED = ' true ';
+  check("' true ' ⇒ enabled (whitespace tolerated)", isWaitlistSmsEnabled() === true);
+
+  // --- behaviour when disabled -------------------------------------------------
+  delete process.env.WAITLIST_SMS_ENABLED;
+  {
+    let sendCalls = 0;
+    const client = okClient([activeRow(), activeRow({ waitlist_id: 2, customer_id: 77 })]);
+    const out = await notifyWaitlistBackInStock(client, ['TM-95T'], {
+      send: async () => { sendCalls += 1; return { status: 'sent' }; },
+    });
+
+    check('disabled ⇒ NOTHING is sent', sendCalls === 0);
+    check('disabled ⇒ nobody counted as notified', out.notified === 0, JSON.stringify(out));
+    check('disabled ⇒ reports how many were suppressed', out.suppressed === 2, JSON.stringify(out));
+
+    const sql = client.calls.map((c) => c.sql).join('\n');
+    check('disabled ⇒ NO claim row is written (a claim would silence them permanently)',
+      !/INSERT INTO integration_sync_log/i.test(sql), sql);
+    check('disabled ⇒ waitlist rows stay Active (they must still be notifiable later)',
+      !/UPDATE waitlist/i.test(sql), sql);
+    check('disabled ⇒ the read-only lookup still runs, so the count is real',
+      /FROM waitlist/i.test(sql));
+
+    // STRICTLY STRONGER than the two negative regexes above, and the reason they are not
+    // enough on their own: a code reviewer silenced every suppressed customer by writing
+    // the real claim row with a QUOTED identifier ("integration_sync_log"), which slips
+    // past a /INSERT INTO integration_sync_log/i text match — 41/41 still passed while the
+    // catastrophe this design exists to prevent was happening. Counting queries closes the
+    // whole class: any write at all, under any spelling, fails this.
+    check('disabled ⇒ EXACTLY one query total (the read-only lookup) — no writes, any spelling',
+      client.calls.length === 1, `got ${client.calls.length}: ${sql}`);
+  }
+
+  // --- and the switch genuinely re-arms it -------------------------------------
+  process.env.WAITLIST_SMS_ENABLED = 'true';
+  {
+    let sendCalls = 0;
+    const client = okClient([activeRow()]);
+    const out = await notifyWaitlistBackInStock(client, ['TM-95T'], {
+      send: async () => { sendCalls += 1; return { status: 'sent' }; },
+    });
+    check('enabled ⇒ sends again', sendCalls === 1 && out.notified === 1, JSON.stringify(out));
+    check('enabled ⇒ suppressed count is zero', !out.suppressed);
+  }
+
+  // A disabled run must not be mistaken for "everyone already notified".
+  delete process.env.WAITLIST_SMS_ENABLED;
+  {
+    const client = okClient([activeRow()]);
+    const out = await notifyWaitlistBackInStock(client, ['TM-95T'], { send: async () => ({ status: 'sent' }) });
+    check('disabled ⇒ not counted as skipped (skipped means already-claimed/no-phone)',
+      out.skipped === 0, JSON.stringify(out));
+    check('disabled ⇒ not counted as failed', out.failed === 0, JSON.stringify(out));
+  }
+
+  if (saved === undefined) delete process.env.WAITLIST_SMS_ENABLED;
+  else process.env.WAITLIST_SMS_ENABLED = saved;
 }
 
 console.log(`\n✅ waitlist smoke: ${passed} checks passed`);
