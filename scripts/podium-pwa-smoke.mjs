@@ -93,6 +93,45 @@ check('manifest references at least 3 icons', icons.length >= 3);
 check('manifest icons are all PNG (an .ico can win icon selection on some densities)',
   icons.every((i) => (i.type || '') === 'image/png'));
 
+// --- the icons are the REAL brand asset, at the REAL declared size ----------
+// The official logo is committed so the icons can be regenerated without hunting
+// for it (see docs/PWA_ICONS.md). Nothing here is drawn or generated.
+check('the source logo is committed', existsSync(path.join(repo, 'public', 'brand', 'grays-fitness-logo.svg')),
+  'without it, nobody can regenerate these icons faithfully');
+
+/** Read a PNG's real dimensions from its IHDR chunk. */
+function pngSize(file) {
+  const b = readFileSync(file);
+  const isPng = b.length > 24 && b[0] === 0x89 && b.toString('ascii', 1, 4) === 'PNG';
+  if (!isPng) return null;
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+}
+
+// A manifest can claim any size it likes; this checks the file actually IS that size.
+// Catches the realistic failure: someone swaps in new artwork exported at the wrong
+// dimensions, and every device silently renders a blurry or cropped home-screen icon.
+for (const icon of icons) {
+  const rel = String(icon.src || '').replace(/^\//, '');
+  const file = path.join(repo, 'public', rel);
+  if (!existsSync(file)) continue;
+  const declared = (icon.sizes || '').split(' ')[0];
+  const [w, h] = declared.split('x').map(Number);
+  const actual = pngSize(file);
+  check(`${icon.src} is a real PNG`, actual !== null);
+  if (actual) {
+    check(`${icon.src} is genuinely ${declared}`,
+      actual.width === w && actual.height === h,
+      `declared ${declared}, actually ${actual.width}x${actual.height}`);
+  }
+}
+
+const appleIconFile = path.join(repo, 'public', 'icons', 'apple-touch-icon-180.png');
+if (existsSync(appleIconFile)) {
+  const a = pngSize(appleIconFile);
+  check('apple-touch-icon is genuinely 180x180', a && a.width === 180 && a.height === 180,
+    a ? `${a.width}x${a.height}` : 'not a PNG');
+}
+
 // ---------------------------------------------------------------------------
 // 2. index.html — iOS install path + brand
 // ---------------------------------------------------------------------------
