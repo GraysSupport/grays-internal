@@ -37,3 +37,13 @@ jobs:
       # Every scripts/*-smoke.mjs, discovered automatically. A red suite fails this step.
       - name: Smoke suites
         run: npm run smoke
+
+      # React component tests (src/**/*.test.js), which the smoke runner does NOT discover —
+      # it only walks scripts/*-smoke.mjs, so before this step an RTL test ran nowhere.
+      # Deliberately WITHOUT --passWithNoTests: if the suites ever disappear, that is a
+      # regression this gate should fail on, not skip past. Same reasoning as the smoke
+      # runner refusing to report success on 0 suites.
+      - name: Component tests
+        run: npm run test:ci
+        env:
+          CI: true

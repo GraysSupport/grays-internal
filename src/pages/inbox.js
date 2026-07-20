@@ -1790,7 +1790,10 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
 //
 // The recipient is validated in the browser only to catch a typo before the round-trip;
 // src/utils/compose.js mirrors the server's rule and the smoke asserts they agree.
-function ComposeModal({ sending, onSubmit, onClose }) {
+// Exported for src/pages/__tests__/composeModal.test.js (F25). The Inbox renders it below;
+// the export exists so the modal can be driven directly in a test without standing up the
+// whole authenticated page, and is deliberately NOT imported anywhere else in the app.
+export function ComposeModal({ sending, onSubmit, onClose }) {
   const [to, setTo] = useState('');
   const [body, setBody] = useState('');
 

@@ -29,6 +29,7 @@
     "build": "react-scripts build",
     "postbuild": "node scripts/stamp-service-worker.mjs",
     "test": "react-scripts test",
+    "test:ci": "react-scripts test --watchAll=false",
     "eject": "react-scripts eject",
     "smoke": "node scripts/smoke-runner.mjs",
     "smoke:labels": "node scripts/lot-label-smoke.mjs",
@@ -42,6 +43,12 @@
       "react-app",
       "react-app/jest"
     ]
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router-dom$": "<rootDir>/node_modules/react-router-dom/dist/index.js",
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    }
   },
   "browserslist": {
     "production": [
