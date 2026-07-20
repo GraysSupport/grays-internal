@@ -32,9 +32,13 @@ function renderModal(props = {}) {
   return { onSubmit, onClose, ...utils };
 }
 
+// Labels are matched ANCHORED. An unanchored /to/ would also match a future "Total",
+// "History" or "Store" label and throw on multiple matches — a failure that reads as though
+// the new field broke these tests, when really the query was always too loose.
 const startButton = () => screen.getByRole('button', { name: /start conversation|starting/i });
-const recipientBox = () => screen.getByLabelText(/to|recipient|phone|email/i);
-const messageBox = () => screen.getByLabelText(/message/i);
+const recipientBox = () => screen.getByLabelText(/^to$/i);
+const messageBox = () => screen.getByLabelText(/^message$/i);
+const backdrop = () => screen.getByTestId('compose-backdrop');
 
 describe('ComposeModal — Start button gating', () => {
   test('Start is disabled before anything is typed', () => {
@@ -108,7 +112,7 @@ describe('ComposeModal — while a send is in flight', () => {
   // prop captured at render. Inbox.submitCompose guards it synchronously with
   // `composeSendingRef`. If that ref is ever removed, this test will still pass; that is why
   // the Inbox-level test is called out as a backlog row above rather than assumed covered.
-  test('a click after the parent reports sending does not submit again', async () => {
+  test('the disabled Start button cannot be re-clicked once sending', async () => {
     const { onSubmit, rerender } = renderModal();
     await userEvent.type(recipientBox(), '0412345678');
     await userEvent.type(messageBox(), 'Your rack is ready.');
@@ -134,10 +138,36 @@ describe('ComposeModal — closing without losing a draft', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  // This positive case is what stops the negative one below from rotting into a no-op: if
+  // backdrop-close stops working altogether (or the testid moves), THIS test goes red loudly.
+  // Without it, deleting the whole closeOnBackdrop body left all 11 earlier tests green.
+  test('a backdrop click closes an untouched modal', async () => {
+    const { onClose } = renderModal();
+    await userEvent.click(backdrop());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   test('a backdrop click discards nothing once the rep has typed', async () => {
-    const { onClose, container } = renderModal();
+    const { onClose } = renderModal();
     await userEvent.type(messageBox(), 'Half a quote');
-    await userEvent.click(container.firstChild);
+    await userEvent.click(backdrop());
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  // The backdrop guard above is only safe BECAUSE these two exits always remain — block the
+  // backdrop without them and a typed draft is trapped in a modal with no way out but a
+  // reload. Untested, that guarantee is a comment; tested, it's a constraint.
+  test('Cancel closes even when the rep has typed', async () => {
+    const { onClose } = renderModal();
+    await userEvent.type(messageBox(), 'Half a quote');
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('the × closes even when the rep has typed', async () => {
+    const { onClose } = renderModal();
+    await userEvent.type(messageBox(), 'Half a quote');
+    await userEvent.click(screen.getByRole('button', { name: /close/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

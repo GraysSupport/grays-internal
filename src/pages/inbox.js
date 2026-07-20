@@ -1829,6 +1829,7 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
 
   return (
     <div
+      data-testid="compose-backdrop"
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
       onClick={closeOnBackdrop}
     >
