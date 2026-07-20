@@ -1598,10 +1598,16 @@ export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onTog
         );
       })}
       <div className="relative">
+        {/* Deliberately NO aria-haspopup. Per ARIA 1.2 `aria-haspopup="true"` is EXACTLY
+            equivalent to "menu": screen readers announce "menu button" and the user presses
+            Down Arrow expecting menu navigation. This popup is a plain list of toggle buttons
+            — no role="menu", no menuitem children, no roving tabindex — so nothing would
+            happen. "listbox"/"dialog" would be equally untrue. What this IS, is the APG
+            Disclosure pattern: a button with aria-expanded + aria-controls revealing content.
+            Claiming a menu we have not built is worse than claiming nothing. */}
         <button
           type="button"
           ref={triggerRef}
-          aria-haspopup="true"
           aria-expanded={show}
           aria-controls={show ? menuId : undefined}
           onClick={() => setShow(!show)}
@@ -1619,12 +1625,18 @@ export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onTog
                 <button
                   key={r.id}
                   type="button"
+                  aria-pressed={checked}
                   onClick={() => onToggle(r)}
                   disabled={saving || !r.linked}
                   className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-50 disabled:opacity-50"
                   title={r.linked ? '' : 'This rep has not linked their Podium account'}
                 >
-                  <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
+                  {/* aria-hidden: the tick is decorative and CSS-only. Unchecked it renders
+                      `text-transparent`, and transparent text is STILL in the accessibility
+                      tree (only display:none / visibility:hidden / aria-hidden remove it), so
+                      a screen reader announced a "✓" beside EVERY rep — assigned or not. The
+                      real state is carried by aria-pressed on the button. */}
+                  <span aria-hidden="true" className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs text-gray-800 truncate">{r.name}</span>
                     {!r.linked && <span className="block text-[10px] text-gray-400">Not linked to Podium</span>}
@@ -1739,8 +1751,8 @@ export function WorkorderModal({ workorderId, detail, loading, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         ref={dialog.ref}
-        onKeyDown={dialog.onKeyDown}
         className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -1877,8 +1889,8 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         ref={dialog.ref}
-        onKeyDown={dialog.onKeyDown}
         className="bg-white rounded-lg shadow-lg w-full max-w-md flex flex-col"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
@@ -2005,8 +2017,8 @@ export function ProductLookupModal({ products, loaded, search, setSearch, onClos
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         ref={dialog.ref}
-        onKeyDown={dialog.onKeyDown}
         className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >

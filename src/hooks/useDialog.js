@@ -56,9 +56,23 @@ export default function useDialog() {
 
   useEffect(() => {
     const node = ref.current;
-    const first = focusableWithin(node)[0];
-    if (first) first.focus();
-    else if (node) node.focus();
+
+    // Do NOT steal focus if the dialog has already placed it. Two of these modals mark their
+    // text input `autoFocus`, and React honours that during commit — i.e. BEFORE this effect.
+    // Blindly focusing the first focusable would drag the caret out of the "To" / search box
+    // and onto the Close button, costing every rep a keystroke on every open and leaving them
+    // one Enter from dismissing the modal. That is a regression this hook shipped with, and
+    // the containment-only assertion in the first draft of the tests was too weak to catch it.
+    //
+    // Note `[autofocus]` cannot be queried for here: React sets autofocus imperatively and
+    // never renders the attribute, so the DOM has no record of the intent. Deferring to
+    // "focus is already inside me" is what actually works.
+    const alreadyInside = node && node.contains(document.activeElement) && document.activeElement !== node;
+    if (!alreadyInside) {
+      const first = focusableWithin(node)[0];
+      if (first) first.focus();
+      else if (node) node.focus();
+    }
 
     return () => {
       // Only restore if the opener is still in the document — it may have been removed by the
@@ -82,8 +96,11 @@ export default function useDialog() {
     const lastItem = items[items.length - 1];
     const active = document.activeElement;
 
-    // Wrap at both ends. The `!contains` case matters: if focus somehow starts outside (a
-    // click on the backdrop, say), Tab pulls it back in rather than continuing down the page.
+    // Wrap at both ends. The `!contains` cases are the ones that matter most in a real
+    // browser: when focus has fallen outside the dialog, Tab pulls it back in rather than
+    // continuing down the page behind. They are only reachable because this handler is bound
+    // to the document (see below) — on an element handler they would be dead code, since a
+    // keydown targeted at <body> would never reach it.
     if (e.shiftKey && (active === firstItem || !ref.current?.contains(active))) {
       e.preventDefault();
       lastItem.focus();
@@ -93,5 +110,23 @@ export default function useDialog() {
     }
   }, []);
 
-  return { ref, onKeyDown };
+  // Bound to the DOCUMENT in the capture phase, deliberately NOT to the dialog element.
+  //
+  // On the element, the trap has a hole you hit by accident: in a real browser a mousedown on
+  // any non-focusable part of the dialog (the heading, the padding, a results row) blurs the
+  // active element to <body>. A Tab keydown then targets <body>, never reaches a handler
+  // mounted on the dialog, and focus walks straight out into the inbox behind — the exact bug
+  // this feature exists to fix. Focus arriving from the browser chrome behaves the same way.
+  //
+  // ⚠️ jsdom does not reproduce blur-to-body, so NO test here can prove this. It is reasoned
+  // from the DOM event model and wants a keyboard check in a real browser.
+  useEffect(() => {
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [onKeyDown]);
+
+  // Only the ref. The Tab handler is deliberately NOT returned for the caller to spread onto
+  // the element: with the document-capture listener above it would fire a second time for the
+  // same keystroke and advance focus twice.
+  return { ref };
 }

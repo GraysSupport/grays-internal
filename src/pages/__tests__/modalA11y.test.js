@@ -99,6 +99,36 @@ describe('true modals — dialog semantics', () => {
     expect(dialog).toContainElement(document.activeElement);
   });
 
+  // Containment alone is far too weak, and it cost me a real regression: the hook focused the
+  // FIRST focusable, which in two of these dialogs is the Close button sitting above the
+  // input. Focus stayed "inside the dialog", the test passed, and every rep lost the caret out
+  // of the field they were about to type in — one Enter away from dismissing the modal.
+  // These assert the SPECIFIC element, so moving focus anywhere else fails.
+  test('ComposeModal leaves the caret in the recipient field, not on Close', async () => {
+    renderWithOpener((onClose) => (
+      <ComposeModal sending={false} onSubmit={jest.fn()} onClose={onClose} />
+    ));
+    await userEvent.click(opener());
+    expect(screen.getByLabelText(/^to$/i)).toHaveFocus();
+  });
+
+  test('ProductLookupModal leaves the caret in the search box, not on Close', async () => {
+    renderWithOpener((onClose) => (
+      <ProductLookupModal products={[]} loaded search="" setSearch={jest.fn()} onClose={onClose} />
+    ));
+    await userEvent.click(opener());
+    expect(screen.getByLabelText(/search products/i)).toHaveFocus();
+  });
+
+  // WorkorderModal has no autoFocus of its own, so here the hook SHOULD place focus.
+  test('WorkorderModal, which has no autoFocus, gets focus placed by the hook', async () => {
+    renderWithOpener((onClose) => (
+      <WorkorderModal workorderId="WO123" detail={null} loading={false} onClose={onClose} />
+    ));
+    await userEvent.click(opener());
+    expect(screen.getByRole('button', { name: /close/i })).toHaveFocus();
+  });
+
   // The actual reported bug: Tab must not walk out into the inbox behind the modal.
   test.each(cases)('$name keeps Tab inside the dialog', async ({ render: r }) => {
     renderWithOpener(r);
@@ -194,11 +224,39 @@ describe('assign picker — a popover, NOT a modal', () => {
 
   test('the trigger advertises the popover it controls', async () => {
     renderPicker();
-    expect(trigger()).toHaveAttribute('aria-haspopup');
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
 
     await userEvent.click(trigger());
     expect(trigger()).toHaveAttribute('aria-expanded', 'true');
+    // aria-controls must point at the popup that actually exists.
+    const controls = trigger().getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    expect(document.getElementById(controls)).toBeInTheDocument();
+  });
+
+  // aria-haspopup="true" is defined as EXACTLY equivalent to "menu": a screen reader announces
+  // "menu button" and the user presses Down Arrow expecting menu navigation. There is no
+  // role="menu" here and no arrow-key handling, so the promise would be false. Asserting its
+  // ABSENCE, because the first draft asserted only that the attribute existed — which passes
+  // for any value, including a wrong one.
+  test('the trigger does not claim to open a menu it has not built', async () => {
+    renderPicker();
+    expect(trigger()).not.toHaveAttribute('aria-haspopup');
+  });
+
+  test('each rep toggle exposes its assigned state, and the tick is not announced', async () => {
+    renderPicker({ assignees: [{ podiumUserId: 'p1', portalId: 'AA', name: 'Alex Rep' }] });
+    await userEvent.click(trigger());
+
+    const alex = screen.getByRole('button', { name: /alex rep/i });
+    const bo = screen.getByRole('button', { name: /bo rep/i });
+    expect(alex).toHaveAttribute('aria-pressed', 'true');
+    expect(bo).toHaveAttribute('aria-pressed', 'false');
+
+    // The decorative ✓ renders for both (transparent when unchecked) and must not reach the
+    // accessibility tree, or every rep sounds assigned.
+    expect(alex).toHaveAccessibleName('Alex Rep');
+    expect(bo).toHaveAccessibleName('Bo Rep');
   });
 
   test('Escape closes it and puts focus back on the trigger', async () => {
