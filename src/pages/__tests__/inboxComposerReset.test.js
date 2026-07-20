@@ -18,7 +18,7 @@
 // the rest of F28's Inbox-level coverage will build on.
 
 import React from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Inbox from '../inbox';
@@ -75,11 +75,14 @@ function mockFetch() {
       return json(threadFor(uid));
     }
     if (u.includes('resource=templates')) return json({ data: [] });
-    if (u.includes('resource=reps')) return json({ data: [] });
+    // Shapes matter even when empty. The page reads `d.reps` here and a BARE ARRAY from
+    // /api/products — returning `{data: []}` for either would leave those features
+    // permanently empty in every future test while looking correct.
+    if (u.includes('resource=reps')) return json({ reps: [] });
     if (u.includes('/api/podium/status')) return json({ podiumUserId: 'pod-me' });
     if (u.includes('/api/podium/assign')) return json({ assignees: [] });
     if (u.includes('/api/podium/contact')) return json({ customer: null, workorders: [] });
-    if (u.includes('/api/products')) return json({ data: [] });
+    if (u.includes('/api/products')) return json([]);
     return json({});
   });
 }
@@ -92,13 +95,26 @@ function renderInbox() {
   );
 }
 
-const conversationButton = (name) => screen.getByText(name).closest('button') || screen.getByText(name);
+// No `|| getByText(name)` fallback on purpose: if a list row ever stops being a <button>,
+// this should fail with "no button found", not silently click a <div> and fail later with a
+// confusing assertion about draft text.
+const conversationButton = (name) => {
+  const row = screen.getByText(name).closest('button');
+  if (!row) throw new Error(`Conversation row for "${name}" is not a <button>`);
+  return row;
+};
 const composer = () => screen.getByPlaceholderText(/type a reply…|write an internal note…/i);
 
 beforeEach(() => {
   localStorage.setItem('token', 'test-token');
   localStorage.setItem('user', JSON.stringify({ id: 'GS', name: 'Tester', roles: ['sales'] }));
   global.fetch = mockFetch();
+
+  // jsdom 16 (pinned by CRA 5) implements NEITHER of these. The composer revokes attachment
+  // object URLs on unmount, so without the stubs any test that attaches a file dies in
+  // cleanup rather than in the assertion.
+  URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+  URL.revokeObjectURL = jest.fn();
 });
 
 afterEach(() => {
@@ -145,6 +161,33 @@ describe('F27 — switching conversations resets the composer', () => {
     expect(screen.queryByPlaceholderText(/write an internal note…/i)).not.toBeInTheDocument();
   });
 
+  // The backlog row names four states; draft and composerMode are covered above. This is the
+  // one that matters most and was the biggest hole in my first mutation set: an image or
+  // quote PDF attached for Alice, following into Bob's composer and being SENT. Worse than
+  // stray text, because a rep skims the textarea before sending but not the attachment chips.
+  test('an attachment picked for one customer does not follow into another thread', async () => {
+    renderInbox();
+
+    await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
+    await userEvent.click(conversationButton('Alice Adams'));
+    await waitFor(() => expect(composer()).toBeInTheDocument());
+
+    const file = new File(['fake-image-bytes'], 'alice-quote.png', { type: 'image/png' });
+    const input = document.querySelector('input[type="file"]');
+    expect(input).toBeTruthy();
+    await userEvent.upload(input, file);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /remove attachment/i })).toBeInTheDocument(),
+    );
+
+    await userEvent.click(conversationButton('Bob Brown'));
+    await waitFor(() => expect(screen.getByText(/Message in conv-bob/i)).toBeInTheDocument());
+
+    expect(screen.queryByRole('button', { name: /remove attachment/i })).not.toBeInTheDocument();
+    // The blob must be released too, not just dropped from state.
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+  });
+
   test('re-clicking the SAME conversation does not wipe a draft in progress', async () => {
     renderInbox();
 
@@ -163,12 +206,13 @@ describe('F27 — switching conversations resets the composer', () => {
   });
 });
 
-// Keeps the panel/thread queries above honest: if the list stops rendering both customers,
-// every assertion in this file becomes vacuous.
-test('harness sanity: both conversations render in the list', async () => {
+// Keeps every assertion above honest: if the list stopped rendering both customers, the
+// switch-thread tests would pass vacuously. Asserts the EXACT row count too, so a duplicate
+// -row regression (the 8s poll appending rather than replacing) fails here rather than
+// somewhere confusing.
+test('harness sanity: the list renders exactly the two seeded conversations', async () => {
   renderInbox();
   await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
   expect(screen.getByText('Bob Brown')).toBeInTheDocument();
-  const list = screen.getByText('Alice Adams').closest('button');
-  expect(within(list).getByText('Alice Adams')).toBeInTheDocument();
+  expect(screen.getAllByText(/Alice Adams|Bob Brown/)).toHaveLength(2);
 });

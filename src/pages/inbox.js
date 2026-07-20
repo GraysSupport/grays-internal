@@ -148,6 +148,11 @@ export default function Inbox() {
   const [searchTruncated, setSearchTruncated] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
+  // F27 — mirrors `selectedId` for synchronous reads. The composer-reset guard in
+  // openConversation must compare against the CURRENT selection, not the one captured when
+  // this render ran; see the comment there. Kept in sync by the effect below rather than at
+  // each call site, so a future setSelectedId cannot forget to update it.
+  const selectedIdRef = useRef(null);
   const [selectedConv, setSelectedConv] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -382,6 +387,8 @@ export default function Inbox() {
     }
   }, [navigate, loadThread, loadPanel, loadAssignees, resetComposerState]);
 
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+
   // Fetch the timeline whenever the panel resolves a lead.
   useEffect(() => {
     loadLeadHistory(panel?.lead?.lead_id || null);
@@ -589,7 +596,12 @@ export default function Inbox() {
     // Guarded on the id CHANGING on purpose: re-clicking the thread you are already in, or a
     // list re-render, must not discard work in progress. Wiping a draft with no undo is the
     // same class of harm, just pointed the other way.
-    if (c.uid !== selectedId) resetComposerState();
+    // Read through a REF, not the render-closure state. `openConversationById` sets
+    // `selectedId` inside an async continuation, so a click landing before that commit would
+    // read a stale value, judge it a switch, and reset a composer the rep is still using —
+    // costing them a draft, which is precisely what the guard exists to prevent. Same hazard
+    // and same remedy as `composeSendingRef` above.
+    if (c.uid !== selectedIdRef.current) resetComposerState();
     setSelectedId(c.uid);
     setSelectedConv(c);
     loadThread(c.uid);
