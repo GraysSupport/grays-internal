@@ -209,6 +209,7 @@ export default function Inbox() {
   const deepLinkedRef = useRef(false); // one-shot: open ?conversation= from a funnel deep-link
 
   const sinceRef = useRef(null); // last poll cursor timestamp (server echoes serverTime)
+  const conversationsRef = useRef([]); // latest list, for the poll (see F31 note in pollNow)
 
   // ---- Gate (client-side display only; the server re-checks every request) -------
   useEffect(() => {
@@ -389,6 +390,11 @@ export default function Inbox() {
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
+  // F31 — read by the poll, which must not take `conversations` as a dependency: pollNow is the
+  // interval's callback, so a new identity on every list update would tear down and restart the
+  // 8s timer each time and the poll could drift indefinitely.
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
   // Fetch the timeline whenever the panel resolves a lead.
   useEffect(() => {
     loadLeadHistory(panel?.lead?.lead_id || null);
@@ -470,6 +476,15 @@ export default function Inbox() {
         if (selectedId && updated.some((c) => c?.uid === selectedId)) {
           loadThread(selectedId, { silent: true });
         }
+      }
+      // F31 — a thread kept open across a filter switch is, by definition, outside the polled
+      // scope, so it can NEVER appear in `updated`. Without this the rep sits in a live
+      // conversation composing a reply while inbound messages silently stop arriving — no
+      // error, no spinner, nothing. Refresh it directly whenever it is not in the current list.
+      // (The deep-link and post-compose paths could already land in this state; they just
+      // couldn't be reached with one click on the most-used control on the page.)
+      if (selectedIdRef.current && !conversationsRef.current.some((c) => c?.uid === selectedIdRef.current)) {
+        loadThread(selectedIdRef.current, { silent: true });
       }
     } catch {
       /* polls are best-effort; ignore transient errors */
@@ -571,18 +586,43 @@ export default function Inbox() {
     resetComposerState();
   };
 
+  // F31 — is there work in the composer that a filter switch would destroy?
+  //
+  // Text and attachments only. Internal-note MODE is a toggle, not work: re-flicking it costs a
+  // click, and treating it as content would leave threads open after every filter change for a
+  // rep who happens to work in note mode.
+  //
+  // Whitespace is not work either — `draft.trim()` matches what the Send button already treats
+  // as empty, so a composer the rep cannot send from is not one worth protecting.
+  const composerHasUnsavedContent = () => draft.trim().length > 0 || attachments.length > 0;
+
+  // F31 — is the open thread absent from the filtered list? Gated on `!loadingConvos` so the
+  // notice below doesn't flash during every list reload, when `conversations` is briefly stale.
+  const selectedOutsideFilter =
+    !!selectedId && !loadingConvos && !conversations.some((c) => c?.uid === selectedId);
+
+  // F31 — a bucket/status filter is about the LIST, not about the open thread. Clearing the
+  // reading pane alongside it was only ever justified because it was cheap; it is not cheap
+  // when it silently destroys a half-typed reply, with no undo and no warning (same family as
+  // F27, pointed the other way: there a draft reached the WRONG customer, here it is simply
+  // thrown away). So when there is work in the composer, the switch re-filters the list and
+  // leaves the thread and the draft alone. When there isn't, behaviour is exactly as before —
+  // deliberately, so this does not quietly become "the thread never closes".
+  const switchScope = (applyFilter) => {
+    const keepThread = composerHasUnsavedContent();
+    applyFilter();
+    if (!keepThread) clearSelection();
+    sinceRef.current = null;
+  };
+
   const switchBucket = (next) => {
     if (next === bucket) return;
-    setBucket(next);
-    clearSelection();
-    sinceRef.current = null;
+    switchScope(() => setBucket(next));
   };
 
   const switchStatus = (next) => {
     if (next === status) return;
-    setStatus(next);
-    clearSelection();
-    sinceRef.current = null;
+    switchScope(() => setStatus(next));
   };
 
   const openConversation = (c) => {
@@ -1109,6 +1149,23 @@ export default function Inbox() {
 
               {selectedId && (
                 <>
+                  {/* F31 — say so when the open thread is not in the filtered list. Two problems
+                      it solves: on a phone the list is hidden while a thread is open, so a
+                      filter tap would otherwise produce NO visible change at all and read as a
+                      broken control; and on any screen the reading pane and the list beside it
+                      now disagree, with nothing to explain why. */}
+                  {selectedOutsideFilter && (
+                    <div className="px-4 py-2 text-xs bg-amber-50 border-b border-amber-200 text-amber-900 flex items-center justify-between gap-3">
+                      <span>Kept open — this conversation isn’t in the current view. Your draft is safe.</span>
+                      <button
+                        type="button"
+                        onClick={clearSelection}
+                        className="shrink-0 font-semibold underline hover:no-underline"
+                      >
+                        Show the list
+                      </button>
+                    </div>
+                  )}
                   <header className="px-4 py-3 border-b border-gray-200 flex items-center gap-3">
                     <button
                       type="button"
