@@ -42,8 +42,9 @@
 // request/response — nothing is written to the database. The panel reads/writes only
 // CRM metadata (customer / workorder / delivery / lead), never message text.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import useDialog from '../hooks/useDialog';
 import toast from 'react-hot-toast';
 import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
@@ -147,6 +148,11 @@ export default function Inbox() {
   const [searchTruncated, setSearchTruncated] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
+  // F27 — mirrors `selectedId` for synchronous reads. The composer-reset guard in
+  // openConversation must compare against the CURRENT selection, not the one captured when
+  // this render ran; see the comment there. Kept in sync by the effect below rather than at
+  // each call site, so a future setSelectedId cannot forget to update it.
+  const selectedIdRef = useRef(null);
   const [selectedConv, setSelectedConv] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -381,6 +387,8 @@ export default function Inbox() {
     }
   }, [navigate, loadThread, loadPanel, loadAssignees, resetComposerState]);
 
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+
   // Fetch the timeline whenever the panel resolves a lead.
   useEffect(() => {
     loadLeadHistory(panel?.lead?.lead_id || null);
@@ -578,6 +586,22 @@ export default function Inbox() {
   };
 
   const openConversation = (c) => {
+    // F27 — clear the composer when the rep moves to a DIFFERENT thread. Without this a
+    // half-typed reply to customer A followed them into customer B's thread, one Send away
+    // from the wrong customer receiving it; and an active internal-note mode followed too, so
+    // the next Send posted a team-only note instead of a reply (or the reverse). Both are
+    // silent. openConversationById (compose / deep-link) already did this since F20 incr 2 —
+    // this is the same fix on the older list-click path.
+    //
+    // Guarded on the id CHANGING on purpose: re-clicking the thread you are already in, or a
+    // list re-render, must not discard work in progress. Wiping a draft with no undo is the
+    // same class of harm, just pointed the other way.
+    // Read through a REF, not the render-closure state. `openConversationById` sets
+    // `selectedId` inside an async continuation, so a click landing before that commit would
+    // read a stale value, judge it a switch, and reset a composer the rep is still using —
+    // costing them a draft, which is precisely what the guard exists to prevent. Same hazard
+    // and same remedy as `composeSendingRef` above.
+    if (c.uid !== selectedIdRef.current) resetComposerState();
     setSelectedId(c.uid);
     setSelectedConv(c);
     loadThread(c.uid);
@@ -1562,8 +1586,25 @@ function CustomerPanel({
 // rep as "You", and lets a salesperson add/remove reps (the picker manages portal reps;
 // reps who haven't linked their Podium account are shown disabled). A conversation can be
 // assigned to one OR MORE reps — Podium's assignees endpoint is plural.
-function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onToggle, saving }) {
+export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onToggle, saving }) {
   const assignedPortalIds = new Set(assignees.map((a) => a.portalId).filter(Boolean));
+  const triggerRef = useRef(null);
+  const menuId = useId();
+
+  // F26 — popover semantics, NOT modal ones. This dropdown has no backdrop and the page
+  // behind it stays live by design, so aria-modal would lie to a screen reader and a focus
+  // trap would strand a keyboard user in a dropdown. What it DOES need is a way out that
+  // isn't the mouse: Escape closes it and hands focus back to the trigger.
+  useEffect(() => {
+    if (!show) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setShow(false);
+      triggerRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [show, setShow]);
   return (
     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
       <span className="text-[11px] text-gray-400">Assigned:</span>
@@ -1580,8 +1621,18 @@ function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onToggle, sa
         );
       })}
       <div className="relative">
+        {/* Deliberately NO aria-haspopup. Per ARIA 1.2 `aria-haspopup="true"` is EXACTLY
+            equivalent to "menu": screen readers announce "menu button" and the user presses
+            Down Arrow expecting menu navigation. This popup is a plain list of toggle buttons
+            — no role="menu", no menuitem children, no roving tabindex — so nothing would
+            happen. "listbox"/"dialog" would be equally untrue. What this IS, is the APG
+            Disclosure pattern: a button with aria-expanded + aria-controls revealing content.
+            Claiming a menu we have not built is worse than claiming nothing. */}
         <button
           type="button"
+          ref={triggerRef}
+          aria-expanded={show}
+          aria-controls={show ? menuId : undefined}
           onClick={() => setShow(!show)}
           disabled={saving || reps.length === 0}
           className="text-[11px] px-2 py-0.5 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
@@ -1590,19 +1641,25 @@ function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onToggle, sa
           {saving ? 'Saving…' : 'Assign ▾'}
         </button>
         {show && reps.length > 0 && (
-          <div className="absolute top-full mt-1 left-0 z-20 w-60 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+          <div id={menuId} className="absolute top-full mt-1 left-0 z-20 w-60 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1">
             {reps.map((r) => {
               const checked = assignedPortalIds.has(r.id);
               return (
                 <button
                   key={r.id}
                   type="button"
+                  aria-pressed={checked}
                   onClick={() => onToggle(r)}
                   disabled={saving || !r.linked}
                   className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-50 disabled:opacity-50"
                   title={r.linked ? '' : 'This rep has not linked their Podium account'}
                 >
-                  <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
+                  {/* aria-hidden: the tick is decorative and CSS-only. Unchecked it renders
+                      `text-transparent`, and transparent text is STILL in the accessibility
+                      tree (only display:none / visibility:hidden / aria-hidden remove it), so
+                      a screen reader announced a "✓" beside EVERY rep — assigned or not. The
+                      real state is carried by aria-pressed on the button. */}
+                  <span aria-hidden="true" className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs text-gray-800 truncate">{r.name}</span>
                     {!r.linked && <span className="block text-[10px] text-gray-400">Not linked to Podium</span>}
@@ -1682,7 +1739,18 @@ function FunnelTimeline({ history }) {
 // a read-only, scrollable log of every workorder_logs entry (oldest → newest). Fed by
 // GET /api/workorder?id= (which omits selling_price for a non-superadmin actor), so a
 // sales rep sees item name/qty/condition/status + workorder-level payment only.
-function WorkorderModal({ workorderId, detail, loading, onClose }) {
+export function WorkorderModal({ workorderId, detail, loading, onClose }) {
+  const dialog = useDialog();
+  const titleId = useId();
+
+  // F26 — this read-only panel had no Escape at all. Unlike ComposeModal there is no draft to
+  // lose here, so Escape always closes.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const items = Array.isArray(detail?.items) ? detail.items : [];
   // The endpoint returns activity newest-first; the log field reads oldest-first.
   const activity = Array.isArray(detail?.activity) ? detail.activity.slice().reverse() : [];
@@ -1703,12 +1771,17 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        ref={dialog.ref}
         className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold">Workorder #{workorderId}</h2>
+            <h2 id={titleId} className="text-lg font-bold">Workorder #{workorderId}</h2>
             {detail?.status && (
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{detail.status}</span>
             )}
@@ -1796,6 +1869,8 @@ function WorkorderModal({ workorderId, detail, loading, onClose }) {
 export function ComposeModal({ sending, onSubmit, onClose }) {
   const [to, setTo] = useState('');
   const [body, setBody] = useState('');
+  const dialog = useDialog();
+  const titleId = useId();
 
   const target = classifyComposeTarget(to);
   const touched = to.trim().length > 0;
@@ -1834,12 +1909,17 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
       onClick={closeOnBackdrop}
     >
       <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        ref={dialog.ref}
         className="bg-white rounded-lg shadow-lg w-full max-w-md flex flex-col"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
       >
         <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-          <h2 className="text-lg font-bold">New conversation</h2>
+          <h2 id={titleId} className="text-lg font-bold">New conversation</h2>
           <button
             type="button"
             onClick={onClose}
@@ -1929,7 +2009,17 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
 // this modal only filters it in the browser. Retail price + stock only — no cost.
 const PRODUCT_RESULT_CAP = 60; // render at most this many matches (the table has ~1,000 rows)
 
-function ProductLookupModal({ products, loaded, search, setSearch, onClose }) {
+export function ProductLookupModal({ products, loaded, search, setSearch, onClose }) {
+  const dialog = useDialog();
+  const titleId = useId();
+
+  // F26 — as with WorkorderModal: a read-only lookup with nothing to lose, so Escape closes.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   // Token-based, order-independent match — mirrors the product page's search
   // (src/pages/products/index.js): split on spaces, every keyword must appear
   // somewhere in "sku name brand" so "Life Treadmill SE3 HD" matches
@@ -1947,11 +2037,16 @@ function ProductLookupModal({ products, loaded, search, setSearch, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        ref={dialog.ref}
         className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-          <h2 className="text-lg font-bold">Product price &amp; stock</h2>
+          <h2 id={titleId} className="text-lg font-bold">Product price &amp; stock</h2>
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
         </header>
 
