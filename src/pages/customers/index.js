@@ -111,6 +111,7 @@ export default function CustomersPage() {
           </select>
         </div>
 
+        <div className="overflow-x-auto">
         <table className="w-full border text-sm">
           <thead className="bg-gray-100">
             <tr>
@@ -153,6 +154,7 @@ export default function CustomersPage() {
             ))}
           </tbody>
         </table>
+        </div>
 
         <div className="mt-4 flex justify-between items-center">
           <button

@@ -260,6 +260,7 @@ export default function PelotonPage() {
         {/* Stock table */}
         {!loading && rows.length > 0 && (
           <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 text-left border-b">
@@ -344,6 +345,7 @@ export default function PelotonPage() {
                 })}
               </tbody>
             </table>
+            </div>
 
             {/* Table footer */}
             <div className="border-t px-4 py-2 bg-gray-50 flex items-center justify-between text-xs text-gray-400">

@@ -174,6 +174,7 @@ export default function ProductsPage() {
           }}
         />
 
+        <div className="overflow-x-auto">
         <table className="w-full border text-sm">
           <thead className="bg-gray-100">
             <tr>
@@ -213,6 +214,7 @@ export default function ProductsPage() {
             )}
           </tbody>
         </table>
+        </div>
 
         <div className="mt-4 flex justify-between items-center">
           <button

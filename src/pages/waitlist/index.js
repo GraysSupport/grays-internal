@@ -172,6 +172,7 @@ export default function WaitlistPage() {
               )}
             </h3>
 
+            <div className="overflow-x-auto">
             <table className="w-full border text-sm mb-2">
               <thead className="bg-gray-100">
                 <tr>
@@ -236,6 +237,7 @@ export default function WaitlistPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ))}
       </div>
