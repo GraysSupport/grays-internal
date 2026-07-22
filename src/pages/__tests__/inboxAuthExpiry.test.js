@@ -242,6 +242,12 @@ describe('F32(a) — the inbox sends an expired session back to login', () => {
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('user')).toBeNull();
     expect(localStorage.getItem('sessionExpiry')).toBeNull();
+
+    // NOT pinned here: that the navigation uses `replace` rather than push. Mutating it to a
+    // push survives this suite. Observing it needs a `createMemoryRouter` harness and a
+    // `navigate(-1)`, and the observation is muddied anyway because the cleared token means the
+    // client gate bounces a Back-navigation regardless. The clearing above is the real defence
+    // against the loop; `replace` is belt-and-braces. Named rather than left silently uncovered.
   });
 
   test('a poll that fails for any OTHER reason does not throw the rep out', async () => {
