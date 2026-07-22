@@ -149,6 +149,13 @@ console.log('the analyser reports the shapes it must report:');
   );
 
   check(
+    'a scroll wrapper that has already CLOSED does not cover the table below it',
+    auditSource('<div className="overflow-x-auto"></div>\n<table className="w-full" />').length === 1,
+    'the discriminating case for the sibling check: mutation testing showed the fixture above ' +
+      'passes with that check deleted, because there the stale tag is not a scroller either',
+  );
+
+  check(
     'a self-closing sibling between wrapper and table is reported, not silently accepted',
     auditSource('<div className="overflow-x-auto">\n<Spinner />\n<table className="w-full" />').length === 1,
   );
