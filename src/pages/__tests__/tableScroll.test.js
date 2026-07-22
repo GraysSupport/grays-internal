@@ -24,6 +24,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import CustomersPage from '../customers/index';
 import ProductsPage from '../products/index';
+import PelotonPage from '../peloton/index';
 
 jest.mock('react-hot-toast', () => ({
   __esModule: true,
@@ -52,12 +53,25 @@ const PRODUCTS = [
   },
 ];
 
+// Peloton reads the Winnings feed. Only the shape matters here — the page renders one row per
+// entry, and the row is what has to end up inside a scroller.
+const WINNINGS = [
+  {
+    CustomerSKU: 'PEL-BIKE-PLUS',
+    SKUDescription: 'Peloton Bike+ (refurbished)',
+    StorageLocation: 'A-12-3',
+    UnrestrictedUse: 4,
+    InTransit: 2,
+  },
+];
+
 function mockFetch() {
   return jest.fn(async (url) => {
     const u = String(url);
     const json = (body) => ({ ok: true, status: 200, json: async () => body });
     if (u.includes('/api/customers')) return json(CUSTOMERS);
     if (u.includes('/api/products')) return json(PRODUCTS);
+    if (u.includes('/api/winnings')) return json({ results: WINNINGS, facilityName: 'NSW', env: 'test', fetchedAt: '2026-07-23T00:00:00Z' });
     return json([]);
   });
 }
@@ -110,14 +124,21 @@ describe('F19 incr 2b — wide tables scroll themselves, not the page', () => {
     expect(horizontalScrollAncestor(table)).not.toBeNull();
   });
 
-  test('the scroll ancestor is not merely overflow-hidden, which clips instead of scrolling', async () => {
-    // peloton's table sat in `overflow-hidden`. It reads as "handled" and is the worst case:
-    // the columns beyond the viewport cannot be reached by any gesture.
-    const { container } = renderPage(<CustomersPage />);
-    await screen.findByText('Melbourne Strength Collective');
+  test('peloton’s table scrolls rather than being clipped by its overflow-hidden shell', async () => {
+    // The sharpest of the five. Its table sat directly inside `overflow-hidden`, which reads as
+    // "handled" and is the worst case: columns past the viewport cannot be reached by ANY
+    // gesture. It is also the only one of the five whose wrapper renders inside a conditional
+    // (`{!loading && rows.length > 0 && …}`), which is precisely the case a source scan cannot
+    // see and this suite can — so this test is pointed here rather than at a second customers
+    // assertion, per code review.
+    const { container } = renderPage(<PelotonPage />);
+    await waitFor(() => expect(container.querySelector('tbody tr')).toBeTruthy());
 
     const scroller = horizontalScrollAncestor(container.querySelector('table'));
+    expect(scroller).not.toBeNull();
     expect(scroller.className).not.toMatch(/\boverflow-hidden\b/);
+    // The rounded-corner clip must still be there, wrapping the scroller.
+    expect(scroller.parentElement.className).toMatch(/\boverflow-hidden\b/);
   });
 
   test('the table still renders its data — the wrapper did not break the page', async () => {

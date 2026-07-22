@@ -22,6 +22,19 @@
 // "overflow-x" in a file gave two false negatives (peloton's tab bar has one and its table does
 // not; collections/[id] has one on its second table and not its first).
 //
+// WHAT THIS DOES NOT CLAIM — read before treating a green run as "375px is done":
+//   - It proves a table's PARENT is a scroller. It does not prove no page scrolls sideways: a
+//     wide non-table element, or a `min-w-` on an ancestor of the scroller, would still break
+//     F19's acceptance line and pass every check here.
+//   - It scans `src/pages/**/*.js` only. There is no <table> in `src/components` today (checked),
+//     and widening it would report any legitimate wrapper COMPONENT (`<Scroller><table/></Scroller>`)
+//     as a violation. If a component ever renders a table, widen this deliberately.
+//   - It reads source, so a class computed at runtime is invisible to it —
+//     `className={compact ? 'overflow-x-auto' : 'overflow-hidden'}` passes.
+//   - The print-document skip is backtick PARITY over the whole file, which would also be tripped
+//     by a stray backtick in a comment, and misses a print document built with single quotes.
+//     Both are absent from this repo today.
+//
 //   node scripts/podium-responsive-smoke.mjs
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -42,16 +55,42 @@ function check(name, cond, detail) {
 // The analyser (pure — the fixtures below are its own tests)
 // ---------------------------------------------------------------------------
 
-// The last JSX opening tag in `text`. Walks backwards so closing tags (`</div>`) and JSX
-// expression punctuation (`{cond && (`) are skipped naturally. `text[j-1] !== '='` keeps an
-// arrow function inside a prop (`onClick={() => …}`) from being mistaken for the end of the tag.
-export function lastOpenTag(text) {
-  for (let i = text.length - 1; i >= 0; i -= 1) {
-    if (text[i] === '<' && /[A-Za-z]/.test(text[i + 1] || '')) {
+// Every JSX tag in `text`, in order. `text[j-1] !== '='` keeps an arrow function inside a prop
+// (`onClick={() => …}`) from being mistaken for the end of the tag.
+function tagsIn(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '<' && /[A-Za-z/]/.test(text[i + 1] || '')) {
       let j = i + 1;
       while (j < text.length && !(text[j] === '>' && text[j - 1] !== '=')) j += 1;
-      return { tag: text.slice(i, j + 1), end: j };
+      const raw = text.slice(i, j + 1);
+      out.push({ raw, closing: raw[1] === '/', selfClosing: /\/>$/.test(raw) });
+      i = j;
     }
+  }
+  return out;
+}
+
+// The element that actually ENCLOSES whatever follows `text` — i.e. the table's real parent.
+//
+// Walking back to the nearest opening tag is not enough, and the first version of this file got
+// it wrong in both directions (code review caught both):
+//   - a sibling that has already closed (`<div className="overflow-x-auto"></div>` above the
+//     table) is not a parent, and neither is a self-closing one (`<div … />`) — counting either
+//     one lets a genuinely body-scrolling page pass;
+//   - but a sibling INSIDE the wrapper (a scroll hint, `{loading && <Spinner />}`, a toolbar)
+//     is perfectly correct markup, and rejecting it would block a legitimate change.
+// So walk backwards keeping a depth counter: each closing tag opens a subtree to skip, each
+// matching opening tag closes it, and the first opening tag left unclosed is the parent.
+export function enclosingTag(text) {
+  const tags = tagsIn(text);
+  let skip = 0;
+  for (let k = tags.length - 1; k >= 0; k -= 1) {
+    const t = tags[k];
+    if (t.closing) skip += 1;
+    else if (t.selfClosing) continue;
+    else if (skip > 0) skip -= 1;
+    else return t.raw;
   }
   return null;
 }
@@ -84,24 +123,22 @@ export function auditSource(src) {
     if (insideTemplateLiteral(before)) continue;
     // The same exemption for a print table rendered as real JSX rather than as a string:
     // schedule.js keeps one inside `<div className="print-only">`, which is `display:none`
-    // on screen and only revealed by `@media print`. Deliberately narrow — it keys off the
-    // table's OWN print-scoped class, so an ordinary `w-full` table is still caught.
+    // on screen and only revealed by `@media print`.
+    //
+    // It names the two classes actually in use rather than matching `print` loosely. Code
+    // review demonstrated that a looser `\bprint[-:]` also matched Tailwind's `print:` VARIANT
+    // utilities (`print:text-xs`, `print:hidden`) — which sit on tables that very much do
+    // render into the phone viewport, so an ordinary broken page could exempt itself just by
+    // carrying one, silently.
     const ownTag = src.slice(m.index, src.indexOf('>', m.index) + 1);
-    if (/\bprint[-:]/.test(ownTag)) continue;
-    const parent = lastOpenTag(before);
+    if (/\bprint-(only|table)\b/.test(ownTag)) continue;
+    const parent = enclosingTag(before);
     if (!parent) {
       violations.push({ line, reason: 'no enclosing element' });
       continue;
     }
-    // Anything between the candidate tag and the <table> means the candidate is a sibling that
-    // already closed, not the table's parent.
-    const between = before.slice(parent.end + 1);
-    if (between.includes('<')) {
-      violations.push({ line, reason: `nearest wrapper closed before the table (${between.trim().slice(0, 40)})` });
-      continue;
-    }
-    if (!isScrollWrapper(parent.tag)) {
-      violations.push({ line, reason: `parent is not overflow-x-auto: ${parent.tag.replace(/\s+/g, ' ').slice(0, 90)}` });
+    if (!isScrollWrapper(parent)) {
+      violations.push({ line, reason: `parent is not a horizontal scroller: ${parent.replace(/\s+/g, ' ').slice(0, 90)}` });
     }
   }
   return violations;
@@ -151,13 +188,41 @@ console.log('the analyser reports the shapes it must report:');
   check(
     'a scroll wrapper that has already CLOSED does not cover the table below it',
     auditSource('<div className="overflow-x-auto"></div>\n<table className="w-full" />').length === 1,
-    'the discriminating case for the sibling check: mutation testing showed the fixture above ' +
-      'passes with that check deleted, because there the stale tag is not a scroller either',
+    'the discriminating case: an earlier fixture passed even with this rule deleted, because ' +
+      'there the stale tag was not a scroller either',
   );
 
   check(
-    'a self-closing sibling between wrapper and table is reported, not silently accepted',
-    auditSource('<div className="overflow-x-auto">\n<Spinner />\n<table className="w-full" />').length === 1,
+    'a SELF-CLOSING wrapper is not a parent',
+    auditSource('<div className="overflow-x-auto" />\n<table className="w-full" />').length === 1,
+    'found by code review — it left the table outside any scroller and the scan passed',
+  );
+
+  check(
+    'a self-closing sibling INSIDE the wrapper is fine — the table is still wrapped',
+    auditSource('<div className="overflow-x-auto">\n<Spinner />\n<table className="w-full" />').length === 0,
+    'correct markup must not be rejected, or the guard blocks a legitimate change',
+  );
+
+  check(
+    'a paired sibling inside the wrapper (a scroll hint) is also fine',
+    auditSource('<div className="overflow-x-auto">\n<p className="text-xs">Scroll for more</p>\n<table className="w-full" />').length === 0,
+  );
+
+  check(
+    'a nested subtree inside the wrapper is skipped correctly',
+    auditSource('<div className="overflow-x-auto">\n<div><span>hi</span></div>\n<table className="w-full" />').length === 0,
+  );
+
+  check(
+    'a table with no enclosing element at all is a violation',
+    auditSource('<table className="w-full" />').length === 1,
+  );
+
+  check(
+    'a Tailwind print: VARIANT does not exempt an on-screen table',
+    auditSource('<div className="p-6">\n<table className="w-full border print:text-xs" />').length === 1,
+    'the print exemption is for print-only/print-table, not for every class containing "print"',
   );
 
   check(
