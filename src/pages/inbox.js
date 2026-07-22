@@ -467,6 +467,13 @@ export default function Inbox() {
         `/api/podium/inbox?resource=poll&bucket=${bucket}&status=${status}${since}`,
         { headers: authHeaders() },
       );
+      // F32 — the poll is the ONLY request a rep makes while sitting idle, so an expired JWT
+      // surfaces here first and nowhere else. Without this branch the 401 fell into the silent
+      // `!res.ok` return below and the inbox simply stopped updating: no redirect, no toast,
+      // for as long as the tab stayed open. loadConversations' own 401 guard could never rescue
+      // it either, because that only re-runs when the poll REPORTS updates, and a 401 poll
+      // never reports any. Everything else stays silent — a flaky network must not log anyone out.
+      if (res.status === 401) { navigate('/'); return; }
       if (!res.ok) return;
       const data = await parseMaybeJson(res);
       if (data?.serverTime) sinceRef.current = data.serverTime;
@@ -489,7 +496,7 @@ export default function Inbox() {
     } catch {
       /* polls are best-effort; ignore transient errors */
     }
-  }, [bucket, status, selectedId, loadConversations, loadThread]);
+  }, [bucket, status, selectedId, loadConversations, loadThread, navigate]);
 
   useEffect(() => {
     if (!authorized || notLinked) return undefined;
