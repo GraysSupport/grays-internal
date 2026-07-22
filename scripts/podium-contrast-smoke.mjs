@@ -78,13 +78,29 @@ export const PALETTE = {
   'blue-500': '#3b82f6',
   'blue-600': '#2563eb',
   'blue-700': '#1d4ed8',
+  'blue-400': '#60a5fa',
+  'blue-800': '#1e40af',
   'amber-50': '#fffbeb',
+  'amber-100': '#fef3c7',
   'amber-500': '#f59e0b',
   'amber-600': '#d97706',
   'amber-700': '#b45309',
+  'amber-800': '#92400e',
   'amber-900': '#78350f',
+  'green-100': '#dcfce7',
   'green-700': '#15803d',
   'green-800': '#166534',
+  'emerald-100': '#d1fae5',
+  'emerald-800': '#065f46',
+  'red-100': '#fee2e2',
+  'red-600': '#dc2626',
+  'red-700': '#b91c1c',
+  'pink-100': '#fce7f3',
+  'pink-800': '#9d174d',
+  'purple-100': '#f3e8ff',
+  'purple-800': '#6b21a8',
+  'yellow-100': '#fef9c3',
+  'yellow-800': '#854d0e',
 };
 
 const AA_NORMAL = 4.5; // WCAG 2.1 SC 1.4.3, normal-size text
@@ -284,6 +300,28 @@ function main() {
     check('NO text/background pairing in the inbox fails AA', pairs.length === 0, `\n    ${pairs.join('\n    ')}`);
     check('… and that claim is unconditional — nothing is exempted', KNOWN_FAILING.length === 0);
     check('the old CTA surfaces are gone', !/\bbg-(blue|amber)-500\b/.test(stripAside(src)));
+
+    // An unknown token is skipped by failingPairs, so a pairing built from one is invisible to
+    // it — mutation testing proved the point by swapping the attachment chip to bg-blue-400,
+    // which was absent from PALETTE and therefore sailed through. The palette must cover
+    // everything the page uses, or the scan quietly checks less than it appears to.
+    const unknown = [...new Set(
+      [...stripAside(src).matchAll(/\b(?:bg|text)-((?:[a-z]+-\d00)|white)\b/g)].map((m) => m[1]),
+    )].filter((t) => !PALETTE[t]);
+    check('every colour token the inbox uses is in the palette', unknown.length === 0, `unresolved: ${unknown.join(', ')}`);
+
+    check('SURFACES still lists all four painted surfaces', SURFACES.length === 4
+      && ['white', 'gray-50', 'gray-100', 'blue-50'].every((s) => SURFACES.includes(s)),
+      'shrinking this list silently narrows every check that iterates it');
+
+    // The two sites that sit on the DARKER surfaces. failingPairs cannot reach them — their
+    // className carries no background, because the surface comes from an ancestor — so they are
+    // pinned by source. Both were found by code review sitting at 4.39 / 4.44 after the first
+    // pass "fixed" them, and mutation testing showed nothing else catches a regression here.
+    check('the footer paragraph on the gray-100 shell uses gray-600',
+      /<p className="text-xs text-gray-600 mt-3">/.test(src));
+    check('the conversation-row timestamp uses gray-600 (a selected row is bg-blue-50)',
+      /text-xs text-gray-600">\{formatTime\(c\?\.lastMessageAt\)\}/.test(src));
 
     // Guard the guard: had the de-emphasis styling been deleted rather than darkened, every
     // check above would also pass. Code review pointed out the earlier floor was unfalsifiable,
