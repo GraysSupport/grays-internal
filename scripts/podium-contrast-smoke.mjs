@@ -133,13 +133,28 @@ export function stripAside(src) {
  */
 export function styleChunks(src) {
   const chunks = [];
-  const re = /'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`/g;
+  const re = /'([^'\n]*)'|"([^"\n]*)"|`([\s\S]*?)`/g;
   let m;
   while ((m = re.exec(src)) !== null) {
-    const body = m[1] ?? m[2] ?? m[3] ?? '';
-    // Inside a template literal, each ${…} is its own scope — its contents are separate
-    // literals which this same pass picks up, so blank them out here.
-    chunks.push({ text: body.replace(/\$\{[\s\S]*?\}/g, ' '), index: m.index });
+    if (m[3] === undefined) {
+      chunks.push({ text: m[1] ?? m[2], index: m.index });
+      continue;
+    }
+    // A template literal is TWO kinds of thing: its own static class text, and one or more
+    // ${…} expressions that usually hold the ternary branches. An earlier version blanked the
+    // expressions — which silently discarded the branches, the single most common place a
+    // pairing hides in this file. Mutation testing caught it: reverting the attachment chip to
+    // a light blue went unnoticed because its classes live inside a ${…}. Recurse instead.
+    const tpl = m[3];
+    const base = m.index + 1;
+    let statics = tpl;
+    for (const expr of tpl.matchAll(/\$\{([\s\S]*?)\}/g)) {
+      for (const inner of styleChunks(expr[1])) {
+        chunks.push({ text: inner.text, index: base + expr.index + 2 + inner.index });
+      }
+      statics = statics.split(expr[0]).join(' '.repeat(expr[0].length));
+    }
+    chunks.push({ text: statics, index: base });
   }
   return chunks;
 }
@@ -262,6 +277,11 @@ function main() {
     check('the pair scanner reports a real failing pairing', failingPairs("className={'bg-blue-500 text-white'}").length === 1);
     check('… regardless of token order', failingPairs("className={'text-white bg-blue-500'}").length === 1);
     check('… across a multi-line className', failingPairs('className={`bg-blue-500 rounded\n  text-white px-2`}').length === 1);
+    check('… inside a ${…} branch of a template literal — where this file hides most of them',
+      failingPairs("className={`rounded ${on ? 'bg-blue-500 text-white' : 'bg-white text-gray-700'}`}").length === 1,
+      'blanking these instead of recursing is how the attachment-chip regression stayed green');
+    check('… and the template’s own static classes are still read',
+      failingPairs("className={`bg-blue-500 text-white ${extra}`}").length === 1);
     check('… and accepts the ternary shape that made F30 a false alarm',
       failingPairs("className={on ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}").length === 0,
       'the grey lives in the other branch from the colour and never renders on it');
