@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { getRoles, hasAnyRole } from '../utils/auth';
+import { getRoles } from '../utils/auth';
+import { buildNavItems } from '../utils/nav';
+import { MobileNavButton, MobileNavDrawer, NavList } from '../components/PortalNav';
 
 /** Small inline bar chart (no external deps) */
 function BarChart({ data = [], onBarClick }) {
@@ -43,16 +45,13 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
-  // F3/F5: the in-portal Inbox and lead funnel are sales tools (the server also gates
-  // /api/podium/inbox and /api/leads).
-  const canUseInbox = hasAnyRole(getRoles(), ['sales', 'superadmin']);
-  const canUseLeads = canUseInbox;
-  // F7b: the Awaiting-Workorder queue is a logistics tool (the server also gates
-  // /api/logistics). superadmin sees it too.
-  const canUseLogistics = hasAnyRole(getRoles(), ['logistics', 'superadmin']);
-  // F10: the Integrations log is an ops/observability tool (the server also gates
-  // /api/integrations to superadmin).
-  const canUseIntegrations = hasAnyRole(getRoles(), ['superadmin']);
+  // F19 incr 2a: the nav items — and every role gate that decides which ones appear — now live
+  // in utils/nav.js, because the desktop sidebar and the mobile drawer both render them.
+  const navItems = useMemo(() => buildNavItems({ user, roles: getRoles() }), [user]);
+  const [navOpen, setNavOpen] = useState(false);
+  // Stable identity: the drawer subscribes to Escape and to a matchMedia change with this in
+  // the dependency array, so an inline arrow would resubscribe on every dashboard render.
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   // base datasets
   const [products, setProducts] = useState([]);
@@ -96,6 +95,26 @@ export default function Dashboard() {
     end.setDate(start.getDate() + 7); // exclusive
     return { start, end };
   }, [weekBounds]);
+
+  // Lifted out of the sidebar's onClick so the drawer's Logout runs the SAME code, not a copy.
+  // In an installed PWA (F19 incr 1) this is the only way to sign out — there is no URL bar.
+  const handleLogout = useCallback(async () => {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    if (u) {
+      try {
+        await fetch('/api/access-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: u.id, description: 'User manually logged out' }),
+        });
+      } catch {}
+    }
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    localStorage.removeItem('sessionExpiry');
+    toast('Logged out');
+    navigate('/');
+  }, [navigate]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -259,120 +278,23 @@ export default function Dashboard() {
       {/* Sidebar */}
       <aside className="w-64 bg-white shadow-md hidden md:block">
         <div className="p-6 font-bold text-xl border-b">Grays Admin</div>
-        <nav className="mt-4 flex flex-col space-y-2 px-4">
-          {/* Always visible */}
-          <Link to="/dashboard" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-            Dashboard
-          </Link>
-          <Link to="/settings" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-            Account Settings
-          </Link>
-
-          {/* In-portal Inbox — sales/superadmin (F3) */}
-          {canUseInbox && (
-            <Link to="/inbox" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-              Inbox
-            </Link>
-          )}
-
-          {/* Lead funnel — sales/superadmin (F5) */}
-          {canUseLeads && (
-            <Link to="/leads" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-              Lead Funnel
-            </Link>
-          )}
-
-          {/* Awaiting-Workorder queue — logistics/superadmin (F7b) */}
-          {canUseLogistics && (
-            <Link to="/logistics/awaiting-workorder" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-              Awaiting Workorder
-            </Link>
-          )}
-
-          {/* Not visible to technician */}
-          {user?.access !== 'technician' && (
-            <>
-              <Link to="/products" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-                Products
-              </Link>
-              <Link to="/customers" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-                Customers
-              </Link>
-              <Link to="/waitlist" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-                Waitlist
-              </Link>
-            </>
-          )}
-
-          {/* Delivery Ops: visible to everyone */}
-          <Link
-            to={user?.id === 'WK' ? '/workshop' : '/delivery_operations'}
-            className="text-gray-700 hover:bg-gray-200 p-2 rounded"
-          >
-            Delivery Operations
-          </Link>
-
-          {/* Winnings 3PL — Peloton stock (superadmin only) */}
-          {user?.access === 'superadmin' && (
-            <Link to="/peloton" className="text-gray-700 hover:bg-gray-200 p-2 rounded flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-black flex-shrink-0" />
-              Peloton
-            </Link>
-          )}
-
-          {/* Integrations observability — superadmin (F10) */}
-          {canUseIntegrations && (
-            <Link to="/integrations" className="text-gray-700 hover:bg-gray-200 p-2 rounded">
-              Integrations
-            </Link>
-          )}
-
-          {/* Only superadmin */}
-          {user?.access === 'superadmin' && (
-            <Link
-              to="/register"
-              className="text-gray-700 hover:bg-gray-200 p-2 rounded font-semibold"
-            >
-              Register New User
-            </Link>
-          )}
-
-          {/* Logout */}
-          <button
-            onClick={async () => {
-              const u = JSON.parse(localStorage.getItem('user') || 'null');
-              if (u) {
-                try {
-                  await fetch('/api/access-log', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      userId: u.id,
-                      description: 'User manually logged out',
-                    }),
-                  });
-                } catch {}
-              }
-              localStorage.removeItem('user');
-              localStorage.removeItem('token');
-              localStorage.removeItem('sessionExpiry');
-              toast('Logged out');
-              navigate('/');
-            }}
-            className="text-gray-700 hover:bg-gray-200 p-2 rounded text-left"
-          >
-            Logout
-          </button>
-        </nav>
+        <NavList testId="sidebar-nav" items={navItems} onLogout={handleLogout} className="mt-4 px-4" />
       </aside>
+
+      {/* Mobile drawer — the only navigation below md. Mounted only while open so useDialog
+          captures the opener and can restore focus to it (F26 convention). */}
+      {navOpen && (
+        <MobileNavDrawer items={navItems} onLogout={handleLogout} onClose={closeNav} />
+      )}
 
       {/* Main */}
       <div className="flex-1 flex flex-col">
-        <header className="bg-white shadow-md p-4 flex justify-between items-center">
-          <h1 className="text-lg font-semibold">Hello, {user?.name || 'Guest'}</h1>
+        <header className="bg-white shadow-md p-4 flex items-center gap-2">
+          <MobileNavButton onClick={() => setNavOpen(true)} />
+          <h1 className="text-lg font-semibold truncate">Hello, {user?.name || 'Guest'}</h1>
         </header>
 
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="flex-1 p-4 md:p-6 overflow-auto">
           {user?.access !== 'technician' && (
             <>
               <div className="bg-white p-6 rounded shadow-md">
