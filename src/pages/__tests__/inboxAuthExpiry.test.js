@@ -1,6 +1,9 @@
-// F32 (a) — `loadConversations`' own 401 redirect.
+// F32 (a) — what happens in the inbox when the session expires.
 //
-// Every fetch in src/pages/inbox.js carries the same three-line guard:
+// The row asked for a test of `loadConversations`' own 401 redirect. Writing it found a bug one
+// level down instead, so this file is mostly about `pollNow`, which had no 401 branch at all.
+//
+// Every OTHER fetch in src/pages/inbox.js carries the same three-line guard:
 //
 //     if (res.status === 401) { navigate('/'); return; }
 //
@@ -16,12 +19,13 @@
 // WHAT EACH TEST PINS, and why it isn't obvious:
 //   - a 401 on first load lands the rep on the login route, rather than leaving them on an
 //     inbox that is simply, permanently empty;
-//   - a 401 arriving on the BACKGROUND POLL redirects too. This is the real-world case — nobody
-//     is watching at the moment the token expires — and it is the one a naive implementation
-//     misses, because the poll passes `{ silent: true }` and silent paths are exactly where
-//     error handling gets skipped;
-//   - the redirect happens WITHOUT an error toast. A toast here would be noise the rep cannot
-//     act on, and worse, the same code path also handles 403, which SHOULD explain itself;
+//   - a 401 arriving on the BACKGROUND POLL redirects at all. This is the real-world case —
+//     nobody is watching at the moment the token expires — and it was the broken one: `pollNow`
+//     swallowed it into `if (!res.ok) return`, the silent path where error handling gets skipped;
+//   - the click-driven redirects stay silent (the rep knows what they just did), while the
+//     TIMER-driven one explains itself and ends the session. Two different behaviours on
+//     purpose, and each is pinned, because code review showed a toast could be added to the
+//     poll path with every test still green;
 //   - 403 is not 401: a non-sales user is told why and sent to the dashboard, not to login.
 //     These two live in adjacent lines and are easy to conflate.
 
@@ -106,10 +110,19 @@ function renderInbox() {
   );
 }
 
+/**
+ * Let everything the page kicked off finish before asserting.
+ *
+ * Deliberately drains MICROTASKS only. An earlier version awaited a real `setTimeout(0)`, which
+ * simply never fires while jest's fake timers are installed — the fake-timer tests hung for the
+ * full 5s jest timeout and took the following test down with them. Nothing here needs the macro
+ * queue: the page's fan-out is promise-chained, and where a timer is genuinely wanted the test
+ * advances it explicitly.
+ */
 const settle = async () => {
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { await Promise.resolve(); });
   }
 };
 
@@ -133,10 +146,12 @@ describe('F32(a) — the inbox sends an expired session back to login', () => {
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
   });
 
-  test('it does not leave the rep on an inbox that merely looks empty', async () => {
-    // The failure mode without the guard: the fetch returns, `data` is not an array, the list
-    // renders as empty, and the rep sits there refreshing a page that will never load.
-    global.fetch = mockFetch(() => json({ error: 'Unauthorized' }, 401));
+  test('it does not render a list out of a 401 body', async () => {
+    // The failure mode without the guard: the response still parses, so whatever the error body
+    // happens to contain gets treated as data. This 401 carries a plausible-looking payload for
+    // exactly that reason — code review caught the first version asserting the ABSENCE of a
+    // conversation the mock never returned under any implementation, which could not fail.
+    global.fetch = mockFetch(() => json({ error: 'Unauthorized', data: CONVERSATIONS }, 401));
 
     renderInbox();
     await settle();
@@ -185,6 +200,50 @@ describe('F32(a) — the inbox sends an expired session back to login', () => {
     await waitFor(() => expect(screen.getByText('LOGIN PAGE')).toBeInTheDocument());
   });
 
+  test('the timer-driven redirect TELLS the rep why, unlike the click-driven ones', async () => {
+    // Code review found this uncovered: adding a toast to the poll guard passed all six tests,
+    // because the "no toast" test only ever exercised the foreground path. A silent redirect is
+    // right after a click — the rep knows what they did — and wrong on a timer, where the page
+    // just vanishes mid-sentence.
+    jest.useFakeTimers();
+    global.fetch = mockFetchWithPoll(
+      () => json({ data: CONVERSATIONS, serverTime: '2026-07-21T10:00:00.000Z' }),
+      () => json({ error: 'Unauthorized' }, 401),
+    );
+
+    renderInbox();
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
+
+    await act(async () => { jest.advanceTimersByTime(9000); });
+    await act(async () => { await Promise.resolve(); });
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Your session expired — please sign in again'));
+  });
+
+  test('… and ends the session, so Back cannot bounce off a dead token', async () => {
+    // Navigating without clearing the token leaves a loop: Back lands on /inbox, the client
+    // gate sees a token and mounts, it 401s, and pushes to login again.
+    jest.useFakeTimers();
+    global.fetch = mockFetchWithPoll(
+      () => json({ data: CONVERSATIONS, serverTime: '2026-07-21T10:00:00.000Z' }),
+      () => json({ error: 'Unauthorized' }, 401),
+    );
+
+    renderInbox();
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
+    expect(localStorage.getItem('token')).toBe('jwt-token');
+
+    await act(async () => { jest.advanceTimersByTime(9000); });
+    await act(async () => { await Promise.resolve(); });
+
+    await waitFor(() => expect(screen.getByText('LOGIN PAGE')).toBeInTheDocument());
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('user')).toBeNull();
+    expect(localStorage.getItem('sessionExpiry')).toBeNull();
+  });
+
   test('a poll that fails for any OTHER reason does not throw the rep out', async () => {
     // The counterweight: a flaky network or a 500 must stay silent and keep the page alive.
     // Redirecting on every failed background request would log people out of a working session.
@@ -199,10 +258,17 @@ describe('F32(a) — the inbox sends an expired session back to login', () => {
     await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
 
     await act(async () => { jest.advanceTimersByTime(9000); });
-    await act(async () => { await Promise.resolve(); });
+    await settle();
+
+    // Prove the poll actually ran before concluding anything from its silence — otherwise this
+    // test would pass simply because nothing happened, and would keep passing if an added
+    // `await` inside pollNow pushed the guard past the assertions.
+    const pollCalls = global.fetch.mock.calls.filter(([u]) => String(u).includes('resource=poll'));
+    expect(pollCalls.length).toBeGreaterThanOrEqual(1);
 
     expect(screen.queryByText('LOGIN PAGE')).not.toBeInTheDocument();
     expect(screen.getByText('Alice Adams')).toBeInTheDocument();
+    expect(localStorage.getItem('token')).toBe('jwt-token');
   });
 
   test('403 is not 401 — a non-sales user is told why and sent to the dashboard', async () => {

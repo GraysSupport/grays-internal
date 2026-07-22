@@ -473,7 +473,25 @@ export default function Inbox() {
       // for as long as the tab stayed open. loadConversations' own 401 guard could never rescue
       // it either, because that only re-runs when the poll REPORTS updates, and a 401 poll
       // never reports any. Everything else stays silent — a flaky network must not log anyone out.
-      if (res.status === 401) { navigate('/'); return; }
+      //
+      // This one is DELIBERATELY NOT silent, unlike the twelve foreground 401s. Those follow a
+      // click, so the rep already knows what they did; this one fires on a timer, and without a
+      // message the page just vanishes mid-sentence — possibly taking a half-typed reply with
+      // it, the very thing F31 was written to protect. The session is dead either way, so the
+      // draft cannot be saved by staying; what can be salvaged is the rep knowing WHY.
+      //
+      // It also ends the session properly rather than only navigating: leaving the token behind
+      // means Back lands on /inbox, the client gate sees a token and lets it mount, it 401s and
+      // redirects again. `replace` keeps that loop out of history. (The other twelve sites still
+      // only navigate — swept up in F34, where a shared helper can also log it.)
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('sessionExpiry');
+        toast.error('Your session expired — please sign in again');
+        navigate('/', { replace: true });
+        return;
+      }
       if (!res.ok) return;
       const data = await parseMaybeJson(res);
       if (data?.serverTime) sinceRef.current = data.serverTime;
