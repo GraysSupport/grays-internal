@@ -947,14 +947,21 @@ export default function Inbox() {
 
   const assigneeLabel = (c) => {
     const uids = conversationAssigneeUids(c);
-    if (uids.length === 0) return { text: 'Unassigned', cls: 'text-gray-400' };
+    // These labels sit side by side DOWN the list, so they need to stay distinguishable — but
+    // the FIRST attempt got the polarity backwards (caught in review): it left "Unassigned" as
+    // the faintest text on the row when an unclaimed thread is the one state a rep is hunting
+    // for, and it collided with the equally-grey timestamp beside it. Unassigned is now amber —
+    // a needs-attention colour rather than a weight — and the assigned states are the muted
+    // ones. All three clear AA on both surfaces a row can have (white, and blue-50 when
+    // selected); the colours, not the greys, carry the meaning.
+    if (uids.length === 0) return { text: 'Unassigned', cls: 'text-amber-700' };
     const mine = myPodiumUid && uids.includes(myPodiumUid);
     if (uids.length === 1) {
-      return mine ? { text: 'You', cls: 'text-green-700' } : { text: 'Assigned', cls: 'text-gray-500' };
+      return mine ? { text: 'You', cls: 'text-green-700' } : { text: 'Assigned', cls: 'text-gray-600' };
     }
     return mine
       ? { text: `You +${uids.length - 1}`, cls: 'text-green-700' }
-      : { text: `${uids.length} assignees`, cls: 'text-gray-500' };
+      : { text: `${uids.length} assignees`, cls: 'text-gray-600' };
   };
 
   // Prefer the resolved customer/contact name in the thread header once the panel loads.
@@ -1009,7 +1016,7 @@ export default function Inbox() {
                     key={b.key}
                     type="button"
                     onClick={() => switchBucket(b.key)}
-                    className={bucket === b.key ? 'px-3 py-1.5 bg-blue-500 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
+                    className={bucket === b.key ? 'px-3 py-1.5 bg-blue-600 text-white' : 'px-3 py-1.5 bg-white text-gray-700 hover:bg-gray-50'}
                   >
                     {b.label}
                   </button>
@@ -1034,7 +1041,7 @@ export default function Inbox() {
               <button
                 type="button"
                 onClick={() => setShowCompose(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-500 bg-blue-500 text-sm text-white hover:bg-blue-600"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-600 bg-blue-600 text-sm text-white hover:bg-blue-700"
                 title="Start a new conversation with a phone number or email"
               >
                 <span aria-hidden="true">✉️</span> New conversation
@@ -1070,7 +1077,7 @@ export default function Inbox() {
                       type="button"
                       onClick={() => setSearchInput('')}
                       aria-label="Clear search"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-600"
                     >
                       ×
                     </button>
@@ -1093,7 +1100,7 @@ export default function Inbox() {
                     <button
                       type="button"
                       onClick={() => navigate('/settings')}
-                      className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600"
+                      className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
                     >
                       Connect my Podium account
                     </button>
@@ -1131,7 +1138,8 @@ export default function Inbox() {
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-1">
                         <span className={`text-xs ${a.cls}`}>{a.text}</span>
-                        <span className="text-xs text-gray-400">{formatTime(c?.lastMessageAt)}</span>
+                        {/* gray-600: a selected row is bg-blue-50, where gray-500 is 4.44:1. */}
+                        <span className="text-xs text-gray-600">{formatTime(c?.lastMessageAt)}</span>
                       </div>
                     </button>
                   );
@@ -1142,7 +1150,7 @@ export default function Inbox() {
             {/* Thread + composer */}
             <section className={`flex-1 min-w-0 flex flex-col ${selectedId ? 'flex' : 'hidden md:flex'}`}>
               {!selectedId && (
-                <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
+                <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
                   Select a conversation to view the chat.
                 </div>
               )}
@@ -1209,7 +1217,7 @@ export default function Inbox() {
                   <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                     {loadingThread && <div className="text-sm text-gray-500">Loading messages…</div>}
                     {!loadingThread && messages.length === 0 && (
-                      <div className="text-sm text-gray-400">No messages in this conversation.</div>
+                      <div className="text-sm text-gray-500">No messages in this conversation.</div>
                     )}
                     {!loadingThread && messages.map((m) => {
                       // F12 — internal notes render distinctly (team-only, not sent to the customer).
@@ -1234,15 +1242,19 @@ export default function Inbox() {
                         <div key={m.uid} className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
                           <div
                             className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
-                              outbound ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
+                              // bg-blue-600, not -500: on blue-500 the bubble's OWN white message
+                              // text measures 3.68:1 — the actual conversation, failing AA worse
+                              // than any grey this change started with. blue-600 puts it at 5.17
+                              // and the timestamp below at 4.75.
+                              outbound ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
                             } ${m.optimistic ? 'opacity-80' : ''}`}
                           >
                             {showSenders && outbound && senderDisplay(m) && (
-                              <div className="text-[11px] font-semibold text-blue-100 mb-0.5">{senderDisplay(m)}</div>
+                              <div className="text-[11px] font-semibold text-blue-50 mb-0.5">{senderDisplay(m)}</div>
                             )}
                             {m.body && <div className="whitespace-pre-wrap break-words">{m.body}</div>}
                             <MessageAttachments attachments={m.attachments} outbound={outbound} />
-                            <div className={`text-[10px] mt-1 ${outbound ? 'text-blue-100' : 'text-gray-400'}`}>
+                            <div className={`text-[10px] mt-1 ${outbound ? 'text-blue-50' : 'text-gray-500'}`}>
                               {formatTime(m.createdAt)}{m.optimistic ? ' · sending…' : ''}
                             </div>
                           </div>
@@ -1284,14 +1296,14 @@ export default function Inbox() {
                         <button
                           type="button"
                           onClick={() => setComposerMode('reply')}
-                          className={composerMode === 'reply' ? 'px-2.5 py-1 bg-blue-500 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
+                          className={composerMode === 'reply' ? 'px-2.5 py-1 bg-blue-600 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
                         >
                           Reply
                         </button>
                         <button
                           type="button"
                           onClick={() => { setComposerMode('note'); setShowTemplates(false); }}
-                          className={composerMode === 'note' ? 'px-2.5 py-1 bg-amber-500 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
+                          className={composerMode === 'note' ? 'px-2.5 py-1 bg-amber-700 text-white' : 'px-2.5 py-1 bg-white text-gray-600 hover:bg-gray-50'}
                         >
                           Internal note
                         </button>
@@ -1372,7 +1384,7 @@ export default function Inbox() {
                         type="submit"
                         disabled={sending || (composerMode === 'note' ? !draft.trim() : (!draft.trim() && attachments.length === 0))}
                         className={`px-4 py-2 rounded-lg text-sm text-white disabled:opacity-50 ${
-                          composerMode === 'note' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-500 hover:bg-blue-600'
+                          composerMode === 'note' ? 'bg-amber-700 hover:bg-amber-800' : 'bg-blue-600 hover:bg-blue-700'
                         }`}
                       >
                         {sending
@@ -1406,7 +1418,9 @@ export default function Inbox() {
             )}
           </div>
 
-          <p className="text-xs text-gray-400 mt-3">
+          {/* gray-600, not -500: this paragraph sits on the page shell (bg-gray-100), where
+              gray-500 is 4.39:1 — under AA. Everything else de-emphasised sits on a white card. */}
+          <p className="text-xs text-gray-600 mt-3">
             Chats are read live from Podium and are never stored in the portal. The customer
             panel shows the matched customer, their open orders/deliveries and funnel stage.
           </p>
@@ -1464,21 +1478,21 @@ function CustomerPanel({
     <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
       {/* F16 slot — Podium's auto AI summary + "Jerry" land here (not built this run). */}
       <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">AI summary</div>
-        <div className="text-xs text-gray-400 mt-1">Auto conversation summary arrives with Jerry (F16).</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">AI summary</div>
+        <div className="text-xs text-gray-500 mt-1">Auto conversation summary arrives with Jerry (F16).</div>
       </div>
 
       {loading && <div className="text-gray-500">Loading customer details…</div>}
 
       {!loading && !panel && (
-        <div className="text-gray-400">Customer details unavailable.</div>
+        <div className="text-gray-500">Customer details unavailable.</div>
       )}
 
       {!loading && panel && (
         <>
           {/* Customer identity (or contact + create action when unmatched) */}
           <section>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Customer</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Customer</div>
             {customer ? (
               <div className="space-y-1">
                 <div className="font-semibold text-gray-900">{customer.name || 'Unnamed customer'}</div>
@@ -1486,7 +1500,7 @@ function CustomerPanel({
                 {customer.phone && <Field label="Phone" value={customer.phone} />}
                 {customer.address && <Field label="Address" value={customer.address} />}
                 {panel.matchedBy && panel.matchedBy !== 'none' && (
-                  <div className="text-[11px] text-gray-400 pt-1">
+                  <div className="text-[11px] text-gray-500 pt-1">
                     Matched by {panel.matchedBy === 'podium_contact_id' ? 'linked Podium contact' : panel.matchedBy}
                   </div>
                 )}
@@ -1502,7 +1516,7 @@ function CustomerPanel({
                     {contact.email && <Field label="Email" value={contact.email} />}
                     {contact.phone && <Field label="Phone" value={contact.phone} />}
                     {!contact.name && !contact.email && !contact.phone && (
-                      <div className="text-xs text-gray-400">No contact details available from Podium.</div>
+                      <div className="text-xs text-gray-500">No contact details available from Podium.</div>
                     )}
                   </div>
                 )}
@@ -1519,7 +1533,7 @@ function CustomerPanel({
                   type="button"
                   onClick={onCreate}
                   disabled={creating}
-                  className="w-full bg-blue-500 text-white py-2 rounded text-sm hover:bg-blue-600 disabled:opacity-50"
+                  className="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
                 >
                   {creating ? 'Creating…' : 'Create customer from contact'}
                 </button>
@@ -1534,7 +1548,7 @@ function CustomerPanel({
 
           {/* Funnel stage + history timeline */}
           <section>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Funnel stage</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Funnel stage</div>
             {lead ? (
               <div className="space-y-1">
                 <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${STAGE_CLS[lead.stage] || 'bg-gray-100 text-gray-700'}`}>
@@ -1547,13 +1561,13 @@ function CustomerPanel({
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="text-gray-400">Not in the funnel yet.</div>
+                <div className="text-gray-500">Not in the funnel yet.</div>
                 {customer && onAddToFunnel && (
                   <button
                     type="button"
                     onClick={onAddToFunnel}
                     disabled={addingLead}
-                    className="w-full bg-blue-500 text-white py-2 rounded text-sm hover:bg-blue-600 disabled:opacity-50"
+                    className="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
                   >
                     {addingLead
                       ? 'Adding…'
@@ -1568,11 +1582,11 @@ function CustomerPanel({
 
           {/* Open workorders — check order progress without leaving the inbox */}
           <section>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
               Open workorders{workorders.length ? ` (${workorders.length})` : ''}
             </div>
             {workorders.length === 0 ? (
-              <div className="text-gray-400">None open.</div>
+              <div className="text-gray-500">None open.</div>
             ) : (
               <ul className="space-y-2">
                 {workorders.map((w) => {
@@ -1610,11 +1624,11 @@ function CustomerPanel({
 
           {/* Active deliveries */}
           <section>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
               Active deliveries{deliveries.length ? ` (${deliveries.length})` : ''}
             </div>
             {deliveries.length === 0 ? (
-              <div className="text-gray-400">None active.</div>
+              <div className="text-gray-500">None active.</div>
             ) : (
               <ul className="space-y-2">
                 {deliveries.map((d) => (
@@ -1664,8 +1678,8 @@ export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onTog
   }, [show, setShow]);
   return (
     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-      <span className="text-[11px] text-gray-400">Assigned:</span>
-      {assignees.length === 0 && <span className="text-xs text-gray-400">Unassigned</span>}
+      <span className="text-[11px] text-gray-500">Assigned:</span>
+      {assignees.length === 0 && <span className="text-xs text-gray-500">Unassigned</span>}
       {assignees.map((a) => {
         const you = myPodiumUid && a.podiumUserId === myPodiumUid;
         return (
@@ -1716,10 +1730,10 @@ export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onTog
                       tree (only display:none / visibility:hidden / aria-hidden remove it), so
                       a screen reader announced a "✓" beside EVERY rep — assigned or not. The
                       real state is carried by aria-pressed on the button. */}
-                  <span aria-hidden="true" className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
+                  <span aria-hidden="true" className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center text-[10px] ${checked ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs text-gray-800 truncate">{r.name}</span>
-                    {!r.linked && <span className="block text-[10px] text-gray-400">Not linked to Podium</span>}
+                    {!r.linked && <span className="block text-[10px] text-gray-500">Not linked to Podium</span>}
                   </span>
                 </button>
               );
@@ -1735,7 +1749,7 @@ export function AssigneeBar({ assignees, reps, myPodiumUid, show, setShow, onTog
 function Field({ label, value }) {
   return (
     <div className="flex gap-2 text-xs">
-      <span className="text-gray-400 w-20 shrink-0">{label}</span>
+      <span className="text-gray-500 w-20 shrink-0">{label}</span>
       <span className="text-gray-700 break-words min-w-0">{value}</span>
     </div>
   );
@@ -1757,7 +1771,9 @@ function MessageAttachments({ attachments, outbound }) {
         return (
           <span
             key={key}
-            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg ${outbound ? 'bg-blue-400/60 text-white' : 'bg-gray-100 text-gray-700'}`}
+            // bg-blue-700 rather than the old translucent bg-blue-400/60, which composited to
+            // roughly #5197f8 and put this white label at 2.94:1 — the worst pairing on the page.
+            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg ${outbound ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-700'}`}
           >
             {a.kind === 'video' ? '🎬' : '📎'} {a.filename || a.kind}
           </span>
@@ -1774,16 +1790,19 @@ function FunnelTimeline({ history }) {
   if (rows.length === 0) return null;
   return (
     <div className="pt-2">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Funnel history</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Funnel history</div>
       <ol className="space-y-1.5 border-l border-gray-200 pl-3">
         {rows.map((h) => (
           <li key={h.id} className="relative">
             <span className="absolute -left-[0.95rem] top-1.5 w-1.5 h-1.5 rounded-full bg-blue-400" />
             <div className="text-xs font-medium text-gray-800">{h.to_stage}</div>
-            <div className="text-[11px] text-gray-400">
+            <div className="text-[11px] text-gray-500">
               {formatTime(h.created_at)}{h.user_name ? ` · ${h.user_name}` : ''}
             </div>
-            {h.notes_log && <div className="text-[11px] text-gray-500 break-words">{h.notes_log}</div>}
+            {/* The note is content and the timestamp is metadata; they render together on the
+                same row, so the note steps DOWN to gray-700 rather than both landing on the
+                same grey once the failing token was raised. */}
+            {h.notes_log && <div className="text-[11px] text-gray-700 break-words">{h.notes_log}</div>}
           </li>
         ))}
       </ol>
@@ -1843,13 +1862,13 @@ export function WorkorderModal({ workorderId, detail, loading, onClose }) {
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{detail.status}</span>
             )}
           </div>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
         </header>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
           {loading && <div className="text-gray-500">Loading workorder…</div>}
 
-          {!loading && !detail && <div className="text-gray-400">Workorder details unavailable.</div>}
+          {!loading && !detail && <div className="text-gray-500">Workorder details unavailable.</div>}
 
           {!loading && detail && (
             <>
@@ -1868,11 +1887,11 @@ export function WorkorderModal({ workorderId, detail, loading, onClose }) {
 
               {/* Items + per-item status */}
               <section>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">
                   Items{items.length ? ` (${items.length})` : ''}
                 </div>
                 {items.length === 0 ? (
-                  <div className="text-gray-400">No items.</div>
+                  <div className="text-gray-500">No items.</div>
                 ) : (
                   <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
                     {items.map((it) => (
@@ -1896,7 +1915,7 @@ export function WorkorderModal({ workorderId, detail, loading, onClose }) {
 
               {/* Full activity log (read-only, scrollable, oldest → newest) */}
               <section>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Activity log</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Activity log</div>
                 <textarea
                   readOnly
                   value={logText || 'No activity recorded.'}
@@ -1981,7 +2000,7 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
             type="button"
             onClick={onClose}
             disabled={sending}
-            className="text-gray-400 hover:text-gray-700 text-xl leading-none disabled:opacity-40"
+            className="text-gray-500 hover:text-gray-700 text-xl leading-none disabled:opacity-40"
             aria-label="Close"
           >
             ×
@@ -2050,7 +2069,7 @@ export function ComposeModal({ sending, onSubmit, onClose }) {
           <button
             type="submit"
             disabled={!canSend}
-            className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-sm hover:bg-blue-600 disabled:opacity-40 disabled:hover:bg-blue-500"
+            className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600"
           >
             {sending ? 'Starting…' : 'Start conversation'}
           </button>
@@ -2104,7 +2123,7 @@ export function ProductLookupModal({ products, loaded, search, setSearch, onClos
       >
         <header className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <h2 id={titleId} className="text-lg font-bold">Product price &amp; stock</h2>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl leading-none" aria-label="Close">×</button>
         </header>
 
         <div className="px-5 pt-4">
@@ -2123,7 +2142,7 @@ export function ProductLookupModal({ products, loaded, search, setSearch, onClos
           {!loaded && <div className="text-sm text-gray-500">Loading products…</div>}
 
           {loaded && all.length === 0 && (
-            <div className="text-sm text-gray-400">Product list unavailable.</div>
+            <div className="text-sm text-gray-500">Product list unavailable.</div>
           )}
 
           {loaded && all.length > 0 && matches.length === 0 && (
@@ -2165,7 +2184,7 @@ export function ProductLookupModal({ products, loaded, search, setSearch, onClos
           )}
         </div>
 
-        <footer className="px-5 py-2 border-t border-gray-200 text-[11px] text-gray-400">
+        <footer className="px-5 py-2 border-t border-gray-200 text-[11px] text-gray-500">
           Retail price and current stock. Loaded once when the Inbox opened.
         </footer>
       </div>
