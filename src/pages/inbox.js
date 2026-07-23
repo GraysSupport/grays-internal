@@ -50,6 +50,7 @@ import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import { authHeaders, getToken, getRoles, hasAnyRole } from '../utils/auth';
 import { parseMaybeJson } from '../utils/http';
+import { endExpiredSession } from '../utils/session';
 import { classifyComposeTarget, isValidComposeTarget, composeResultMessage } from '../utils/compose';
 
 const INBOX_ROLES = ['sales', 'superadmin'];
@@ -241,7 +242,7 @@ export default function Inbox() {
         `/api/podium/inbox?resource=conversations&bucket=${bucket}&status=${status}${q}&limit=30`,
         { headers: authHeaders() },
       );
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       if (res.status === 403) { toast.error('The Inbox is for sales users'); navigate('/dashboard'); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
@@ -268,7 +269,7 @@ export default function Inbox() {
         `/api/podium/inbox?resource=messages&conversationId=${encodeURIComponent(convId)}&limit=50`,
         { headers: authHeaders() },
       );
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         if (!silent) toast.error(data?.error || 'Could not load this conversation');
@@ -294,7 +295,7 @@ export default function Inbox() {
         `/api/podium/contact?conversationId=${encodeURIComponent(convId)}`,
         { headers: authHeaders() },
       );
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         // A missing customer is not an error (customer:null comes back 200); only surface
@@ -319,26 +320,32 @@ export default function Inbox() {
         `/api/podium/assign?conversationId=${encodeURIComponent(convId)}`,
         { headers: authHeaders() },
       );
+      // F34 — a 401 here is an expired session, not "no assignees". The old `!res.ok` swallow left
+      // the rep with silently-empty chips on a dead token; end the session like every other 401.
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       if (!res.ok) { setAssignees([]); return; }
       const data = await parseMaybeJson(res);
       setAssignees(Array.isArray(data?.assignees) ? data.assignees : []);
     } catch {
       setAssignees([]);
     }
-  }, []);
+  }, [navigate]);
 
   // Funnel stage history (timeline) for the panel's lead — when/if there is one.
   const loadLeadHistory = useCallback(async (leadId) => {
     if (!leadId) { setLeadHistory([]); return; }
     try {
       const res = await fetch(`/api/leads/${leadId}/history`, { headers: authHeaders() });
+      // F34 — as loadAssignees: a 401 is an expired session, not "no history". Redirect, don't
+      // quietly show an empty funnel timeline on a dead token.
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       if (!res.ok) { setLeadHistory([]); return; }
       const data = await parseMaybeJson(res);
       setLeadHistory(Array.isArray(data?.history) ? data.history : []);
     } catch {
       setLeadHistory([]);
     }
-  }, []);
+  }, [navigate]);
 
   // Open a conversation by uid even when it isn't in the current bucket/status list —
   // fetches it directly, then opens its thread + panel. Used by the funnel deep-link and
@@ -374,7 +381,7 @@ export default function Inbox() {
         `/api/podium/inbox?resource=conversation&conversationId=${encodeURIComponent(convId)}`,
         { headers: authHeaders() },
       );
-      if (res.status === 401) { navigate('/'); return false; }
+      if (res.status === 401) { endExpiredSession(navigate); return false; }
       const data = await parseMaybeJson(res);
       if (!res.ok || !data?.conversation) return false;
       setSelectedId(convId);
@@ -482,14 +489,12 @@ export default function Inbox() {
       //
       // It also ends the session properly rather than only navigating: leaving the token behind
       // means Back lands on /inbox, the client gate sees a token and lets it mount, it 401s and
-      // redirects again. `replace` keeps that loop out of history. (The other twelve sites still
-      // only navigate — swept up in F34, where a shared helper can also log it.)
+      // redirects again. `replace` keeps that loop out of history. F34 pulled that clear+replace
+      // into endExpiredSession() and gave the twelve foreground sites the same treatment; the
+      // toast stays HERE, because only the timer path is unattended.
       if (res.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('sessionExpiry');
         toast.error('Your session expired — please sign in again');
-        navigate('/', { replace: true });
+        endExpiredSession(navigate);
         return;
       }
       if (!res.ok) return;
@@ -536,7 +541,7 @@ export default function Inbox() {
       const res = await fetch(`/api/workorder?id=${encodeURIComponent(workorderId)}`, {
         headers: authHeaders(),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         toast.error(data?.error || 'Could not load the workorder');
@@ -696,7 +701,7 @@ export default function Inbox() {
         body: JSON.stringify({ to, channel, body }),
         signal: abort.signal,
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         toast.error(data?.error || 'Could not start the conversation');
@@ -750,7 +755,7 @@ export default function Inbox() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ conversationId: selectedId, status: next }),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) { toast.error(data?.error || 'Could not update the conversation'); return; }
       setSelectedConv((c) => (c ? { ...c, status: next } : c));
@@ -788,7 +793,7 @@ export default function Inbox() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) { toast.error(data?.error || 'Could not add this conversation to the funnel'); return; }
       toast.success('Added to the funnel');
@@ -820,7 +825,7 @@ export default function Inbox() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ conversationId: selectedId, userIds: nextIds }),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         toast.error(data?.error || 'Could not update the assignees');
@@ -862,7 +867,7 @@ export default function Inbox() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         toast.error(data?.error || 'Could not send the message');
@@ -903,7 +908,7 @@ export default function Inbox() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ conversationId: selectedId, body }),
       });
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await parseMaybeJson(res);
       if (!res.ok) {
         toast.error(data?.error || 'Could not add the internal note');
@@ -938,7 +943,7 @@ export default function Inbox() {
         body: JSON.stringify(payload),
       });
       const data = await parseMaybeJson(res);
-      if (res.status === 401) { navigate('/'); return; }
+      if (res.status === 401) { endExpiredSession(navigate); return; }
       if (res.status === 422 && data?.code === 'EMAIL_REQUIRED') {
         setNeedEmail(true);
         toast.error('An email is required to create this customer');
