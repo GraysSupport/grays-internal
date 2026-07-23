@@ -75,7 +75,9 @@ const labelsIn = (el) =>
     .map((n) => n.textContent.trim())
     .filter(Boolean);
 
+let user;
 beforeEach(() => {
+  user = userEvent.setup(); // v14: no fake timers in this file
   global.fetch = mockFetch();
   installMatchMedia(false);
 });
@@ -99,7 +101,7 @@ describe('F19 — mobile navigation drawer', () => {
     expect(sidebarLabels).toContain('Dashboard');
     expect(sidebarLabels).toContain('Logout');
 
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
     const drawerLabels = labelsIn(screen.getByTestId('mobile-nav'));
 
     // Order included: the two renderings read the same list, so drift shows up here first.
@@ -109,7 +111,7 @@ describe('F19 — mobile navigation drawer', () => {
   test('the drawer is a dialog and takes focus (F26 convention)', async () => {
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
@@ -120,10 +122,10 @@ describe('F19 — mobile navigation drawer', () => {
   test('Escape closes the drawer and focus returns to the menu button', async () => {
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(document.activeElement).toBe(menuButton());
   });
@@ -132,10 +134,10 @@ describe('F19 — mobile navigation drawer', () => {
     // Without this the router swaps the page underneath and the menu stays open on top of it.
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
-    await userEvent.click(within(drawer).getByRole('link', { name: 'Products' }));
+    await user.click(within(drawer).getByRole('link', { name: 'Products' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
@@ -143,22 +145,22 @@ describe('F19 — mobile navigation drawer', () => {
   test('the backdrop closes the drawer', async () => {
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
-    await userEvent.click(screen.getByTestId('mobile-nav-backdrop'));
+    await user.click(screen.getByTestId('mobile-nav-backdrop'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   test('Logout works from the drawer — in an installed PWA it is the only way out', async () => {
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
     // act-wrapped explicitly: the handler awaits the access-log POST and only then navigates,
     // so the router's state update lands after userEvent's own act scope has closed.
     await act(async () => {
-      await userEvent.click(within(drawer).getByRole('button', { name: 'Logout' }));
+      await user.click(within(drawer).getByRole('button', { name: 'Logout' }));
     });
 
     await waitFor(() => expect(localStorage.getItem('token')).toBeNull());
@@ -170,12 +172,12 @@ describe('F19 — mobile navigation drawer', () => {
   test('every link actually points where the nav data says — in BOTH renderings', async () => {
     // Without this the labels can be right and every href wrong: the code review proved
     // `to={item.to}` could be hard-coded to "/dashboard" with all tests still green.
-    const user = { id: 'NK', name: 'Nick', access: 'superadmin', roles: ['superadmin'] };
-    renderDashboard(user);
+    const nickUser = { id: 'NK', name: 'Nick', access: 'superadmin', roles: ['superadmin'] };
+    renderDashboard(nickUser);
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
-    const expected = buildNavItems({ user, roles: user.roles }).filter((i) => i.to);
+    const expected = buildNavItems({ user: nickUser, roles: nickUser.roles }).filter((i) => i.to);
     for (const testId of ['sidebar-nav', 'mobile-nav']) {
       const nav = screen.getByTestId(testId);
       for (const item of expected) {
@@ -190,7 +192,7 @@ describe('F19 — mobile navigation drawer', () => {
     // and every other fixture here is entitled via `access`, so nothing else would notice.
     renderDashboard({ id: 'AM', name: 'Amelia', access: 'staff', roles: ['staff', 'sales'] });
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
     expect(within(drawer).getByRole('link', { name: 'Inbox' })).toBeInTheDocument();
@@ -203,9 +205,9 @@ describe('F19 — mobile navigation drawer', () => {
     // the affordance a rep will actually aim for.
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
-    await userEvent.click(screen.getByRole('button', { name: /close menu/i }));
+    await user.click(screen.getByRole('button', { name: /close menu/i }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
@@ -215,7 +217,7 @@ describe('F19 — mobile navigation drawer', () => {
     const media = installMatchMedia(false);
     renderDashboard();
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
     act(() => media.growPastBreakpoint());
@@ -230,14 +232,14 @@ describe('F19 — mobile navigation drawer', () => {
     expect(menuButton()).toHaveClass('md:hidden');
     expect(screen.getByTestId('sidebar-nav').closest('aside')).toHaveClass('hidden', 'md:block');
 
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
     expect(screen.getByTestId('mobile-nav-backdrop').parentElement).toHaveClass('md:hidden');
   });
 
   test('a technician sees no Products / Customers / Waitlist in the drawer either', async () => {
     renderDashboard({ id: 'TE', name: 'Tech', access: 'technician', roles: ['technician'] });
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
-    await userEvent.click(menuButton());
+    await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
     for (const label of ['Products', 'Customers', 'Waitlist']) {

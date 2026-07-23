@@ -43,6 +43,12 @@ function renderWithOpener(renderModal) {
 
 const opener = () => screen.getByRole('button', { name: /open it/i });
 
+// user-event v14: a fresh `setup()` per test. No fake timers in this file, so no advanceTimers.
+let user;
+beforeEach(() => {
+  user = userEvent.setup();
+});
+
 describe('true modals — dialog semantics', () => {
   const cases = [
     {
@@ -74,7 +80,7 @@ describe('true modals — dialog semantics', () => {
 
   test.each(cases)('$name exposes role="dialog" and aria-modal', async ({ render: r }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
+    await user.click(opener());
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
@@ -84,7 +90,7 @@ describe('true modals — dialog semantics', () => {
   // idea which one opened.
   test.each(cases)('$name is named by its own heading', async ({ render: r, heading }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
+    await user.click(opener());
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('heading')).toHaveTextContent(heading);
@@ -93,7 +99,7 @@ describe('true modals — dialog semantics', () => {
 
   test.each(cases)('$name moves focus inside itself when it opens', async ({ render: r }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
+    await user.click(opener());
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toContainElement(document.activeElement);
@@ -108,7 +114,7 @@ describe('true modals — dialog semantics', () => {
     renderWithOpener((onClose) => (
       <ComposeModal sending={false} onSubmit={jest.fn()} onClose={onClose} />
     ));
-    await userEvent.click(opener());
+    await user.click(opener());
     expect(screen.getByLabelText(/^to$/i)).toHaveFocus();
   });
 
@@ -116,7 +122,7 @@ describe('true modals — dialog semantics', () => {
     renderWithOpener((onClose) => (
       <ProductLookupModal products={[]} loaded search="" setSearch={jest.fn()} onClose={onClose} />
     ));
-    await userEvent.click(opener());
+    await user.click(opener());
     expect(screen.getByLabelText(/search products/i)).toHaveFocus();
   });
 
@@ -125,30 +131,30 @@ describe('true modals — dialog semantics', () => {
     renderWithOpener((onClose) => (
       <WorkorderModal workorderId="WO123" detail={null} loading={false} onClose={onClose} />
     ));
-    await userEvent.click(opener());
+    await user.click(opener());
     expect(screen.getByRole('button', { name: /close/i })).toHaveFocus();
   });
 
   // The actual reported bug: Tab must not walk out into the inbox behind the modal.
   test.each(cases)('$name keeps Tab inside the dialog', async ({ render: r }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
+    await user.click(opener());
     const dialog = screen.getByRole('dialog');
 
     // Enough tabs to leave any of these dialogs several times over if the trap is absent.
     for (let i = 0; i < 12; i += 1) {
-      await userEvent.tab();
+      await user.tab();
       expect(dialog).toContainElement(document.activeElement);
     }
   });
 
   test.each(cases)('$name keeps Shift+Tab inside the dialog', async ({ render: r }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
+    await user.click(opener());
     const dialog = screen.getByRole('dialog');
 
     for (let i = 0; i < 12; i += 1) {
-      await userEvent.tab({ shift: true });
+      await user.tab({ shift: true });
       expect(dialog).toContainElement(document.activeElement);
     }
   });
@@ -157,8 +163,8 @@ describe('true modals — dialog semantics', () => {
   // losing their place in a long conversation list.
   test.each(cases)('$name returns focus to the opener when it closes', async ({ render: r }) => {
     renderWithOpener(r);
-    await userEvent.click(opener());
-    await userEvent.keyboard('{Escape}');
+    await user.click(opener());
+    await user.keyboard('{Escape}');
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(opener()).toHaveFocus();
@@ -171,7 +177,7 @@ describe('true modals — Escape', () => {
   test('WorkorderModal closes on Escape', async () => {
     const onClose = jest.fn();
     render(<WorkorderModal workorderId="WO123" detail={null} loading={false} onClose={onClose} />);
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -180,7 +186,7 @@ describe('true modals — Escape', () => {
     render(
       <ProductLookupModal products={[]} loaded search="" setSearch={jest.fn()} onClose={onClose} />,
     );
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -189,7 +195,7 @@ describe('true modals — Escape', () => {
   test('ComposeModal still refuses Escape mid-send', async () => {
     const onClose = jest.fn();
     render(<ComposeModal sending onSubmit={jest.fn()} onClose={onClose} />);
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -226,7 +232,7 @@ describe('assign picker — a popover, NOT a modal', () => {
     renderPicker();
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
 
-    await userEvent.click(trigger());
+    await user.click(trigger());
     expect(trigger()).toHaveAttribute('aria-expanded', 'true');
     // aria-controls must point at the popup that actually exists.
     const controls = trigger().getAttribute('aria-controls');
@@ -246,7 +252,7 @@ describe('assign picker — a popover, NOT a modal', () => {
 
   test('each rep toggle exposes its assigned state, and the tick is not announced', async () => {
     renderPicker({ assignees: [{ podiumUserId: 'p1', portalId: 'AA', name: 'Alex Rep' }] });
-    await userEvent.click(trigger());
+    await user.click(trigger());
 
     const alex = screen.getByRole('button', { name: /alex rep/i });
     const bo = screen.getByRole('button', { name: /bo rep/i });
@@ -261,10 +267,10 @@ describe('assign picker — a popover, NOT a modal', () => {
 
   test('Escape closes it and puts focus back on the trigger', async () => {
     renderPicker();
-    await userEvent.click(trigger());
+    await user.click(trigger());
     expect(screen.getByText('Alex Rep')).toBeInTheDocument();
 
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(screen.queryByText('Alex Rep')).not.toBeInTheDocument();
     expect(trigger()).toHaveFocus();
   });
@@ -273,7 +279,7 @@ describe('assign picker — a popover, NOT a modal', () => {
   // fails — which is the intent.
   test('it is NOT announced as a modal dialog', async () => {
     renderPicker();
-    await userEvent.click(trigger());
+    await user.click(trigger());
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.querySelector('[aria-modal="true"]')).toBeNull();

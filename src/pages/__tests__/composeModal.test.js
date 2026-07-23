@@ -40,6 +40,12 @@ const recipientBox = () => screen.getByLabelText(/^to$/i);
 const messageBox = () => screen.getByLabelText(/^message$/i);
 const backdrop = () => screen.getByTestId('compose-backdrop');
 
+// user-event v14: one fresh `setup()` per test (real timers throughout this file).
+let user;
+beforeEach(() => {
+  user = userEvent.setup();
+});
+
 describe('ComposeModal — Start button gating', () => {
   test('Start is disabled before anything is typed', () => {
     renderModal();
@@ -48,8 +54,8 @@ describe('ComposeModal — Start button gating', () => {
 
   test('Start stays disabled when the recipient is not a phone or an email', async () => {
     renderModal();
-    await userEvent.type(recipientBox(), 'not-a-contact');
-    await userEvent.type(messageBox(), 'Your rack is ready for pickup.');
+    await user.type(recipientBox(), 'not-a-contact');
+    await user.type(messageBox(), 'Your rack is ready for pickup.');
     // "not-a-contact" has no @-domain and fewer than MIN_PHONE_DIGITS digits, so there is
     // nowhere for this message to go. Sending it would 400 at best.
     expect(startButton()).toBeDisabled();
@@ -57,15 +63,15 @@ describe('ComposeModal — Start button gating', () => {
 
   test('Start stays disabled when the message is only whitespace', async () => {
     renderModal();
-    await userEvent.type(recipientBox(), '0412345678');
-    await userEvent.type(messageBox(), '   ');
+    await user.type(recipientBox(), '0412345678');
+    await user.type(messageBox(), '   ');
     expect(startButton()).toBeDisabled();
   });
 
   test('Start enables once the recipient and the message are both valid', async () => {
     renderModal();
-    await userEvent.type(recipientBox(), '0412345678');
-    await userEvent.type(messageBox(), 'Your rack is ready for pickup.');
+    await user.type(recipientBox(), '0412345678');
+    await user.type(messageBox(), 'Your rack is ready for pickup.');
     expect(startButton()).toBeEnabled();
   });
 });
@@ -73,9 +79,9 @@ describe('ComposeModal — Start button gating', () => {
 describe('ComposeModal — what it submits', () => {
   test('a phone recipient submits channel "phone", trimmed', async () => {
     const { onSubmit } = renderModal();
-    await userEvent.type(recipientBox(), '  0412 345 678  ');
-    await userEvent.type(messageBox(), '  Your rack is ready.  ');
-    await userEvent.click(startButton());
+    await user.type(recipientBox(), '  0412 345 678  ');
+    await user.type(messageBox(), '  Your rack is ready.  ');
+    await user.click(startButton());
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith({
@@ -87,9 +93,9 @@ describe('ComposeModal — what it submits', () => {
 
   test('an email recipient submits channel "email"', async () => {
     const { onSubmit } = renderModal();
-    await userEvent.type(recipientBox(), 'nick@graysfitness.com.au');
-    await userEvent.type(messageBox(), 'Quote attached.');
-    await userEvent.click(startButton());
+    await user.type(recipientBox(), 'nick@graysfitness.com.au');
+    await user.type(messageBox(), 'Quote attached.');
+    await user.click(startButton());
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'email', to: 'nick@graysfitness.com.au' }),
@@ -114,13 +120,13 @@ describe('ComposeModal — while a send is in flight', () => {
   // the Inbox-level test is called out as a backlog row above rather than assumed covered.
   test('the disabled Start button cannot be re-clicked once sending', async () => {
     const { onSubmit, rerender } = renderModal();
-    await userEvent.type(recipientBox(), '0412345678');
-    await userEvent.type(messageBox(), 'Your rack is ready.');
-    await userEvent.click(startButton());
+    await user.type(recipientBox(), '0412345678');
+    await user.type(messageBox(), 'Your rack is ready.');
+    await user.click(startButton());
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
     rerender(<ComposeModal sending onSubmit={onSubmit} onClose={jest.fn()} />);
-    await userEvent.click(startButton());
+    await user.click(startButton());
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });
@@ -128,13 +134,13 @@ describe('ComposeModal — while a send is in flight', () => {
 describe('ComposeModal — closing without losing a draft', () => {
   test('Escape closes an untouched modal', async () => {
     const { onClose } = renderModal();
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   test('Escape does not close mid-send, which would drop the draft', async () => {
     const { onClose } = renderModal({ sending: true });
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -143,14 +149,14 @@ describe('ComposeModal — closing without losing a draft', () => {
   // Without it, deleting the whole closeOnBackdrop body left all 11 earlier tests green.
   test('a backdrop click closes an untouched modal', async () => {
     const { onClose } = renderModal();
-    await userEvent.click(backdrop());
+    await user.click(backdrop());
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   test('a backdrop click discards nothing once the rep has typed', async () => {
     const { onClose } = renderModal();
-    await userEvent.type(messageBox(), 'Half a quote');
-    await userEvent.click(backdrop());
+    await user.type(messageBox(), 'Half a quote');
+    await user.click(backdrop());
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -159,15 +165,15 @@ describe('ComposeModal — closing without losing a draft', () => {
   // reload. Untested, that guarantee is a comment; tested, it's a constraint.
   test('Cancel closes even when the rep has typed', async () => {
     const { onClose } = renderModal();
-    await userEvent.type(messageBox(), 'Half a quote');
-    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    await user.type(messageBox(), 'Half a quote');
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   test('the × closes even when the rep has typed', async () => {
     const { onClose } = renderModal();
-    await userEvent.type(messageBox(), 'Half a quote');
-    await userEvent.click(screen.getByRole('button', { name: /close/i }));
+    await user.type(messageBox(), 'Half a quote');
+    await user.click(screen.getByRole('button', { name: /close/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
