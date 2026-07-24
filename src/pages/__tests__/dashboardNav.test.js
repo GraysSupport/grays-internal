@@ -15,7 +15,7 @@
 //  - the technician restriction survives the refactor (characterization, not new behaviour).
 
 import React from 'react';
-import { act, render, screen, within, waitFor } from '@testing-library/react';
+import { act, render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../dashboard';
@@ -157,10 +157,20 @@ describe('F19 — mobile navigation drawer', () => {
     await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
-    // act-wrapped explicitly: the handler awaits the access-log POST and only then navigates,
-    // so the router's state update lands after userEvent's own act scope has closed.
+    // handleLogout awaits the access-log POST and only THEN calls navigate('/') (dashboard.js:116),
+    // fire-and-forget from onClick — so that react-router state update (scheduled via
+    // startTransition) lands after the click's own act scope has closed and warns. Drive it with
+    // fireEvent.click inside one act and drain the tail so the navigate is wrapped. NOT
+    // user.click-in-act: user-event v14's own async act saves/restores IS_REACT_ACT_ENVIRONMENT
+    // and flips it false mid-drain, re-arming the very warning (F36 saw a naive version go 2->156).
+    // fireEvent has no such machinery. Same fix as F36's submitAndSettle.
+    const logoutBtn = within(drawer).getByRole('button', { name: 'Logout' });
     await act(async () => {
-      await user.click(within(drawer).getByRole('button', { name: 'Logout' }));
+      fireEvent.click(logoutBtn);
+      for (let i = 0; i < 4; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 0));
+      }
     });
 
     await waitFor(() => expect(localStorage.getItem('token')).toBeNull());
