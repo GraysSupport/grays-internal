@@ -430,23 +430,8 @@ export default function WorkorderDetailPage() {
         body: JSON.stringify({ items: [{ workorder_items_id: target.workorder_items_id, status: 'In Workshop' }] }),
       });
 
-      // Capture the machine's serial BEFORE the confirmation modal: window.prompt is blocking, so a
-      // modal shown first would only paint once the prompt is dismissed. The success modal is the
-      // final confirmation that the whole scan (assign → In Workshop → serial) is done.
-      const sn = window.prompt(`Serial number for ${lot.lot_number} (console/screen serial for cardio — optional):`, lot.serial_number || '');
-      if (sn !== null && sn.trim()) {
-        // The serial is optional AND the lot is already assigned + In Workshop at this point, so a
-        // failure here must NOT turn a successful scan into a red "Scan failed". Swallow it; the
-        // serial can be re-entered from the lot slot below.
-        try {
-          await fetch('/api/lots?action=serial', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
-            body: JSON.stringify({ lot_id: lot.lot_id, serial_number: sn.trim() }),
-          });
-        } catch { /* serial is optional; the scan itself already succeeded */ }
-      }
-
+      // No serial prompt — the serial (console/screen serial for cardio) is entered manually in the
+      // item's lot slot below, so a scan stays a single fast action.
       await reloadWO();
       showScanResult('success', `${lot.lot_number} → In Workshop`, `${lot.product_name || lot.product_sku} (${lot.product_sku})`);
     } catch {
@@ -932,14 +917,20 @@ export default function WorkorderDetailPage() {
               {(isWorkshop || isSuperadmin) && (
                 <button
                   onClick={() => {
-                    // Reset the scan buffer/timer on every toggle so a half-entered value can't
-                    // poison the next session's entry-start detection (which would silently stop
-                    // auto-submit until the field was cleared by hand).
                     clearTimeout(scanTimerRef.current);
+                    if (scanning) {
+                      // Finished scanning → refresh the page so every newly-scanned lot and status
+                      // shows, including the per-item lot slots (which fetch their lots independently
+                      // and don't update from an in-place reloadWO).
+                      window.location.reload();
+                      return;
+                    }
+                    // Turning the panel ON — start from a clean buffer so the first char is seen as a
+                    // fresh entry (otherwise a stale value disables auto-submit).
                     setScanValue('');
                     scanBufferRef.current = '';
                     scanEntryStartRef.current = 0;
-                    setScanning((s) => !s);
+                    setScanning(true);
                     setTimeout(() => scanInputRef.current?.focus(), 50);
                   }}
                   className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-600 text-white border-green-600' : 'hover:bg-gray-50'}`}
@@ -969,7 +960,8 @@ export default function WorkorderDetailPage() {
               </form>
               <div className="text-xs text-gray-600 mt-1">
                 Scans the lot → checks it matches an item on this workorder (wrong model is rejected) →
-                assigns the lot and sets that item to <b>In Workshop</b> → asks for the serial.
+                assigns the lot and sets that item to <b>In Workshop</b>. Enter the serial in the item's
+                lot slot below. Click <b>Scanning…</b> again when you're done to refresh the page.
               </div>
             </div>
           )}
