@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
+import ScanResultModal from '../../../components/ScanResultModal';
 
 /**
  * G3: per-unit lot slots for a workorder item.
@@ -328,6 +329,14 @@ export default function WorkorderDetailPage() {
   const [scanning, setScanning] = useState(false);
   const [scanValue, setScanValue] = useState('');
   const scanInputRef = useRef(null);
+  // G5: the scan result now lands in a centred modal (was a bottom-right toast). Success/warn/error.
+  const [scanResult, setScanResult] = useState(null); // { kind, title, detail }
+  const showScanResult = useCallback((kind, title, detail) => setScanResult({ kind, title, detail }), []);
+  const closeScanResult = useCallback(() => {
+    setScanResult(null);
+    // Hand focus back to the scan box so the next lot can be scanned without a click.
+    setTimeout(() => scanInputRef.current?.focus(), 0);
+  }, []);
 
   // user object
   const [user, setUser] = useState(null);
@@ -362,8 +371,8 @@ export default function WorkorderDetailPage() {
     if (!lotNum) return;
     try {
       const lr = await fetch(`/api/lots?lot_number=${encodeURIComponent(lotNum)}`);
-      if (lr.status === 404) { toast.error(`Lot ${lotNum} not found`); return; }
-      if (!lr.ok) { toast.error('Lookup failed'); return; }
+      if (lr.status === 404) { showScanResult('error', 'Lot not found', `No lot ${lotNum} in the system. Check the sticker and rescan.`); return; }
+      if (!lr.ok) { showScanResult('error', 'Lookup failed', 'Could not reach the lot service — try the scan again.'); return; }
       const lot = await lr.json();
 
       const matches = items.filter((it) =>
@@ -372,9 +381,10 @@ export default function WorkorderDetailPage() {
         String(it.product_id).toUpperCase() === String(lot.product_sku).toUpperCase());
 
       if (!matches.length) {
-        toast.error(
-          `WRONG ITEM — ${lot.lot_number} is ${lot.product_name || lot.product_sku} (${lot.product_sku}). This workorder has no line for that model.`,
-          { duration: 7000 }
+        showScanResult(
+          'error',
+          'WRONG ITEM',
+          `${lot.lot_number} is ${lot.product_name || lot.product_sku} (${lot.product_sku}). This workorder has no line for that model.`,
         );
         return;
       }
@@ -384,11 +394,11 @@ export default function WorkorderDetailPage() {
       for (const it of matches) {
         const sr = await fetch(`/api/lots?sku=${encodeURIComponent(it.product_id)}&workorder_items_id=${it.workorder_items_id}`);
         const sl = sr.ok ? await sr.json() : [];
-        if (lot.workorder_items_id === it.workorder_items_id) { toast(`${lot.lot_number} is already on this workorder.`); return; }
+        if (lot.workorder_items_id === it.workorder_items_id) { showScanResult('warn', 'Already scanned in', `${lot.lot_number} is already on this workorder.`); return; }
         const assignedCount = sl.filter((l) => l.workorder_items_id === it.workorder_items_id && (l.status === 'Assigned' || l.status === 'Sold')).length;
         if (assignedCount < Number(it.quantity || 0)) { target = it; break; }
       }
-      if (!target) { toast.error(`All ${lot.product_sku} units on this workorder already have a lot assigned.`); return; }
+      if (!target) { showScanResult('warn', 'No free slot', `All ${lot.product_sku} units on this workorder already have a lot assigned.`); return; }
 
       const ar = await fetch('/api/lots?action=assign', {
         method: 'POST',
@@ -396,7 +406,7 @@ export default function WorkorderDetailPage() {
         body: JSON.stringify({ lot_id: lot.lot_id, workorder_items_id: target.workorder_items_id }),
       });
       const ad = await ar.json().catch(() => ({}));
-      if (!ar.ok) { toast.error(ad?.error === 'WRONG_MODEL' ? 'Wrong model — lot does not match the item.' : (ad?.error || 'Assign failed')); return; }
+      if (!ar.ok) { showScanResult('error', 'Assign failed', ad?.error === 'WRONG_MODEL' ? 'Wrong model — lot does not match the item.' : (ad?.error || 'The lot could not be assigned.')); return; }
 
       // set the item In Workshop
       await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
@@ -405,26 +415,33 @@ export default function WorkorderDetailPage() {
         body: JSON.stringify({ items: [{ workorder_items_id: target.workorder_items_id, status: 'In Workshop' }] }),
       });
 
-      toast.success(`${lot.lot_number} → In Workshop (${lot.product_sku})`, { duration: 5000 });
-
-      // capture the machine's serial (console/screen serial for cardio)
+      // Capture the machine's serial BEFORE the confirmation modal: window.prompt is blocking, so a
+      // modal shown first would only paint once the prompt is dismissed. The success modal is the
+      // final confirmation that the whole scan (assign → In Workshop → serial) is done.
       const sn = window.prompt(`Serial number for ${lot.lot_number} (console/screen serial for cardio — optional):`, lot.serial_number || '');
       if (sn !== null && sn.trim()) {
-        await fetch('/api/lots?action=serial', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
-          body: JSON.stringify({ lot_id: lot.lot_id, serial_number: sn.trim() }),
-        });
+        // The serial is optional AND the lot is already assigned + In Workshop at this point, so a
+        // failure here must NOT turn a successful scan into a red "Scan failed". Swallow it; the
+        // serial can be re-entered from the lot slot below.
+        try {
+          await fetch('/api/lots?action=serial', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-user-id': userId || '' },
+            body: JSON.stringify({ lot_id: lot.lot_id, serial_number: sn.trim() }),
+          });
+        } catch { /* serial is optional; the scan itself already succeeded */ }
       }
 
       await reloadWO();
+      showScanResult('success', `${lot.lot_number} → In Workshop`, `${lot.product_name || lot.product_sku} (${lot.product_sku})`);
     } catch {
-      toast.error('Scan failed');
+      showScanResult('error', 'Scan failed', 'Something went wrong during the scan — please try again.');
     } finally {
       setScanValue('');
-      scanInputRef.current?.focus();
+      // Focus returns to the scan box when the result modal closes (see closeScanResult), so the
+      // tech reads the outcome before the next scan can land.
     }
-  }, [items, id, userId, reloadWO]);
+  }, [items, id, userId, reloadWO, showScanResult]);
 
   useEffect(() => {
     try {
@@ -1324,6 +1341,9 @@ export default function WorkorderDetailPage() {
             }}
           />
         )}
+
+        {/* G5: centred scan-in result (success / warn / error), manual close or 5s auto-close. */}
+        <ScanResultModal result={scanResult} onClose={closeScanResult} />
       </main>
     </div>
   );
