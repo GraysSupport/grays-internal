@@ -105,7 +105,9 @@ const conversationButton = (name) => {
 };
 const composer = () => screen.getByPlaceholderText(/type a reply…|write an internal note…/i);
 
+let user;
 beforeEach(() => {
+  user = userEvent.setup(); // v14: real timers here, no advanceTimers needed
   localStorage.setItem('token', 'test-token');
   localStorage.setItem('user', JSON.stringify({ id: 'GS', name: 'Tester', roles: ['sales'] }));
   global.fetch = mockFetch();
@@ -128,13 +130,13 @@ describe('F27 — switching conversations resets the composer', () => {
 
     // Open Alice and start typing a reply we never send.
     await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
-    await userEvent.click(conversationButton('Alice Adams'));
+    await user.click(conversationButton('Alice Adams'));
     await waitFor(() => expect(composer()).toBeInTheDocument());
-    await userEvent.type(composer(), 'Alice, your rack is ready');
+    await user.type(composer(), 'Alice, your rack is ready');
     expect(composer()).toHaveValue('Alice, your rack is ready');
 
     // Switch to Bob by clicking the list — the path this feature fixes.
-    await userEvent.click(conversationButton('Bob Brown'));
+    await user.click(conversationButton('Bob Brown'));
     await waitFor(() => expect(screen.getByText(/Message in conv-bob/i)).toBeInTheDocument());
 
     // The draft addressed to Alice must NOT be sitting in Bob's composer.
@@ -145,14 +147,14 @@ describe('F27 — switching conversations resets the composer', () => {
     renderInbox();
 
     await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
-    await userEvent.click(conversationButton('Alice Adams'));
+    await user.click(conversationButton('Alice Adams'));
     await waitFor(() => expect(composer()).toBeInTheDocument());
 
     // Put the composer into internal-note mode on Alice's thread.
-    await userEvent.click(screen.getByRole('button', { name: /internal note/i }));
+    await user.click(screen.getByRole('button', { name: /internal note/i }));
     expect(screen.getByPlaceholderText(/write an internal note…/i)).toBeInTheDocument();
 
-    await userEvent.click(conversationButton('Bob Brown'));
+    await user.click(conversationButton('Bob Brown'));
     await waitFor(() => expect(screen.getByText(/Message in conv-bob/i)).toBeInTheDocument());
 
     // If note mode survived, the next Send posts a team-only note instead of replying to the
@@ -169,18 +171,18 @@ describe('F27 — switching conversations resets the composer', () => {
     renderInbox();
 
     await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
-    await userEvent.click(conversationButton('Alice Adams'));
+    await user.click(conversationButton('Alice Adams'));
     await waitFor(() => expect(composer()).toBeInTheDocument());
 
     const file = new File(['fake-image-bytes'], 'alice-quote.png', { type: 'image/png' });
     const input = document.querySelector('input[type="file"]');
     expect(input).toBeTruthy();
-    await userEvent.upload(input, file);
+    await user.upload(input, file);
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /remove attachment/i })).toBeInTheDocument(),
     );
 
-    await userEvent.click(conversationButton('Bob Brown'));
+    await user.click(conversationButton('Bob Brown'));
     await waitFor(() => expect(screen.getByText(/Message in conv-bob/i)).toBeInTheDocument());
 
     expect(screen.queryByRole('button', { name: /remove attachment/i })).not.toBeInTheDocument();
@@ -192,14 +194,14 @@ describe('F27 — switching conversations resets the composer', () => {
     renderInbox();
 
     await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
-    await userEvent.click(conversationButton('Alice Adams'));
+    await user.click(conversationButton('Alice Adams'));
     await waitFor(() => expect(composer()).toBeInTheDocument());
-    await userEvent.type(composer(), 'Half a sentence');
+    await user.type(composer(), 'Half a sentence');
 
     // A rep re-clicking the thread they are already in (or a list re-render) must not be
     // treated as a switch — that would discard their work with no undo, which is the same
     // class of harm this feature exists to prevent, just pointed the other way.
-    await userEvent.click(conversationButton('Alice Adams'));
+    await user.click(conversationButton('Alice Adams'));
     await waitFor(() => expect(screen.getByText(/Message in conv-alice/i)).toBeInTheDocument());
 
     expect(composer()).toHaveValue('Half a sentence');

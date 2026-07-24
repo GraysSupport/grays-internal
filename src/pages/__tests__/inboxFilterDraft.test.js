@@ -93,16 +93,18 @@ async function openAliceAnd(type) {
     </MemoryRouter>,
   );
   await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
-  await userEvent.click(conversationButton('Alice Adams'));
+  await user.click(conversationButton('Alice Adams'));
   await waitFor(() => expect(composer()).toBeInTheDocument());
   // Wait for the thread itself, not just the composer: the message list arrives on its own
   // request, and a test that types immediately can outrun it (the typing was the only reason
   // the other tests happened to be safe).
   await waitFor(() => expect(screen.getByText('Is the rack still available?')).toBeInTheDocument());
-  if (type) await userEvent.type(composer(), type);
+  if (type) await user.type(composer(), type);
 }
 
+let user;
 beforeEach(() => {
+  user = userEvent.setup(); // v14: every user.* call here runs under real timers
   localStorage.setItem('token', 'test-token');
   localStorage.setItem('user', JSON.stringify({ id: 'GS', name: 'Tester', roles: ['sales'] }));
   global.fetch = mockFetch();
@@ -119,7 +121,7 @@ describe('F31 — a filter switch must not throw away work', () => {
   test('switching the status filter keeps a half-typed reply', async () => {
     await openAliceAnd('Yes — it is, I can hold it for you');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Closed' }));
+    await user.click(screen.getByRole('button', { name: 'Closed' }));
 
     expect(composer()).toHaveValue('Yes — it is, I can hold it for you');
 
@@ -129,7 +131,7 @@ describe('F31 — a filter switch must not throw away work', () => {
   test('switching the bucket filter keeps a half-typed reply', async () => {
     await openAliceAnd('Yes — it is, I can hold it for you');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     expect(composer()).toHaveValue('Yes — it is, I can hold it for you');
 
@@ -139,7 +141,7 @@ describe('F31 — a filter switch must not throw away work', () => {
   test('the thread stays open too — a draft with nowhere to send it is no better', async () => {
     await openAliceAnd('Half a sentence');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     // The reading pane still shows Alice's thread, so Send still goes where the rep expects.
     expect(screen.getByText('Is the rack still available?')).toBeInTheDocument();
@@ -152,7 +154,7 @@ describe('F31 — a filter switch must not throw away work', () => {
     // on the filter.
     await openAliceAnd('Half a sentence');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     await waitFor(() =>
       expect(global.fetch.mock.calls.some(([u]) => String(u).includes('resource=conversations&bucket=all'))).toBe(true),
@@ -165,7 +167,7 @@ describe('F31 — a filter switch must not throw away work', () => {
     await openAliceAnd(null);
     expect(screen.getByText('Is the rack still available?')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     await waitFor(() => expect(screen.queryByText('Is the rack still available?')).not.toBeInTheDocument());
   });
@@ -173,24 +175,33 @@ describe('F31 — a filter switch must not throw away work', () => {
   test('whitespace is not work — a composer holding only spaces still clears', async () => {
     await openAliceAnd('   ');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     await waitFor(() => expect(screen.queryByText('Is the rack still available?')).not.toBeInTheDocument());
   });
 
   test('an attached file counts as work even with no text typed', async () => {
-    // A quote PDF or a photo of the machine is the expensive half of a message: the rep found
-    // the file, not just typed a line. Losing it silently is worse than losing the text.
+    // A clip of the machine running is the expensive half of a message: the rep found the file,
+    // not just typed a line. Losing it silently is worse than losing the text.
+    //
+    // A VIDEO, not the original PDF, and BOTH halves of that are load-bearing under user-event v14:
+    //   1. the composer input is `accept="image/*,video/*"`, and v14's `upload` ENFORCES `accept`
+    //      (v13 did not), so a PDF is filtered out and never reaches the change handler — exactly
+    //      as it would be for a real rep. The old `quote-20431.pdf` tested an upload the UI forbids.
+    //      (Whether a quote PDF SHOULD be attachable is a product question, tracked as F35.)
+    //   2. of the accepted kinds, an IMAGE chip shows its name only in `alt` on an <img>, not as
+    //      text, so `getByText(filename)` would miss it; a VIDEO chip renders the filename in a
+    //      <span>, which is what this assertion reads.
     await openAliceAnd(null);
-    const file = new File(['pdf-bytes'], 'quote-20431.pdf', { type: 'application/pdf' });
+    const file = new File(['mp4-bytes'], 'machine-20431.mp4', { type: 'video/mp4' });
     const input = document.querySelector('input[type="file"]');
     expect(input).toBeTruthy();
-    await userEvent.upload(input, file);
-    await waitFor(() => expect(screen.getByText(/quote-20431\.pdf/i)).toBeInTheDocument());
+    await user.upload(input, file);
+    await waitFor(() => expect(screen.getByText(/machine-20431\.mp4/i)).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
-    expect(screen.getByText(/quote-20431\.pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/machine-20431\.mp4/i)).toBeInTheDocument();
     expect(screen.getByText('Is the rack still available?')).toBeInTheDocument();
     await settle();
   });
@@ -198,7 +209,7 @@ describe('F31 — a filter switch must not throw away work', () => {
   test('re-clicking the filter you are already on changes nothing', async () => {
     await openAliceAnd('Still typing');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Assigned to You' }));
+    await user.click(screen.getByRole('button', { name: 'Assigned to You' }));
 
     expect(composer()).toHaveValue('Still typing');
     expect(screen.getByText('Is the rack still available?')).toBeInTheDocument();
@@ -212,8 +223,8 @@ describe('F31 — a filter switch must not throw away work', () => {
     // whole suite green before this test.
     await openAliceAnd(null);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Assigned to You' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    await user.click(screen.getByRole('button', { name: 'Assigned to You' }));
+    await user.click(screen.getByRole('button', { name: 'Open' }));
 
     expect(screen.getByText('Is the rack still available?')).toBeInTheDocument();
     await settle();
@@ -224,7 +235,7 @@ describe('F31 — a filter switch must not throw away work', () => {
     // `switchStatus` could bypass switchScope entirely and never clear anything.
     await openAliceAnd(null);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Closed' }));
+    await user.click(screen.getByRole('button', { name: 'Closed' }));
 
     await waitFor(() => expect(screen.queryByText('Is the rack still available?')).not.toBeInTheDocument());
   });
@@ -236,12 +247,12 @@ describe('F31 — a filter switch must not throw away work', () => {
     // visible effect at all — and Send still targets the thread they are looking at.
     await openAliceAnd('Yes, I can hold it until Friday');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Closed' }));
+    await user.click(screen.getByRole('button', { name: 'Closed' }));
 
     await waitFor(() => expect(screen.getByText(/isn’t in the current view/i)).toBeInTheDocument());
     expect(composer()).toHaveValue('Yes, I can hold it until Friday');
 
-    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
     await waitFor(() => {
       const post = global.fetch.mock.calls.find(
         ([u, init]) => String(u).includes('resource=messages') && init?.method === 'POST',
@@ -260,7 +271,8 @@ describe('F31 — a filter switch must not throw away work', () => {
     // Fake timers from BEFORE the render, and fireEvent throughout: the 8s interval is created
     // during mount, so switching to fake timers afterwards leaves a real timer that
     // advanceTimersByTime can never fire — the first version of this test passed on that
-    // technicality and proved nothing. userEvent v13 needs real timers, hence fireEvent.
+    // technicality and proved nothing. fireEvent (not the v14 `user`) so the interaction itself
+    // doesn't schedule work on the fake clock this test is driving by hand.
     jest.useFakeTimers();
     try {
       render(
@@ -294,7 +306,7 @@ describe('F31 — a filter switch must not throw away work', () => {
     // Otherwise the banner could be permanently on and the test above would prove nothing.
     await openAliceAnd('Half a sentence');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'All' }));
 
     expect(screen.queryByText(/isn’t in the current view/i)).not.toBeInTheDocument();
     await settle();
