@@ -329,6 +329,16 @@ export default function WorkorderDetailPage() {
   const [scanning, setScanning] = useState(false);
   const [scanValue, setScanValue] = useState('');
   const scanInputRef = useRef(null);
+  // A keyboard-wedge scanner types the whole lot in a rapid burst and (on this hardware) sends NO
+  // terminating Enter, so the field filled but nothing submitted. We auto-submit a burst; anything
+  // that took longer than a scanner (a human typing) is left to the Enter key. These refs are
+  // updated synchronously in onChange so the per-character timing isn't smeared by React batching.
+  const SCAN_BURST_MS = 250; // first→last char faster than this = a scanner, not typing
+  const scanTimerRef = useRef(null); // debounce that fires the auto-submit after the burst settles
+  const scanBufferRef = useRef(''); // authoritative current value (not render-batched)
+  const scanEntryStartRef = useRef(0); // when the field first went non-empty this entry
+  const scanEntryMsRef = useRef(0); // first→last char duration, excluding the debounce wait
+  const scanBusyRef = useRef(false); // a scan is in flight — ignore a duplicate (Enter + burst debounce, or a double-scan)
   // G5: the scan result now lands in a centred modal (was a bottom-right toast). Success/warn/error.
   const [scanResult, setScanResult] = useState(null); // { kind, title, detail }
   const showScanResult = useCallback((kind, title, detail) => setScanResult({ kind, title, detail }), []);
@@ -369,6 +379,11 @@ export default function WorkorderDetailPage() {
   const handleScanIn = useCallback(async (raw) => {
     const lotNum = String(raw || '').trim().toUpperCase();
     if (!lotNum) return;
+    // Re-entrancy guard: if a scanner both auto-submits (burst debounce) AND sends a late Enter, or
+    // the same lot is scanned twice quickly, only the first runs — the assign path is async and
+    // multi-step, so overlapping calls could both pass the "not yet assigned" check.
+    if (scanBusyRef.current) return;
+    scanBusyRef.current = true;
     try {
       const lr = await fetch(`/api/lots?lot_number=${encodeURIComponent(lotNum)}`);
       if (lr.status === 404) { showScanResult('error', 'Lot not found', `No lot ${lotNum} in the system. Check the sticker and rescan.`); return; }
@@ -437,11 +452,35 @@ export default function WorkorderDetailPage() {
     } catch {
       showScanResult('error', 'Scan failed', 'Something went wrong during the scan — please try again.');
     } finally {
+      scanBusyRef.current = false;
       setScanValue('');
+      scanBufferRef.current = ''; // reset so the next scan's first char is seen as a fresh entry
       // Focus returns to the scan box when the result modal closes (see closeScanResult), so the
       // tech reads the outcome before the next scan can land.
     }
   }, [items, id, userId, reloadWO, showScanResult]);
+
+  // Auto-submit a scanner burst. onChange fires per character; a wedge scanner delivers them all in
+  // a few ms, so once the value stops changing we submit it — no Enter needed. A human typing is far
+  // slower than SCAN_BURST_MS and is left to the Enter key (form onSubmit), which also clears this
+  // debounce so a scanner that DOES send Enter can't double-submit.
+  const handleScanChange = useCallback((e) => {
+    const now = Date.now();
+    const val = e.target.value;
+    if (!scanBufferRef.current && val) scanEntryStartRef.current = now; // 0 → non-empty = entry start
+    scanBufferRef.current = val;
+    scanEntryMsRef.current = now - scanEntryStartRef.current;
+    setScanValue(val);
+    clearTimeout(scanTimerRef.current);
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    scanTimerRef.current = setTimeout(() => {
+      if (scanEntryMsRef.current < SCAN_BURST_MS) handleScanIn(trimmed);
+    }, 150);
+  }, [handleScanIn]);
+
+  // Don't leave a pending auto-submit timer behind if the page unmounts mid-scan.
+  useEffect(() => () => clearTimeout(scanTimerRef.current), []);
 
   useEffect(() => {
     try {
@@ -892,7 +931,17 @@ export default function WorkorderDetailPage() {
             <div className="flex-shrink-0 flex items-center gap-2">
               {(isWorkshop || isSuperadmin) && (
                 <button
-                  onClick={() => { setScanning((s) => !s); setTimeout(() => scanInputRef.current?.focus(), 50); }}
+                  onClick={() => {
+                    // Reset the scan buffer/timer on every toggle so a half-entered value can't
+                    // poison the next session's entry-start detection (which would silently stop
+                    // auto-submit until the field was cleared by hand).
+                    clearTimeout(scanTimerRef.current);
+                    setScanValue('');
+                    scanBufferRef.current = '';
+                    scanEntryStartRef.current = 0;
+                    setScanning((s) => !s);
+                    setTimeout(() => scanInputRef.current?.focus(), 50);
+                  }}
                   className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-600 text-white border-green-600' : 'hover:bg-gray-50'}`}
                 >
                   {scanning ? '● Scanning…' : '⧉ Scan item in'}
@@ -908,13 +957,13 @@ export default function WorkorderDetailPage() {
           </div>
           {scanning && (
             <div className="border-b p-3 bg-green-50">
-              <form onSubmit={(e) => { e.preventDefault(); handleScanIn(scanValue); }}>
+              <form onSubmit={(e) => { e.preventDefault(); clearTimeout(scanTimerRef.current); handleScanIn(scanValue); }}>
                 <input
                   ref={scanInputRef}
                   autoFocus
                   value={scanValue}
-                  onChange={(e) => setScanValue(e.target.value)}
-                  placeholder="Scan a lot sticker (or type L##### and Enter)…"
+                  onChange={handleScanChange}
+                  placeholder="Scan a lot sticker (auto-submits; or type L##### and Enter)…"
                   className="w-full border rounded p-2 font-mono"
                 />
               </form>
