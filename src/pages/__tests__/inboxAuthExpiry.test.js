@@ -30,7 +30,7 @@
 //     These two live in adjacent lines and are easy to conflate.
 
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Inbox from '../inbox';
@@ -287,5 +287,59 @@ describe('F32(a) — the inbox sends an expired session back to login', () => {
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
     expect(screen.queryByText('LOGIN PAGE')).not.toBeInTheDocument();
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('The Inbox is for sales users'));
+  });
+});
+
+describe('F34 — every 401 in the inbox ENDS the session, not just the poll', () => {
+  // F32(a) fixed the timer path and left a comment naming this: the twelve foreground guards (and
+  // the two loaders that swallowed a 401 into an empty list) still did a bare `navigate('/')`,
+  // leaving token/user/sessionExpiry behind. Back then re-mounted /inbox on a dead token, the
+  // client gate let it in, it 401'd, and it looped. F34 routes them all through endExpiredSession.
+
+  test('a foreground 401 CLEARS the stored session, not only redirects', async () => {
+    // Mutate the clear out of endExpiredSession and the token survives this test. (The silence of
+    // this path is already pinned by "the redirect is silent" above — the same first-load 401 now
+    // runs through endExpiredSession, so a toast added there would fail that test.)
+    global.fetch = mockFetch(() => json({ error: 'Unauthorized' }, 401));
+
+    renderInbox();
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('user')).toBeNull();
+    expect(localStorage.getItem('sessionExpiry')).toBeNull();
+  });
+
+  test('a 401 from a click-triggered loader (assignees) ends the session too', async () => {
+    // The row's second half: loadAssignees / loadLeadHistory used to do `if (!res.ok) { setX([]);
+    // return; }`, so after expiry a rep clicking a conversation got silently-empty assignee chips
+    // on a dead token — no redirect. Both now carry the identical `endExpiredSession` guard; this
+    // drives it through loadAssignees. `assignCalls` proves the guard actually ran (not a vacuous
+    // pass where the click never reached the loader).
+    let assignCalls = 0;
+    global.fetch = jest.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('/api/podium/assign')) { assignCalls += 1; return json({ error: 'Unauthorized' }, 401); }
+      if (u.includes('resource=conversations')) return json({ data: CONVERSATIONS, serverTime: '2026-07-21T10:00:00.000Z' });
+      if (u.includes('resource=messages')) return json({ data: [], serverTime: '2026-07-21T10:00:00.000Z' });
+      if (u.includes('resource=poll')) return json({ data: [], serverTime: '2026-07-21T10:00:00.000Z' });
+      if (u.includes('resource=templates')) return json({ data: [] });
+      if (u.includes('resource=reps')) return json({ reps: [] });
+      if (u.includes('/api/podium/status')) return json({ podiumUserId: 'pod-me' });
+      if (u.includes('/api/podium/contact')) return json({ customer: null, workorders: [] });
+      if (u.includes('/api/products')) return json([]);
+      return json({});
+    });
+
+    renderInbox();
+    // First load succeeds — the rep is on the inbox.
+    await waitFor(() => expect(screen.getByText('Alice Adams')).toBeInTheDocument());
+
+    // Opening the conversation triggers loadAssignees, which 401s.
+    fireEvent.click(screen.getByText('Alice Adams').closest('button'));
+
+    await waitFor(() => expect(screen.getByText('LOGIN PAGE')).toBeInTheDocument());
+    expect(assignCalls).toBeGreaterThanOrEqual(1);
+    expect(localStorage.getItem('token')).toBeNull();
   });
 });
