@@ -27,7 +27,6 @@
 
 import React from 'react';
 import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Inbox from '../inbox';
@@ -125,21 +124,55 @@ const settle = async () => {
 };
 
 /**
+ * Trigger a compose submit and let its fire-and-forget tail settle INSIDE one act scope (F36).
+ *
+ * `ComposeModal` calls `submitCompose` from its form `onSubmit` and discards the returned
+ * promise, so submitCompose's async tail resolves AFTER `user.click`'s own act scope has already
+ * closed. Two updates in that tail have nowhere to be wrapped and warn: the 401 path's
+ * react-router `navigate` (scheduled via `startTransition`, `inbox.js:704`) and the
+ * `finally { setComposeSending(false) }` (`inbox.js:740`). They are harmless to the product and
+ * the tests still pass, but React 19's un-awaited-`act` detector — restored repo-wide by F32(b)
+ * (its v13 blur-listener had burned the shared one-shot latch) — reports both, and a noisy file
+ * is how the NEXT genuine leak hides.
+ *
+ * The cure is to keep the click AND the drain in the SAME act scope, so every state update the
+ * tail schedules is wrapped. Draining must loop: the success path fans out into a CHAIN
+ * (compose → conversation → thread → panel → assignees), and one macrotask only advances it one
+ * link — a single flush is exactly what once turned these 2 warnings into 156, because the later
+ * links then escaped instead. Looping until idle wraps the whole chain.
+ *
+ * Driven with `fireEvent.submit` rather than `user.click`, and that is load-bearing: `user.click`
+ * (v14 `userEvent.setup()`) runs its OWN async act and saves/restores `IS_REACT_ACT_ENVIRONMENT`
+ * around it. Nested inside this outer act and then drained across `await`s, that save/restore
+ * flips the global back to false mid-drain, so submitCompose's tail — even the success path's
+ * `setShowCompose` — fires with no act environment and warns. That is precisely how the naive
+ * version of this helper turned 2 warnings into 156. A synchronous `fireEvent.submit` has no act
+ * machinery of its own, so the outer act stays in force for the whole drain. (It is exactly the
+ * pattern the double-submit test already relies on.)
+ *
+ * Not for the two tests that own their act timing on purpose: the synchronous double-submit
+ * (both fires must land in one tick, before React re-renders) and the fake-timer stalled-send.
+ */
+async function submitAndSettle(dialog) {
+  await act(async () => {
+    fireEvent.submit(dialog);
+    for (let i = 0; i < 6; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  });
+}
+
+/**
  * Open the modal and fill it in, leaving it one submit away from sending.
  *
- * `fireEvent.change` rather than `user.type` for the two inputs, and that is a deliberate
- * choice, not laziness: per-keystroke behaviour (the Start button enabling as you type) is
- * covered by composeModal.test.js, which is the right place for it; nothing here needs
- * keystroke fidelity, so the cheaper synchronous set is preferred.
- *
- * (HISTORICAL — the ORIGINAL reason, now gone: under user-event **v13** typing left an armed
- * `capture:true, once:true` window blur listener behind. The next test's modal autofocused its
- * input on commit, jsdom synchronously blurred the old one, that listener re-fired inside the
- * first flush, and React 19 reported "A component suspended inside an `act` scope" — a cosmetic
- * warning that nonetheless burned React's shared one-shot `didWarnNoAwaitAct` latch and disabled
- * un-awaited-act detection for the rest of the file. F32(b) moved the repo to user-event **v14**
- * with `userEvent.setup()`, which does not install that listener, so the trap no longer exists —
- * `user.type` here would now be safe. It stays as `fireEvent.change` purely for the reason above.)
+ * All interaction here is `fireEvent`, never user-event, and that is deliberate. Per-keystroke
+ * behaviour (the Start button enabling as you type) is covered by composeModal.test.js, which is
+ * the right place for it; nothing here needs keystroke fidelity, so the cheaper synchronous set
+ * is preferred. And driving the submit synchronously (see `submitAndSettle`) is what keeps
+ * submitCompose's fire-and-forget tail inside act — user-event's own async act would flip
+ * `IS_REACT_ACT_ENVIRONMENT` back mid-drain and re-arm the very warnings F36 removed. This file
+ * therefore no longer imports user-event at all.
  */
 async function openComposeAndFill({ to = '0400 999 888', body = 'Hi, this is Grays Fitness' } = {}) {
   await waitFor(() => expect(screen.getByRole('button', { name: /new conversation/i })).toBeInTheDocument());
@@ -150,12 +183,7 @@ async function openComposeAndFill({ to = '0400 999 888', body = 'Hi, this is Gra
   return dialog;
 }
 
-/** The modal's submit control. Anchored — `/send/i` would also match the reply composer. */
-const startButton = (dialog) => within(dialog).getByRole('button', { name: /start conversation/i });
-
-let user;
 beforeEach(() => {
-  user = userEvent.setup(); // v14: user.* is only used under real timers in this file
   localStorage.setItem('token', 'test-token');
   localStorage.setItem('user', JSON.stringify({ id: 'GS', name: 'Tester', roles: ['sales'] }));
   URL.createObjectURL = jest.fn(() => 'blob:mock-url');
@@ -177,7 +205,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(composeCalls()).toHaveLength(1));
     const [, init] = composeCalls()[0];
@@ -207,7 +235,7 @@ describe('F28 — Inbox.submitCompose', () => {
     const before = global.fetch.mock.calls.filter(([u]) => String(u).includes('resource=conversations')).length;
 
     const dialog = await openComposeAndFill();
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() =>
       expect(global.fetch.mock.calls.filter(([u]) => String(u).includes('resource=conversations')).length)
@@ -228,7 +256,7 @@ describe('F28 — Inbox.submitCompose', () => {
     );
 
     const dialog = await openComposeAndFill();
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() =>
       expect(global.fetch.mock.calls.some(([u]) => String(u).includes('resource=conversations&bucket=all'))).toBe(true),
@@ -245,7 +273,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith(composeResultMessage(result)));
     expect(toast.success).toHaveBeenCalledWith('Reopened and continued the existing conversation');
@@ -293,12 +321,12 @@ describe('F28 — Inbox.submitCompose', () => {
     global.fetch = mockFetch(() => json({ conversationId: 'conv-new', reused: false }));
     renderInbox();
     const first = await openComposeAndFill();
-    await user.click(startButton(first));
+    await submitAndSettle(first);
     await waitFor(() => expect(composeCalls()).toHaveLength(1));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     const second = await openComposeAndFill({ to: '0400 111 222', body: 'Second message' });
-    await user.click(startButton(second));
+    await submitAndSettle(second);
     await waitFor(() => expect(composeCalls()).toHaveLength(2));
   });
 
@@ -307,11 +335,11 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    // act-wrapped: the 401 branch navigates after an await, so the router's state update lands
-    // outside userEvent's own act scope.
-    await act(async () => {
-      await user.click(startButton(dialog));
-    });
+    // submitAndSettle: the 401 branch navigates (react-router startTransition) after an await, so
+    // the router's state update lands outside the trigger's own flush. Draining inside act wraps
+    // it — a bare `await act(() => user.click(...))` did not, because the transition update is
+    // scheduled a tick LATER than the click's flush.
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(screen.getByText('LOGIN PAGE')).toBeInTheDocument());
     expect(toast.success).not.toHaveBeenCalled();
@@ -334,7 +362,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not start the conversation'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -345,7 +373,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Podium rejected the recipient'));
     // The rep must be able to fix the recipient rather than retype the message.
@@ -361,7 +389,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     const message = toast.error.mock.calls.at(-1)[0];
@@ -391,7 +419,7 @@ describe('F28 — Inbox.submitCompose', () => {
       });
     }));
     renderInbox();
-    // Mount and fill on REAL timers — findBy*/userEvent need them — then switch, so the fake
+    // Mount and fill on REAL timers — findBy* polls on them — then switch, so the fake
     // clock only covers the wait this test is actually about.
     const dialog = await openComposeAndFill({ to: '0400999888', body: 'Stalled send' });
 
@@ -424,7 +452,7 @@ describe('F28 — Inbox.submitCompose', () => {
     renderInbox();
     const dialog = await openComposeAndFill();
 
-    await user.click(startButton(dialog));
+    await submitAndSettle(dialog);
 
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast.mock.calls.at(-1)[0]).toMatch(/find it under all conversations/i);
