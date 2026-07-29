@@ -189,13 +189,13 @@ export default function Register() {
       <div className="flex justify-center mt-6">
         <button
           onClick={() => setActiveTab('register')}
-          className={`px-4 py-2 rounded-t ${activeTab === 'register' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-500 font-bold'}`}
+          className={`px-4 py-2 rounded-t ${activeTab === 'register' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-600 font-bold'}`}
         >
           Register
         </button>
         <button
           onClick={() => setActiveTab('update')}
-          className={`px-4 py-2 rounded-t ${activeTab === 'update' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-500 font-bold'}`}
+          className={`px-4 py-2 rounded-t ${activeTab === 'update' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-600 font-bold'}`}
         >
           Update Users
         </button>
@@ -286,7 +286,7 @@ export default function Register() {
                           <td className="border px-4 py-2 text-center">
                             <button
                               onClick={() => handleUpdate(u)}
-                              className="bg-green-500 text-white px-4 py-1 rounded hover:bg-green-600"
+                              className="bg-green-700 text-white px-4 py-1 rounded hover:bg-green-800"
                             >
                               Save
                             </button>

@@ -28,12 +28,13 @@
 //
 //   node scripts/podium-contrast-smoke.mjs
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const INBOX = join(ROOT, 'src', 'pages', 'inbox.js');
+const SRC = join(ROOT, 'src');
+const INBOX = join(SRC, 'pages', 'inbox.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -101,6 +102,35 @@ export const PALETTE = {
   'purple-800': '#6b21a8',
   'yellow-100': '#fef9c3',
   'yellow-800': '#854d0e',
+  // F33 widened this file from inbox.js to the whole portal. The other pages paint with 23
+  // tokens the inbox never used, and an ABSENT token is not a safe default: failingPairs SKIPS
+  // any token it cannot resolve, so a pairing built from one is invisible to the scan rather
+  // than passing it. F30 proved the point — a mutant swapping the attachment chip to
+  // bg-blue-400 sailed through purely because blue-400 was missing here. Adding these turned up
+  // four real failures no earlier scan could see, the worst being white on bg-yellow-500 at
+  // 1.92:1. Tailwind 3.4 defaults.
+  'amber-400': '#fbbf24',
+  'emerald-700': '#047857',
+  'green-400': '#4ade80',
+  'green-500': '#22c55e',
+  'green-600': '#16a34a',
+  'indigo-100': '#e0e7ff',
+  'indigo-500': '#6366f1',
+  'indigo-600': '#4f46e5',
+  'indigo-700': '#4338ca',
+  'indigo-800': '#3730a3',
+  'orange-100': '#ffedd5',
+  'orange-500': '#f97316',
+  'orange-700': '#c2410c',
+  'purple-700': '#7e22ce',
+  'red-500': '#ef4444',
+  'red-800': '#991b1b',
+  'red-900': '#7f1d1d',
+  'sky-400': '#38bdf8',
+  'sky-700': '#0369a1',
+  'yellow-400': '#facc15',
+  'yellow-500': '#eab308',
+  'yellow-700': '#a16207',
 };
 
 const AA_NORMAL = 4.5; // WCAG 2.1 SC 1.4.3, normal-size text
@@ -116,10 +146,16 @@ const SURFACES = ['white', 'gray-50', 'gray-100', 'blue-50'];
 // The source scanner (pure, so the fixtures below can falsify it)
 // ---------------------------------------------------------------------------
 
-/** Strip comments, preserving line count so reported line numbers stay true. */
+/**
+ * Strip comments, preserving line count so reported line numbers stay true.
+ *
+ * The leading class on the line-comment pattern is `[^\S\n]` (horizontal whitespace), NOT `\s`.
+ * `\s` matches newlines, so the old pattern greedily ate every blank line PRECEDING a comment
+ * and collapsed them — silently shifting every line number this file reports. A fixture pins it.
+ */
 export function stripAside(src) {
   const blank = (m) => '\n'.repeat((m.match(/\n/g) || []).length);
-  return src.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^\s*\/\/.*$/gm, '');
+  return src.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^[^\S\n]*\/\/.*$/gm, '');
 }
 
 /**
@@ -210,6 +246,53 @@ export function failingGreysIn(src) {
  * amber-700 (5.02), hovers one step further.
  */
 const KNOWN_FAILING = [];
+
+/**
+ * Every rendering source file in the portal. Tests are excluded because they deliberately carry
+ * fixture classNames (a suite asserting a failing pairing is caught would otherwise fail the
+ * scan that catches it).
+ */
+export function portalSourceFiles(root = SRC) {
+  const out = [];
+  (function walk(dir) {
+    for (const entry of readdirSync(dir).sort()) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) {
+        if (entry !== '__tests__') walk(p);
+      } else if (entry.endsWith('.js')) {
+        out.push(p);
+      }
+    }
+  })(root);
+  return out;
+}
+
+const rel = (p) => relative(ROOT, p).split(sep).join('/');
+
+/**
+ * F33: the CTA surfaces, deferred to Nick with a measurement instead of a question.
+ *
+ * These are REAL failures — `bg-blue-500` + white is 3.68:1 and `bg-amber-500` + white is
+ * 2.15:1, the same two F30 darkened inside the inbox. They are exempted rather than fixed
+ * because the remedy is a one-step darkening of EVERY primary button in the portal (18 surfaces
+ * across 13 files), which changes how every page looks and is the one part of the F33 row that
+ * genuinely asks for a human's eye. Deferring it HERE rather than in prose is the point: the
+ * guard still covers those pages, the exemption is countable, and acting on the decision is a
+ * two-line deletion plus the swap — not a re-investigation.
+ *
+ * Deliberately NOT in this list, though they are also coloured surfaces: the one-off
+ * `bg-yellow-500` toggle (1.92:1 — the worst pairing in the portal), the three `bg-green-500/600`
+ * buttons and the green flash banner. Those are isolated sites, not the portal-wide primary-button
+ * identity, and exempting the WORST pairing while fixing 4.39:1 greys would make this guard's
+ * headline claim dishonest. They were fixed in this increment.
+ *
+ * `text-blue-500 on bg-white` is likewise absent: it is link text, not a button surface, so
+ * fixing it changes no button.
+ */
+const CTA_DEFERRED = ['text-white on bg-blue-500', 'text-white on bg-amber-500'];
+
+/** Sites the exemption above covers, pinned so it cannot quietly grow to new pages. */
+const CTA_DEFERRED_SITES = { 'bg-blue-500': 16, 'bg-amber-500': 2 };
 
 function main() {
   console.log('F30 inbox contrast smoke — pure, no DOM, no network\n');
@@ -306,6 +389,17 @@ function main() {
       failingGreysIn('/* a\nb\nc */\ntext-gray-400')[0].endsWith('line 4'),
       'a diagnostic that points at the wrong line sends someone hunting',
     );
+    // The check above only ever exercised BLOCK comments, and that gap hid a real defect for the
+    // whole of F30: the line-comment pattern led with `\s*`, and `\s` MATCHES NEWLINES, so it ate
+    // the blank lines PRECEDING a comment and collapsed them. Every line number this file
+    // reported was wrong wherever that shape occurred — by 17 lines in the inbox. It stayed
+    // invisible while the scan covered one familiar file; widening it to 10 unfamiliar pages is
+    // what makes a wrong line number expensive.
+    check(
+      '… including when blank lines precede a line comment',
+      failingGreysIn('const a=1;\n\n\n// note\ntext-gray-400')[0].endsWith('line 5'),
+      'blank lines before a // comment must not be swallowed with it',
+    );
   }
 
   console.log('\nthe inbox itself:');
@@ -359,6 +453,46 @@ function main() {
         'count rather than a floor, because a floor is unfalsifiable: code review showed >= 40 ' +
         'survived being mutated to >= 0. Any change here should be a deliberate edit with a diff.',
     );
+  }
+
+  console.log('\nthe rest of the portal (F33 — same guard, every page):');
+  {
+    const files = portalSourceFiles();
+    // The walk being real is load-bearing: every check below iterates it, so a walk that
+    // silently returned [] would report a clean portal. F19's viewport audit made exactly this
+    // mistake one level down (a metric that was identically 0), so it is asserted, not assumed.
+    check(`the walk found the portal (${files.length} source files)`, files.length >= 30);
+    check('… and it excludes the test fixtures', !files.some((f) => f.includes(`${sep}__tests__${sep}`)));
+    check('… and it includes both pages and components',
+      files.some((f) => f.includes(join('src', 'pages'))) && files.some((f) => f.includes(join('src', 'components'))));
+
+    const sources = files.map((f) => [rel(f), stripAside(readFileSync(f, 'utf8'))]);
+
+    const greys = sources.flatMap(([name, src]) => failingGreysIn(src).map((g) => `${name}: ${g}`));
+    check('NO sub-AA grey text token remains anywhere in the portal', greys.length === 0,
+      `\n    ${greys.join('\n    ')}`);
+
+    const pairs = sources.flatMap(([name, src]) =>
+      failingPairs(src, { allow: CTA_DEFERRED }).map((p) => `${name}: ${p}`));
+    check('NO text/background pairing outside the deferred CTA set fails AA', pairs.length === 0,
+      `\n    ${pairs.join('\n    ')}`);
+
+    // The exemption is only honest if what it covers stays fixed. Counting the SURFACES (not the
+    // failures) means a new blue-500 button on a new page breaks this line instead of being
+    // quietly absorbed by the allowlist.
+    for (const [token, expected] of Object.entries(CTA_DEFERRED_SITES)) {
+      const actual = sources.reduce(
+        (n, [, src]) => n + (src.match(new RegExp(`\\b${token}\\b`, 'g')) || []).length, 0);
+      check(`the deferred CTA set is still exactly ${expected} × ${token}`, actual === expected,
+        `found ${actual} — either a new one was added, or the decision landed and this line should go`);
+    }
+    check('nothing else is exempted', CTA_DEFERRED.length === 2);
+
+    const unknown = [...new Set(sources.flatMap(([, src]) =>
+      [...src.matchAll(/\b(?:bg|text)-((?:[a-z]+-\d00)|white)\b/g)].map((m) => m[1]),
+    ))].filter((t) => !PALETTE[t]);
+    check('every colour token the portal uses is in the palette', unknown.length === 0,
+      `unresolved: ${unknown.join(', ')} — failingPairs SKIPS these, so they are invisible, not passing`);
   }
 
   console.log(`\n✅ contrast smoke: ${passed} checks passed`);

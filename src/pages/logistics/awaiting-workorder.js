@@ -155,7 +155,7 @@ export default function AwaitingWorkorder() {
                           <div className="text-xs text-gray-500 mt-0.5">{r.product_interest}</div>
                         ) : null}
                         {r.customer_email ? (
-                          <div className="text-xs text-gray-400 mt-0.5">{r.customer_email}</div>
+                          <div className="text-xs text-gray-600 mt-0.5">{r.customer_email}</div>
                         ) : null}
                       </td>
                       <td className="px-4 py-3">{channel}</td>
@@ -171,7 +171,7 @@ export default function AwaitingWorkorder() {
                         ) : r.podium_conversation_id ? (
                           <Link to="/inbox" className="text-blue-600 hover:underline">Inbox</Link>
                         ) : (
-                          <span className="text-gray-400">—</span>
+                          <span className="text-gray-600">—</span>
                         )}
                       </td>
                     </tr>

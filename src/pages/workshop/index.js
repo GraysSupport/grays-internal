@@ -291,7 +291,7 @@ export default function WorkshopPage() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Workshop Run Sheet</h1>
             {lastRefreshed && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-gray-600">
                 Last refreshed: {lastRefreshed.toLocaleTimeString()} · Auto-refresh: 30s
               </span>
             )}
@@ -308,7 +308,7 @@ export default function WorkshopPage() {
 
       {/* New job flash */}
       {flash && (
-        <div className="bg-green-500 text-white text-center py-2 text-sm font-semibold">
+        <div className="bg-green-700 text-white text-center py-2 text-sm font-semibold">
           ✅ New job added to the queue
         </div>
       )}
@@ -399,7 +399,7 @@ export default function WorkshopPage() {
                   {s.label}
                 </span>
               ))}
-              <span className="flex items-center gap-1.5 text-xs text-gray-400 ml-2 border-l pl-3">
+              <span className="flex items-center gap-1.5 text-xs text-gray-600 ml-2 border-l pl-3">
                 ★ = Important
               </span>
             </div>

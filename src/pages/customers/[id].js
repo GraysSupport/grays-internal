@@ -194,13 +194,13 @@ export default function CustomerDetailPage() {
                               </span>
                               <span className="text-sm font-medium text-gray-900">{e.title}</span>
                               {e.ref_id != null && (
-                                <span className="text-xs text-gray-400">
+                                <span className="text-xs text-gray-600">
                                   {e.ref_type === 'lead' ? `Lead #${e.ref_id}` : e.ref_type === 'workorder' ? `WO #${e.ref_id}` : `Delivery #${e.ref_id}`}
                                 </span>
                               )}
                             </div>
                             {e.detail && <div className="text-sm text-gray-600 mt-0.5">{e.detail}</div>}
-                            <div className="text-xs text-gray-400 mt-0.5">
+                            <div className="text-xs text-gray-600 mt-0.5">
                               {fmtTime(e.event_time)}{e.actor_name ? ` · ${e.actor_name}` : e.actor ? ` · ${e.actor}` : ''}
                             </div>
                           </li>
@@ -258,7 +258,7 @@ export default function CustomerDetailPage() {
                           );
                         })}
                       </ul>
-                      <div className="text-[11px] text-gray-400 mt-3">Live from Podium — not stored (chat bodies stay in Podium).</div>
+                      <div className="text-[11px] text-gray-600 mt-3">Live from Podium — not stored (chat bodies stay in Podium).</div>
                     </>
                   )}
                 </div>

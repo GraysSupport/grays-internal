@@ -88,7 +88,7 @@ function LotSlots({ item, actorId }) {
         </div>
       ))}
       {lots === null ? (
-        <div className="text-xs text-gray-400 mt-1">Loading lots…</div>
+        <div className="text-xs text-gray-600 mt-1">Loading lots…</div>
       ) : assigned.length < qty ? (
         available.length ? (
           <select
@@ -933,7 +933,7 @@ export default function WorkorderDetailPage() {
                     setScanning(true);
                     setTimeout(() => scanInputRef.current?.focus(), 50);
                   }}
-                  className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-600 text-white border-green-600' : 'hover:bg-gray-50'}`}
+                  className={`rounded-md border px-3 py-1 text-sm ${scanning ? 'bg-green-700 text-white border-green-700' : 'hover:bg-gray-50'}`}
                 >
                   {scanning ? '● Scanning…' : '⧉ Scan item in'}
                 </button>
@@ -1124,7 +1124,7 @@ export default function WorkorderDetailPage() {
 
                       <td className="px-4 py-3 text-sm text-gray-700">
                         {!isCustom ? (
-                          selected ? selected.name : <span className="text-gray-400">—</span>
+                          selected ? selected.name : <span className="text-gray-600">—</span>
                         ) : (
                           <div className="space-y-2">
                             <input

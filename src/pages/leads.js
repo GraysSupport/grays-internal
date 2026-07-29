@@ -315,7 +315,7 @@ export default function Leads() {
                     </div>
                     <div className="flex-1 p-2 space-y-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 12rem)' }}>
                       {cards.length === 0 && (
-                        <div className="text-xs text-gray-400 px-1 py-2">No leads.</div>
+                        <div className="text-xs text-gray-600 px-1 py-2">No leads.</div>
                       )}
                       {cards.map((lead) => (
                         <LeadCard
@@ -334,7 +334,7 @@ export default function Leads() {
             </div>
           )}
 
-          <p className="text-xs text-gray-400 mt-4">
+          <p className="text-xs text-gray-600 mt-4">
             This is the whole team's funnel — use “My leads” to see only yours. Every stage
             change is recorded to the lead's history; click a card to open its chat.
           </p>
@@ -567,7 +567,7 @@ function LeadCard({ lead, saving, onChangeStage, onOpenChat, onEditQuote }) {
       <div className="text-[11px] text-gray-500 mt-1">
         {lead.assigned_name
           ? <>Owner: <span className="font-medium text-gray-700">{lead.assigned_name}</span></>
-          : <span className="text-gray-400">Unassigned</span>}
+          : <span className="text-gray-600">Unassigned</span>}
       </div>
 
       {lead.stage === 'Lost' && lostText && (
@@ -582,7 +582,7 @@ function LeadCard({ lead, saving, onChangeStage, onOpenChat, onEditQuote }) {
         <div className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
           {lead.quote_invoice_id
             ? <span className="truncate">Invoice #{lead.quote_invoice_id}</span>
-            : <span className="text-gray-400">No invoice recorded</span>}
+            : <span className="text-gray-600">No invoice recorded</span>}
           {onEditQuote && (
             <button
               type="button"

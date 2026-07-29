@@ -303,7 +303,7 @@ export default function CreateWorkorderPage() {
             <button
               type="button"
               onClick={() => setForm((f) => ({ ...f, important: !f.important }))}
-              className={`${form.important ? 'bg-yellow-500 text-white' : 'bg-gray-200 text-gray-700'} px-3 py-1 rounded ml-2`}
+              className={`${form.important ? 'bg-yellow-500 text-gray-900' : 'bg-gray-200 text-gray-700'} px-3 py-1 rounded ml-2`}
               title={form.important ? 'Marked as Important' : 'Mark as Important'}
             >
               {form.important ? '★ Important' : '☆ Mark Important'}
