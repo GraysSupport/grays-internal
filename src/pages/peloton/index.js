@@ -312,21 +312,21 @@ export default function PelotonPage() {
 
                       {/* In transit (SO + STO combined) */}
                       <td className="px-4 py-3 text-right text-gray-600">
-                        {inTransit > 0 ? fmt(inTransit) : <span className="text-gray-600">—</span>}
+                        {inTransit > 0 ? fmt(inTransit) : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* Reserved for delivery */}
                       <td className="px-4 py-3 text-right text-gray-600">
                         {parseFloat(r.ReservedDelivery) > 0
                           ? fmt(r.ReservedDelivery)
-                          : <span className="text-gray-600">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* On purchase order (not in total) */}
                       <td className="px-4 py-3 text-right text-blue-600 font-medium">
                         {parseFloat(r.OnPurchaseOrder) > 0
                           ? fmt(r.OnPurchaseOrder)
-                          : <span className="text-gray-600">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* Total stock */}
@@ -338,7 +338,7 @@ export default function PelotonPage() {
                       <td className="px-4 py-3 text-center text-gray-500">
                         {r.InstallLeadTime != null && r.InstallLeadTime !== ''
                           ? r.InstallLeadTime
-                          : <span className="text-gray-600">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
                     </tr>
                   );

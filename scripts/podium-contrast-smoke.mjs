@@ -1,4 +1,10 @@
-// scripts/podium-contrast-smoke.mjs — offline smoke for F30 (inbox text contrast).
+// scripts/podium-contrast-smoke.mjs — offline text-contrast guard for the whole portal.
+//
+// F30 built this for src/pages/inbox.js alone. F33 widened it to all 52 source files under
+// src/ and closed three holes code review proved were live: only the FIRST background in a
+// className was resolved (masking hover states), the shade pattern required three digits (so
+// bg-gray-50, bg-black and arbitrary bg-[#hex] were invisible rather than checked), and the
+// file-walk assertion was a floor that let a whole directory vanish from the scan.
 //
 // F30 was raised as "6 gray-on-color findings in src/pages/inbox.js" from a design-hook audit.
 // Re-deriving it changed the finding twice over, and both corrections are the reason this file
@@ -22,9 +28,14 @@
 // Why it matters here: the row that raised it says reps read this page "on the warehouse floor".
 // High ambient light on a phone is the worst case for washed-out text.
 //
-// WHAT THIS DOES NOT CLAIM: it reasons over palette values and source tokens. jsdom has no
-// layout or paint, so nothing here observes a rendered pixel. It models the four surfaces the
-// inbox actually paints; an element placed on some fifth surface is outside what it can see.
+// WHAT THIS DOES NOT CLAIM: it reasons over palette values and source tokens. There is no DOM
+// here, so nothing observes a rendered pixel. Two limits are structural, not incidental:
+//   - It sees a text colour and a background only when they share ONE className. A background
+//     supplied by an ANCESTOR element is invisible to it — that is how the internal-note
+//     timestamp sat at 2.07:1 inside a file this suite called clean. Such sites are pinned by
+//     source instead, and the portal-wide check is worded for what it actually measures.
+//   - The four SURFACES are the light backgrounds the portal paints text onto; an element on
+//     some fifth surface is outside what the grey scan can reason about.
 //
 //   node scripts/podium-contrast-smoke.mjs
 
@@ -131,6 +142,15 @@ export const PALETTE = {
   'yellow-400': '#facc15',
   'yellow-500': '#eab308',
   'yellow-700': '#a16207',
+  // `black` and the -50 shades. Both were unreachable while the shade class was `\d00` and only
+  // `white` was special-cased, so under mutation `bg-black text-gray-900` (1.9:1) and
+  // `bg-gray-50 text-white` (1.07:1) both scanned clean. gray-50/blue-50/amber-50 were already
+  // listed above but equally unreachable — in the palette is not the same as visible to the scan.
+  black: '#000000',
+  'red-50': '#fef2f2',
+  'green-50': '#f0fdf4',
+  'yellow-50': '#fefce8',
+  'sky-50': '#f0f9ff',
 };
 
 const AA_NORMAL = 4.5; // WCAG 2.1 SC 1.4.3, normal-size text
@@ -196,28 +216,70 @@ export function styleChunks(src) {
 }
 
 /**
+ * One colour token: a palette name (`gray-500`, `white`, `black`) or an arbitrary value
+ * (`bg-[#B50B1D]`, which this repo really does ship in PwaPrompts.js).
+ *
+ * The shade class is `\d{2,3}`, NOT `\d00`. Code review proved why with a mutant: `bg-gray-50`
+ * occurs 89× and could never match, so `bg-gray-50 text-white` (1.07:1) scanned clean — and
+ * `black` was never special-cased the way `white` was, so `bg-black text-gray-900` did too.
+ * Arbitrary hex is resolved directly rather than allowlisted, because the alternative let the
+ * exact defect this file exists to catch be reinstated as `bg-[#eab308]` with the suite green.
+ *
+ * `(?!opacity-)` because widening the shade class also started matching Tailwind's
+ * `bg-opacity-80` / `text-opacity-50` modifiers, which are not colours at all.
+ */
+const TOKEN = String.raw`(?:(?!opacity-)([a-z]+-\d{2,3}|white|black)|\[(#[0-9a-fA-F]{3,8})\])`;
+
+export function colourTokens(text, prefix) {
+  const re = new RegExp(String.raw`\b${prefix}-${TOKEN}`, 'g');
+  return [...text.matchAll(re)].map((m) => ({
+    label: m[1] ?? m[2],
+    hex: m[1] ? PALETTE[m[1]] : m[2],
+  }));
+}
+
+/**
  * Text/background pairs that share a literal and fail AA.
+ *
  * Resolving both tokens through the palette — rather than allowlisting "light-looking" colour
  * names — is what lets this see any hue, and stops it flagging pairings that actually pass
  * (`bg-amber-50 text-gray-500` is 4.66:1 and is not a defect).
+ *
+ * EVERY background in the chunk is paired against every text colour, not just the first one.
+ * The old code used a non-global `.match()`, so the first `bg-` masked the rest — and a live
+ * example sat in the repo: `bg-amber-500 text-white hover:bg-amber-600` matched only
+ * `amber-500`, which the CTA allowlist excused, hiding the hover state's real 3.19:1 failure.
+ * A `hover:`/`disabled:` background lands on the same text, so it is the same pairing.
  */
 export function failingPairs(src, { allow = [] } = {}) {
   const stripped = stripAside(src);
   const offenders = [];
   for (const chunk of styleChunks(stripped)) {
-    const bg = (chunk.text.match(/\bbg-([a-z]+-\d00|white)\b/) || [])[1];
-    if (!bg || !PALETTE[bg]) continue;
-    for (const m of chunk.text.matchAll(/\btext-([a-z]+-\d00|white)\b/g)) {
-      const fg = m[1];
-      if (!PALETTE[fg]) continue;
-      const ratio = contrastRatio(PALETTE[fg], PALETTE[bg]);
-      if (ratio >= AA_NORMAL) continue;
-      const pair = `text-${fg} on bg-${bg}`;
-      if (allow.includes(pair)) continue;
-      offenders.push(`line ${stripped.slice(0, chunk.index).split('\n').length}: ${pair} (${round(ratio)}:1)`);
+    const bgs = colourTokens(chunk.text, 'bg').filter((b) => b.hex);
+    if (!bgs.length) continue;
+    const seen = new Set();
+    for (const fg of colourTokens(chunk.text, 'text')) {
+      if (!fg.hex) continue;
+      for (const bg of bgs) {
+        const pair = `text-${fg.label} on bg-${bg.label}`;
+        if (seen.has(pair)) continue;
+        seen.add(pair);
+        const ratio = contrastRatio(fg.hex, bg.hex);
+        if (ratio >= AA_NORMAL) continue;
+        if (allow.includes(pair)) continue;
+        offenders.push(`line ${stripped.slice(0, chunk.index).split('\n').length}: ${pair} (${round(ratio)}:1)`);
+      }
     }
   }
   return offenders;
+}
+
+/** Colour tokens the palette cannot resolve — invisible to the scan, so reported, never skipped. */
+export function unresolvedTokens(src) {
+  const stripped = stripAside(src);
+  return [...new Set(
+    ['bg', 'text'].flatMap((p) => colourTokens(stripped, p).filter((t) => !t.hex).map((t) => t.label)),
+  )];
 }
 
 /** Uses of a grey text token that fails AA on every surface this page paints. */
@@ -295,7 +357,7 @@ const CTA_DEFERRED = ['text-white on bg-blue-500', 'text-white on bg-amber-500']
 const CTA_DEFERRED_SITES = { 'bg-blue-500': 16, 'bg-amber-500': 2 };
 
 function main() {
-  console.log('F30 inbox contrast smoke — pure, no DOM, no network\n');
+  console.log('portal contrast smoke (F30 inbox + F33 portal-wide) — pure, no DOM, no network\n');
 
   console.log('the contrast formula itself (known values):');
   {
@@ -461,10 +523,21 @@ function main() {
     // The walk being real is load-bearing: every check below iterates it, so a walk that
     // silently returned [] would report a clean portal. F19's viewport audit made exactly this
     // mistake one level down (a metric that was identically 0), so it is asserted, not assumed.
-    check(`the walk found the portal (${files.length} source files)`, files.length >= 30);
+    //
+    // An EXACT count, not `>= 30`. Code review mutated the walk to skip `delivery_operations`
+    // — six of the ten pages this increment fixed — AND reverted a grey inside it, and the
+    // floor kept the suite green at 64/64. That is the same unfalsifiable-floor mistake this
+    // file already calls out for the inbox token count, so it gets the same conservation law.
+    check(`the walk found the portal (${files.length} source files)`, files.length === 52,
+      'a deliberate edit when files are added or removed — a floor here let a whole directory vanish');
     check('… and it excludes the test fixtures', !files.some((f) => f.includes(`${sep}__tests__${sep}`)));
-    check('… and it includes both pages and components',
-      files.some((f) => f.includes(join('src', 'pages'))) && files.some((f) => f.includes(join('src', 'components'))));
+    // Naming the directories as well as the count: a count alone is satisfied by any 52 files,
+    // so deleting a page and adding an unrelated one would net zero.
+    for (const dir of ['components', 'pages', join('pages', 'delivery_operations'), join('pages', 'customers'),
+      join('pages', 'logistics'), join('pages', 'peloton'), join('pages', 'workshop'), join('pages', 'waitlist')]) {
+      check(`… and it reaches src/${dir.split(sep).join('/')}`,
+        files.some((f) => f.startsWith(join(SRC, dir) + sep)));
+    }
 
     const sources = files.map((f) => [rel(f), stripAside(readFileSync(f, 'utf8'))]);
 
@@ -472,10 +545,17 @@ function main() {
     check('NO sub-AA grey text token remains anywhere in the portal', greys.length === 0,
       `\n    ${greys.join('\n    ')}`);
 
+    // WORDED FOR WHAT IT MEASURES. Code review was right that the earlier headline ("NO text/
+    // background pairing fails AA") overclaimed: this scanner only sees a text colour and a
+    // background that share one className, and CANNOT see a background supplied by an ancestor
+    // element. It found two live counterexamples that way — inbox.js's internal-note timestamp
+    // (text-amber-500 on an ancestor bg-amber-50, 2.07:1) and waitlist's out-of-stock label.
+    // Both are fixed in this increment, but the CLAIM is narrowed regardless, because the next
+    // ancestor-surface defect will still be invisible here.
     const pairs = sources.flatMap(([name, src]) =>
       failingPairs(src, { allow: CTA_DEFERRED }).map((p) => `${name}: ${p}`));
-    check('NO text/background pairing outside the deferred CTA set fails AA', pairs.length === 0,
-      `\n    ${pairs.join('\n    ')}`);
+    check('NO pairing where text and background share a className fails AA, outside the deferred CTA set',
+      pairs.length === 0, `\n    ${pairs.join('\n    ')}`);
 
     // The exemption is only honest if what it covers stays fixed. Counting the SURFACES (not the
     // failures) means a new blue-500 button on a new page breaks this line instead of being
@@ -488,10 +568,23 @@ function main() {
     }
     check('nothing else is exempted', CTA_DEFERRED.length === 2);
 
-    const unknown = [...new Set(sources.flatMap(([, src]) =>
-      [...src.matchAll(/\b(?:bg|text)-((?:[a-z]+-\d00)|white)\b/g)].map((m) => m[1]),
-    ))].filter((t) => !PALETTE[t]);
-    check('every colour token the portal uses is in the palette', unknown.length === 0,
+    // ANCESTOR SURFACES — pinned by source, because failingPairs provably cannot reach them:
+    // the text carries no background of its own, the surface comes from a parent element. Code
+    // review found this one sitting below AA inside a file this suite called clean, which is
+    // the honest limit of a className-local scanner.
+    const inboxSrc = stripAside(readFileSync(INBOX, 'utf8'));
+    check(`the internal-note card's meta text is amber-700 on its bg-amber-50 (${round(ratioOf('amber-700', 'amber-50'))}:1)`,
+      !/text-amber-[56]00\b/.test(inboxSrc),
+      'amber-500 there was 2.07:1 and amber-600 3.07:1 — worse than any grey F30 or F33 fixed');
+
+    // NO BLANKET "every text token must clear AA on a light surface" RULE, deliberately.
+    // It would look strict and be wrong: text-white measures 1:1 on white and is CORRECT on
+    // every coloured button in the portal, so such a rule fires false positives across the whole
+    // design system. Same reasoning F19 incr 2c used to reject a repo-wide flex rule.
+    check('… and the reason a blanket light-surface rule is unsafe still holds', ratioOf('white', 'white') < AA_NORMAL);
+
+    const unknown = [...new Set(sources.flatMap(([, src]) => unresolvedTokens(src)))];
+    check('every colour token the portal uses resolves to a colour', unknown.length === 0,
       `unresolved: ${unknown.join(', ')} — failingPairs SKIPS these, so they are invisible, not passing`);
   }
 

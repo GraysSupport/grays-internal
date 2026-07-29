@@ -499,7 +499,7 @@ export default function WorkshopPage() {
         <div className="px-3 py-2 flex items-center justify-end">
           <a
             href="/dashboard"
-            className="px-4 py-2 text-sm rounded-xl hover:bg-red-50 text-red-600 font-semibold"
+            className="px-4 py-2 text-sm rounded-xl hover:bg-red-50 text-red-700 font-semibold"
           >
             Exit
           </a>

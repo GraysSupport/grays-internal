@@ -1257,10 +1257,10 @@ export default function Inbox() {
                             <div className="max-w-[85%] w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                               <div className="text-[11px] font-semibold text-amber-700 mb-0.5">
                                 🔒 Internal note
-                                <span className="font-normal text-amber-600"> · team only, not sent to the customer</span>
+                                <span className="font-normal text-amber-700"> · team only, not sent to the customer</span>
                               </div>
                               <div className="whitespace-pre-wrap break-words text-sm text-amber-900">{m.body}</div>
-                              <div className="text-[10px] mt-1 text-amber-500">
+                              <div className="text-[10px] mt-1 text-amber-700">
                                 {formatTime(m.createdAt)}{m.author ? ` · ${m.author}` : ''}
                               </div>
                             </div>

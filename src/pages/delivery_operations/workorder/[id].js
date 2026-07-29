@@ -803,7 +803,7 @@ export default function WorkorderDetailPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setImportant((v) => !v)}
-              className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 ${important ? 'text-amber-600 border-amber-300' : ''}`}
+              className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 ${important ? 'text-amber-700 border-amber-300' : ''}`}
               title={important ? 'Unmark as important' : 'Mark as important'}
             >
               {important ? '★ Important' : '☆ Mark important'}
@@ -902,7 +902,7 @@ export default function WorkorderDetailPage() {
                 {Number(wo.outstanding_balance) > 0 ? (
                   <span className="text-red-600">{formatMoney(wo.outstanding_balance)} Outstanding</span>
                 ) : (
-                  <span className="text-green-600">Paid</span>
+                  <span className="text-green-700">Paid</span>
                 )}
               </div>
             </div>

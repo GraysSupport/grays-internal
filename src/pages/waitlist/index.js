@@ -156,7 +156,7 @@ export default function WaitlistPage() {
           <div key={product} className="mb-8">
             <h3 className="text-lg font-semibold mb-2 flex flex-wrap items-center gap-2">
               <span>{entries[0].product_sku} - {product} –</span>
-              <span className={stock === 0 ? 'text-red-500' : 'text-green-600'}>
+              <span className={stock === 0 ? 'text-red-600' : 'text-green-700'}>
                 {stock === 0 ? 'Out of Stock' : `${stock} in Stock`}
               </span>
               {coming_in_date && (
@@ -166,7 +166,7 @@ export default function WaitlistPage() {
                 >
                   Coming in ~{new Date(coming_in_date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                   {coming_in_collection && (
-                    <span className="text-amber-600 font-normal">· {coming_in_collection}</span>
+                    <span className="text-amber-700 font-normal">· {coming_in_collection}</span>
                   )}
                 </span>
               )}

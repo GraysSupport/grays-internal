@@ -515,7 +515,7 @@ export default function Leads() {
                 type="button"
                 onClick={submitQuote}
                 disabled={quoting}
-                className="px-4 py-2 rounded text-sm bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
+                className="px-4 py-2 rounded text-sm bg-amber-500 text-white hover:bg-amber-700 disabled:opacity-50"
               >
                 {quoting ? 'Saving…' : 'Raise quote'}
               </button>
@@ -567,7 +567,7 @@ function LeadCard({ lead, saving, onChangeStage, onOpenChat, onEditQuote }) {
       <div className="text-[11px] text-gray-500 mt-1">
         {lead.assigned_name
           ? <>Owner: <span className="font-medium text-gray-700">{lead.assigned_name}</span></>
-          : <span className="text-gray-600">Unassigned</span>}
+          : <span className="text-gray-500">Unassigned</span>}
       </div>
 
       {lead.stage === 'Lost' && lostText && (
@@ -587,7 +587,7 @@ function LeadCard({ lead, saving, onChangeStage, onOpenChat, onEditQuote }) {
             <button
               type="button"
               onClick={() => onEditQuote(lead)}
-              className="text-amber-600 hover:text-amber-800 underline shrink-0"
+              className="text-amber-700 hover:text-amber-900 underline shrink-0"
             >
               edit
             </button>

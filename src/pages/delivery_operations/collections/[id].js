@@ -456,7 +456,7 @@ export default function CollectionDetailPage() {
 
               <div className="md:col-span-3">
                 <label className="block text-xs uppercase text-gray-600 mb-1">
-                  Purchase Price <span className="text-xs text-gray-600">(can be 0)</span>
+                  Purchase Price <span className="text-xs text-gray-500">(can be 0)</span>
                 </label>
                 <input
                   type="number"
