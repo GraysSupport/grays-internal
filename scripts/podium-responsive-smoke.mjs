@@ -415,6 +415,13 @@ console.log('\nthe overlay analyser reports the shapes it must report:');
   );
 
   check(
+    'a stray "16" in an unrelated utility is not clearance',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 gap-16 max-w-[1600px]"><h2>x</h2></div>`).length === 1,
+    'mutation testing found this one: loosening the pattern to a bare /16/ kept every fixture ' +
+      'green, because none of them contained a 16 that was not a clearance',
+  );
+
+  check(
     'the overlay is found even when Back is written before Home (waitlist/index.js)',
     overlaySites('<div className="fixed top-4 left-6 z-50 flex gap-2">\n<BackButton />\n<HomeButton />\n</div>').length === 1,
   );
