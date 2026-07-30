@@ -80,7 +80,8 @@ export default function EditProductPage() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 max-sm:pt-16">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
           <h1 className="text-xl font-bold mb-4 text-center">Edit Product: {sku}</h1>
           <ProductForm

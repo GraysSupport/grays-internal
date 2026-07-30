@@ -1,4 +1,7 @@
-// scripts/podium-responsive-smoke.mjs — offline smoke for F19 increment 2b (no page scrolls sideways).
+// scripts/podium-responsive-smoke.mjs — offline smoke for F19 increments 2b and 2d.
+//
+// 2b (below): no page scrolls sideways because of a table.
+// 2d (section 3): nothing the page renders sits UNDER the fixed Home/Back overlay on a phone.
 //
 // F19's acceptance line is "every page usable at ~375 px". Increment 2a gave the portal navigation
 // on a phone; this increment fixes the defect that makes the pages you navigate TO unusable once
@@ -142,6 +145,65 @@ export function auditSource(src) {
     }
   }
   return violations;
+}
+
+// ---------------------------------------------------------------------------
+// F19 increment 2d — the fixed Home/Back overlay must not land on the page's own content.
+//
+// Thirteen pages pin `<HomeButton/><BackButton/>` to the viewport corner with
+// `fixed top-4 left-6 z-50`, so the pair floats over whatever the page draws in the top-left
+// ~150×56px. On a desktop width nothing is there — the headings are centred far to the right of
+// it. At 375px the same centred heading lands directly underneath, and a real browser at
+// 375×812 measured the overlay painting on top of the page's own h2 on five pages and on
+// register.js's "Register" TAB BUTTON, which means the tap opens Home instead of the tab.
+//
+// The three pages that already clear it (inbox, leads, settings) do so with a `pt-16`/`py-16`
+// container, so that is the shape this checks for: a page that pins the overlay must also
+// declare top clearance for it, and the clearance must come AFTER the overlay in the file.
+// That ordering rule is deliberately stricter than the physics: a sibling rendered ABOVE the
+// overlay clears nothing (the real failure it is aimed at), while padding on an ANCESTOR of the
+// overlay would in fact work, because a fixed child ignores its parent's padding. All thirteen
+// pages declare it below the overlay, on the content that actually moves, so the strict form
+// costs nothing and reads unambiguously; a future page that pads an ancestor instead will be
+// reported here and should move the class rather than loosen this.
+//
+// WHAT THIS DOES NOT CLAIM:
+//   - It proves a clearance class is DECLARED in the subtree after the overlay. It cannot prove
+//     the class sits on the element that actually encloses the heading — jsdom has no layout
+//     engine, so nothing offline can. `src/pages/__tests__/overlayClearance.test.js` proves the
+//     parentage in the rendered DOM for four representative pages, and the PR carries the
+//     375px browser measurement (28 routes, before/after) for the geometry itself.
+//   - It only looks at pages that pin the overlay with `fixed`. A page that renders Home/Back
+//     in normal flow needs no clearance and is not checked.
+const CLEARANCE = /\b(max-sm:)?(pt|py|mt)-16\b/;
+
+// Every place a page pins the Home/Back pair to the viewport, found from the buttons outward
+// rather than by matching the exact class string — the class order differs between files and
+// waitlist/index.js renders Back before Home.
+export function overlaySites(src) {
+  const out = [];
+  const re = /<(HomeButton|BackButton)\b/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const parent = enclosingTag(src.slice(0, m.index));
+    if (!parent || !/\bfixed\b/.test(parent)) continue;
+    const at = m.index;
+    if (out.length && out[out.length - 1].parent === parent && at - out[out.length - 1].at < 200) continue; // the pair shares one overlay
+    out.push({ at, line: src.slice(0, at).split('\n').length, parent });
+  }
+  return out;
+}
+
+export function auditOverlayClearance(src) {
+  const sites = overlaySites(src);
+  if (!sites.length) return [];
+  const first = sites[0];
+  const after = src.slice(first.at);
+  if (CLEARANCE.test(after)) return [];
+  return [{
+    line: first.line,
+    reason: 'pins Home/Back over the page but declares no top clearance (pt-16 / py-16 / max-sm:pt-16) after it',
+  }];
 }
 
 function pageFiles(dir) {
@@ -291,6 +353,90 @@ console.log('\nevery table in src/pages is inside a horizontal-scroll container:
     }
   }
   check('no page can scroll the document body sideways', offenders.length === 0, `\n    ${offenders.join('\n    ')}`);
+}
+
+// ---------------------------------------------------------------------------
+// 3. F19 increment 2d — the fixed Home/Back overlay clears the page's own content.
+// ---------------------------------------------------------------------------
+console.log('\nthe overlay analyser reports the shapes it must report:');
+{
+  const OVERLAY = '<div className="fixed top-4 left-6 z-50 flex gap-2">\n<HomeButton />\n<BackButton />\n</div>\n';
+
+  check(
+    'an overlay page with no clearance anywhere is a violation',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen bg-gray-100 p-6">\n<h2>Products</h2>\n</div>`).length === 1,
+  );
+
+  check(
+    'max-sm:pt-16 on the container clears it',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">\n<h2>Products</h2>\n</div>`).length === 0,
+  );
+
+  check(
+    'the unconditional pt-16 the three already-clear pages use is accepted',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen bg-gray-100 pt-16 pb-4 px-3">\n<h2>Inbox</h2>\n</div>`).length === 0,
+  );
+
+  check(
+    'py-16 (settings) is accepted',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen flex flex-col items-center gap-6 py-16 px-4" />`).length === 0,
+  );
+
+  check(
+    'max-sm:mt-16 is accepted — register clears with margin, its container sits below the tab row',
+    auditOverlayClearance(`${OVERLAY}<div className="flex justify-center max-sm:mt-16 mt-6"><button>Register</button></div>`).length === 0,
+  );
+
+  check(
+    'clearance declared only BEFORE the overlay does not count',
+    auditOverlayClearance(`<div className="pt-16" />\n${OVERLAY}<div className="min-h-screen p-6"><h2>Products</h2></div>`).length === 1,
+    'a pt-16 on something rendered above the overlay clears nothing — the discriminating case',
+  );
+
+  check(
+    'a page that renders no Home/Back overlay is not checked',
+    auditOverlayClearance('<div className="min-h-screen p-6"><h2>Scan</h2></div>').length === 0,
+  );
+
+  check(
+    'Home/Back in NORMAL FLOW needs no clearance',
+    auditOverlayClearance('<div className="flex gap-2"><HomeButton /><BackButton /></div>\n<div className="p-6"><h2>x</h2></div>').length === 0,
+    'the defect is the fixed positioning, not the buttons',
+  );
+
+  check(
+    'the pair inside one fixed overlay is one site, not two',
+    overlaySites(OVERLAY).length === 1,
+  );
+
+  check(
+    'a nearly-right clearance (pt-14) is NOT accepted — 56px is the overlay bottom, not clearance',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 max-sm:pt-14"><h2>x</h2></div>`).length === 1,
+  );
+
+  check(
+    'the overlay is found even when Back is written before Home (waitlist/index.js)',
+    overlaySites('<div className="fixed top-4 left-6 z-50 flex gap-2">\n<BackButton />\n<HomeButton />\n</div>').length === 1,
+  );
+}
+
+console.log('\nevery page that pins the Home/Back overlay clears it:');
+{
+  const files = pageFiles(PAGES_DIR);
+  const overlayPages = files.filter((f) => overlaySites(readFileSync(f, 'utf8')).length > 0);
+  check(
+    `found the pages that pin the overlay (${overlayPages.length})`,
+    overlayPages.length >= 13,
+    'fewer overlay pages than the 13 measured at 375px — did the detector break?',
+  );
+
+  const offenders = [];
+  for (const file of overlayPages) {
+    for (const v of auditOverlayClearance(readFileSync(file, 'utf8'))) {
+      offenders.push(`${relative(ROOT, file).replace(/\\/g, '/')}:${v.line} — ${v.reason}`);
+    }
+  }
+  check('no page draws its content under the fixed Home/Back overlay', offenders.length === 0, `\n    ${offenders.join('\n    ')}`);
 }
 
 console.log(`\n✅ responsive smoke: ${passed} checks passed`);

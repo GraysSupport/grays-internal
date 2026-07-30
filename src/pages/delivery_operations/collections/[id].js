@@ -290,7 +290,8 @@ export default function CollectionDetailPage() {
         />
       </div>
 
-      <div className="min-h-screen bg-gray-100 flex justify-center items-start p-6">
+      {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
+      <div className="min-h-screen bg-gray-100 flex justify-center items-start p-6 max-sm:pt-16">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl space-y-6">
           <h2 className="text-xl font-bold text-center">Collection #{collection.id}</h2>
 

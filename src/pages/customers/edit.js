@@ -69,7 +69,10 @@ export default function EditCustomerPage() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg mx-auto">
+      {/* max-sm:mt-16 clears the fixed Home/Back overlay above. This page renders the overlay
+          INSIDE the grey page container, so the clearance sits on the card — the element that
+          actually has to move — rather than on that container (F19 incr 2d). */}
+      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg mx-auto max-sm:mt-16">
         <h2 className="text-xl font-bold mb-4 text-center">Edit Customer</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           {['name', 'email', 'phone', 'address', 'notes'].map((field) => (
