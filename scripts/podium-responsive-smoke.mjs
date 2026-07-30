@@ -168,14 +168,47 @@ export function auditSource(src) {
 // reported here and should move the class rather than loosen this.
 //
 // WHAT THIS DOES NOT CLAIM:
-//   - It proves a clearance class is DECLARED in the subtree after the overlay. It cannot prove
-//     the class sits on the element that actually encloses the heading — jsdom has no layout
-//     engine, so nothing offline can. `src/pages/__tests__/overlayClearance.test.js` proves the
-//     parentage in the rendered DOM for four representative pages, and the PR carries the
+//   - It proves a clearance class is DECLARED on some element in the subtree after the overlay.
+//     It cannot prove the class sits on the element that actually encloses the heading — jsdom
+//     has no layout engine, so nothing offline can. `src/pages/__tests__/overlayClearance.test.js`
+//     proves the parentage in the rendered DOM for six of the ten pages, and the PR carries the
 //     375px browser measurement (28 routes, before/after) for the geometry itself.
 //   - It only looks at pages that pin the overlay with `fixed`. A page that renders Home/Back
 //     in normal flow needs no clearance and is not checked.
-const CLEARANCE = /\b(max-sm:)?(pt|py|mt)-16\b/;
+//
+// The clearance must be inside a `className`, and comments are stripped before the scan.
+// CODE REVIEW CAUGHT THE VACUOUS VERSION OF THIS: the first cut matched the raw source, and every
+// page's explanatory comment quotes the class it is explaining ("max-sm:pt-16 clears the fixed
+// Home/Back overlay above") — so the class could be deleted from all ten `className`s and the
+// scan stayed green, which made the guard structurally incapable of failing on the very files it
+// was written to protect. The comment even keeps Tailwind's JIT emitting the utility, so the CSS
+// size would not move either.
+//
+// The token boundaries are exact for the same reason: `\b` after a `:` or a `-` accepted
+// `sm:pt-16` (which does nothing below 640px — the precise inverse of the intent) and `-mt-16`
+// (a NEGATIVE margin, which pulls the content further under the overlay).
+const CLEARANCE = /(?:^|[\s"'`{])(?:max-sm:)?(?:pt|py|mt)-16(?![\w-])/;
+
+// Comments never render, so they cannot clear anything. Stripped from the slice AFTER the
+// overlay's offset is taken, so no line number is computed from the stripped text (the 30 Jul
+// lesson: a strip pattern that leads with `\s*` eats the newlines before each comment and every
+// line number the guard reports afterwards is wrong).
+export function stripComments(text) {
+  return text
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, ' ') // {/* JSX comment */}
+    .replace(/\/\*[\s\S]*?\*\//g, ' ') //           /* block comment */
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1'); //       // line comment (but not the // in a URL)
+}
+
+// Only the value of a className counts — a clearance written anywhere else on the page (a prop
+// name, a string constant, a comment that survived the strip) does not put padding on anything.
+export function classNameValues(text) {
+  const out = [];
+  const re = /className\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}|\{`([^`]*)`\})/g;
+  let m;
+  while ((m = re.exec(text)) !== null) out.push(m[1] ?? m[2] ?? m[3] ?? m[4] ?? '');
+  return out;
+}
 
 // Every place a page pins the Home/Back pair to the viewport, found from the buttons outward
 // rather than by matching the exact class string — the class order differs between files and
@@ -198,11 +231,11 @@ export function auditOverlayClearance(src) {
   const sites = overlaySites(src);
   if (!sites.length) return [];
   const first = sites[0];
-  const after = src.slice(first.at);
-  if (CLEARANCE.test(after)) return [];
+  const after = classNameValues(stripComments(src.slice(first.at)));
+  if (after.some((value) => CLEARANCE.test(value))) return [];
   return [{
     line: first.line,
-    reason: 'pins Home/Back over the page but declares no top clearance (pt-16 / py-16 / max-sm:pt-16) after it',
+    reason: 'pins Home/Back over the page but no className after it declares top clearance (max-sm:pt-16 / pt-16 / py-16)',
   }];
 }
 
@@ -216,7 +249,7 @@ function pageFiles(dir) {
   return out;
 }
 
-console.log('F19 incr 2b responsive smoke — pure, no DOM, no network\n');
+console.log('F19 incr 2b + 2d responsive smoke — pure, no DOM, no network\n');
 
 // ---------------------------------------------------------------------------
 // 1. The analyser's own fixtures. If these ever pass vacuously the repo scan below
@@ -415,6 +448,51 @@ console.log('\nthe overlay analyser reports the shapes it must report:');
   );
 
   check(
+    'a comment that QUOTES the class does not clear anything',
+    auditOverlayClearance(`${OVERLAY}{/* max-sm:pt-16 clears the fixed Home/Back overlay above. */}\n<div className="min-h-screen bg-gray-100 p-6"><h2>Products</h2></div>`).length === 1,
+    'code review found the vacuous version: every page comments the class it applies, so a raw-source ' +
+      'match passed on all ten files with the class deleted from every className',
+  );
+
+  check(
+    'a // line comment quoting the class does not clear anything either',
+    auditOverlayClearance(`${OVERLAY}// max-sm:pt-16 clears the overlay\n<div className="min-h-screen p-6"><h2>x</h2></div>`).length === 1,
+  );
+
+  check(
+    'the class inside a className still counts once the comments are gone',
+    auditOverlayClearance(`${OVERLAY}{/* max-sm:pt-16 clears the overlay */}\n<div className="min-h-screen p-6 max-sm:pt-16"><h2>x</h2></div>`).length === 0,
+  );
+
+  check(
+    'the class named ANYWHERE BUT a className is not clearance either',
+    auditOverlayClearance(`${OVERLAY}<div title="max-sm:pt-16" className="min-h-screen p-6"><h2>x</h2></div>`).length === 1,
+    'mutation testing found this one: with comments stripped, dropping the className restriction ' +
+      'left every other fixture green, because no fixture named the class outside one',
+  );
+
+  check(
+    'sm:pt-16 is NOT clearance — it applies from 640px UP, the exact inverse of the intent',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 sm:pt-16"><h2>x</h2></div>`).length === 1,
+    'the most plausible edit-mistake on this change, and `\\b` after a colon accepted it',
+  );
+
+  check(
+    'a NEGATIVE margin is not clearance — it pulls the content further under the overlay',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 max-sm:-mt-16"><h2>x</h2></div>`).length === 1,
+  );
+
+  check(
+    'md:/lg:/hover: variants are not clearance either',
+    auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 lg:pt-16 hover:mt-16"><h2>x</h2></div>`).length === 1,
+  );
+
+  check(
+    'a clearance in a template-literal className is accepted (conditional class strings)',
+    auditOverlayClearance(`${OVERLAY}<div className={\`min-h-screen p-6 max-sm:pt-16 \${wide ? 'w-full' : ''}\`}><h2>x</h2></div>`).length === 0,
+  );
+
+  check(
     'a stray "16" in an unrelated utility is not clearance',
     auditOverlayClearance(`${OVERLAY}<div className="min-h-screen p-6 gap-16 max-w-[1600px]"><h2>x</h2></div>`).length === 1,
     'mutation testing found this one: loosening the pattern to a bare /16/ kept every fixture ' +
@@ -433,8 +511,10 @@ console.log('\nevery page that pins the Home/Back overlay clears it:');
   const overlayPages = files.filter((f) => overlaySites(readFileSync(f, 'utf8')).length > 0);
   check(
     `found the pages that pin the overlay (${overlayPages.length})`,
-    overlayPages.length >= 13,
-    'fewer overlay pages than the 13 measured at 375px — did the detector break?',
+    overlayPages.length === 13,
+    'the count is PINNED, not a floor: a floor hides over-detection by a parser that re-reads every ' +
+      'preceding tag, and 13 is the set measured at 375px. Adding a 14th overlay page is fine — bump ' +
+      'this number in the same commit, having confirmed the new page clears the overlay.',
   );
 
   const offenders = [];

@@ -24,6 +24,8 @@ import ProductsPage from '../products/index';
 import WaitlistPage from '../waitlist/index';
 import EditCustomerPage from '../customers/edit';
 import RegisterPage from '../register';
+import CreateWorkorderPage from '../create_workorder';
+import EditProductPage from '../products/edit';
 
 jest.mock('react-hot-toast', () => ({
   __esModule: true,
@@ -32,7 +34,13 @@ jest.mock('react-hot-toast', () => ({
 
 // Below `sm` (639px and down) the content must clear the overlay. `pt-16`/`py-16` are the
 // unconditional form the three already-clear pages (inbox, leads, settings) use.
-const CLEARANCE = /\b(max-sm:)?(pt|py|mt)-16\b/;
+//
+// The boundaries are exact rather than `\b`: after a colon or a hyphen, `\b` also accepted
+// `sm:pt-16` — which applies from 640px UP and does nothing at 375px, the precise inverse of
+// what this test is asserting — and `-mt-16`, a negative margin that pulls the content further
+// under the overlay. Code review found both; the same pattern is pinned by fixtures in
+// scripts/podium-responsive-smoke.mjs.
+const CLEARANCE = /(?:^|\s)(?:max-sm:)?(?:pt|py|mt)-16(?!\S)/;
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const TOKEN = `${b64({ alg: 'none' })}.${b64({ id: 'GS', access: 'superadmin', roles: ['superadmin'] })}.sig`;
@@ -87,32 +95,42 @@ function clearanceAncestor(el) {
 
 const renderPage = (ui) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
+/**
+ * The whole assertion, in one place: the page really does pin the overlay, the element the
+ * overlay would cover really is inside something that clears it, and that something is on the
+ * CONTENT side — padding the overlay itself moves the buttons, not the heading they cover.
+ *
+ * The overlay-presence assertion is not ceremony: `Node.contains(undefined)` is `false`, so if
+ * `overlayIn` ever stopped matching (a page renaming `top-4`), the last expectation would pass
+ * while asserting nothing. Code review found that hole in three of these tests.
+ */
+function expectClears(container, covered) {
+  const overlay = overlayIn(container);
+  expect(overlay).toBeTruthy();
+  const clearance = clearanceAncestor(covered);
+  expect(clearance).not.toBeNull();
+  expect(clearance).not.toBe(overlay);
+  expect(clearance.contains(covered)).toBe(true);
+  expect(clearance.contains(overlay)).toBe(false);
+}
+
 describe('F19 incr 2d — content clears the fixed Home/Back overlay on a phone', () => {
   test('products: the heading sits inside an element that clears the overlay', async () => {
     const { container } = renderPage(<ProductsPage />);
     await waitFor(() => expect(container.querySelector('tbody tr')).toBeTruthy());
 
-    expect(overlayIn(container)).toBeTruthy();
-    const clearance = clearanceAncestor(screen.getByRole('heading', { name: 'Products' }));
-    expect(clearance).not.toBeNull();
-    // The clearance must be on the CONTENT side, not on the overlay itself — padding the
-    // overlay moves the buttons, not the heading they cover.
-    expect(clearance.contains(overlayIn(container))).toBe(false);
+    expectClears(container, screen.getByRole('heading', { name: 'Products' }));
   });
 
-  test('waitlist: same shape, and the clearance element is not the overlay', async () => {
+  test('waitlist: same shape', async () => {
     const { container } = renderPage(<WaitlistPage />);
-    const heading = await screen.findByRole('heading', { name: 'Waitlist' });
-
-    const clearance = clearanceAncestor(heading);
-    expect(clearance).not.toBeNull();
-    expect(clearance).not.toBe(overlayIn(container));
-    expect(clearance.contains(heading)).toBe(true);
+    expectClears(container, await screen.findByRole('heading', { name: 'Waitlist' }));
   });
 
   test('customers/edit: the clearance is on the card, the one page that renders the overlay INSIDE its container', async () => {
-    // This page's grey page container wraps the overlay, so clearance there would read as
-    // "handled" while the card it is meant to move stays put in the DOM the test can see.
+    // Clearance on that grey container would also work — a fixed child ignores its parent's
+    // padding, so the card would still move. It sits on the card because that is the element
+    // that has to move, and because the smoke's ordering rule reads unambiguously that way.
     const { container } = render(
       <MemoryRouter initialEntries={['/customers/26/edit']}>
         <Routes>
@@ -120,25 +138,34 @@ describe('F19 incr 2d — content clears the fixed Home/Back overlay on a phone'
         </Routes>
       </MemoryRouter>,
     );
-    const heading = await screen.findByRole('heading', { name: 'Edit Customer' });
-
-    const clearance = clearanceAncestor(heading);
-    expect(clearance).not.toBeNull();
-    expect(clearance.contains(overlayIn(container))).toBe(false);
+    expectClears(container, await screen.findByRole('heading', { name: 'Edit Customer' }));
   });
 
   test('register: the tab BUTTON the overlay covered is inside the cleared element', async () => {
-    // The sharpest of the four: on the other pages the overlay covered a heading (unreadable);
-    // here it covered a control (untappable — the tap opened Home instead of the tab).
+    // The sharpest of the set: elsewhere the overlay covered a heading (unreadable); here it
+    // covered a control (untappable — the tap opened Home instead of switching tab).
     const { container } = renderPage(<RegisterPage />);
     // Two controls are named "Register": the tab (first in DOM) and the form's submit button
     // at the bottom of the card. The overlay covered the TAB.
     const tabs = await screen.findAllByRole('button', { name: 'Register' });
-    const tab = tabs[0];
 
-    const clearance = clearanceAncestor(tab);
-    expect(clearance).not.toBeNull();
-    expect(clearance.contains(overlayIn(container))).toBe(false);
+    expectClears(container, tabs[0]);
+  });
+
+  test('create_workorder: the heading clears it despite the vertically-centred flex container', async () => {
+    const { container } = renderPage(<CreateWorkorderPage />);
+    expectClears(container, await screen.findByRole('heading', { name: 'New Workorder' }));
+  });
+
+  test('products/edit: the centred card clears it too', async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/products/LIF-95T/edit']}>
+        <Routes>
+          <Route path="/products/:sku/edit" element={<EditProductPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expectClears(container, await screen.findByRole('heading', { name: /Edit Product/ }));
   });
 
   test('the pages still render their content — the clearance did not break them', async () => {

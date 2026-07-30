@@ -295,8 +295,10 @@ export default function CreateWorkorderPage() {
         />
       )}
 
-      {/* max-sm:pt-16 clears the fixed Home/Back overlay above — at 375px the centred
-          "New Workorder" heading lands underneath it (F19 incr 2d). */}
+      {/* Clears the fixed Home/Back overlay above — at 375px the centred "New Workorder"
+          heading lands underneath it. This container centres vertically, so a SHORT card only
+          shifts by half the padding; the colliding case is a card taller than the viewport,
+          which pins to padding-top and gets the full 64px (F19 incr 2d). */}
       <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6 max-sm:pt-16">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-6xl">
           <div className="flex items-center justify-between mb-2">
