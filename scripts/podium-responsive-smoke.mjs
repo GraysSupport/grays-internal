@@ -293,6 +293,21 @@ console.log('the analyser reports the shapes it must report:');
   );
 
   check(
+    'a fragment is never itself reported as the table\'s parent',
+    auditSource('<div className="overflow-x-auto">\n<>\n<table className="w-full" />\n</>\n</div>').length === 0,
+    'MUTATION FOUND THIS GAP: marking fragments as ordinary tags keeps the depth walk balanced ' +
+      '(`<>` opens, `</>` closes), so every other fixture still passed — but the walk then RETURNS ' +
+      '`<>` as the enclosing tag, which is not a scroller, and a correctly wrapped table is reported',
+  );
+
+  check(
+    'a brace inside a string in a prop is not a real brace',
+    auditSource('<div title={"}"} className="overflow-x-auto">\n<table className="w-full" />\n</div>').length === 0,
+    'MUTATION FOUND THIS GAP TOO: without skipping strings inside a prop expression the braces ' +
+      'close on the one in the string and the tag ends early, losing the className that wraps this table',
+  );
+
+  check(
     'a `>` inside a prop expression does not truncate the tag',
     auditSource('<div className={`p-2 ${n > 3 ? "a" : "b"}`}>\n<table className="w-full" />\n</div>').length === 1,
     'the tag used to end inside the comparison, so the parent read as a truncated string with no ' +
@@ -391,6 +406,10 @@ console.log('\nevery table in src/pages is inside a horizontal-scroll container:
     }
     return worst;
   }, { len: 0, file: '', head: '' });
+  // Known-unkillable by mutation, and recorded rather than left silently uncovered: raising this
+  // threshold cannot fail while no file in the repo smears. It is a backstop for a future
+  // mis-parse (a regex literal in a prop is the shape still out of reach), not a property of
+  // today's tree. The fixtures above are what prove the scanner reads the two known shapes.
   check(
     `no tag smears across the file (longest is ${longest.len} chars)`,
     longest.len < 2500,
