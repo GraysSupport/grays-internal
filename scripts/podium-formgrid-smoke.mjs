@@ -116,13 +116,19 @@ export function tagsIn(text) {
         if (braces > 0 && c === '/' && (text[j + 1] === '/' || text[j + 1] === '*')) {
           comment = text[j + 1] === '/' ? 'line' : 'block';
           j += 1;
-        } else if (braces > 0 && (c === '"' || c === "'" || c === '`')) quote = c;
+          // Quotes are tracked at ANY depth, not only inside a prop expression: `<div title="a { b">`
+          // otherwise counts the brace in the attribute VALUE, the tag never ends, and it swallows
+          // the elements after it — grids included. (Found by the F40 review of the sibling guard,
+          // which shares this scanner's lineage.) Inside a tag there is no bare text, so this is safe.
+        } else if (c === '"' || c === "'" || c === '`') quote = c;
         else if (c === '{') braces += 1;
         else if (c === '}') braces -= 1;
         else if (c === '>' && braces === 0) break;
       }
       const raw = text.slice(i, j + 1);
-      const fragment = raw === '<>' || raw === '</>';
+      // The NAMED forms are fragments too: `<Fragment key={…}>` is the only way to key one, and
+      // schedule.js:694 uses exactly that. A fragment is not a grid item — its children are.
+      const fragment = /^<\/?(React\.)?Fragment(\s[^>]*)?\s*\/?>$/.test(raw) || raw === '<>' || raw === '</>';
       out.push({
         raw,
         start: i,
@@ -456,6 +462,21 @@ console.log('the analyser reports the shapes it must report:');
     'measured on this repo: with comment-blind brace tracking that apostrophe opened a phantom ' +
       'string, the braces never rebalanced, and workorder/[id].js:918 became a single 9,405-character ' +
       '"tag" swallowing everything after it — any grid inside is invisible to the scan',
+  );
+
+  check(
+    'a brace inside an ATTRIBUTE string does not smear the tag',
+    auditFormGrids('<div title="a { b" className="grid grid-cols-5">\n<input placeholder="Qty" />\n</div>').length === 1
+      && auditFormGrids("<div title='a } b' className=\"grid grid-cols-5\">\n<input placeholder=\"Qty\" />\n</div>").length === 1,
+    'the F40 review found this as a REGRESSION in the same scanner: quotes tracked only inside a ' +
+      'prop expression let a brace in an attribute VALUE run the tag on, swallowing the grid',
+  );
+
+  check(
+    'a named fragment is transparent like the shorthand',
+    auditFormGrids('<div className="grid grid-cols-5 gap-2">\n<Fragment key={i}>\n<input />\n</Fragment>\n</div>').length === 1,
+    '`<Fragment key={…}>` is the only way to key a fragment (schedule.js:694 uses it); its children ' +
+      'are the grid items, so the input inside is the one being crushed',
   );
 
   check(
