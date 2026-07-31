@@ -301,10 +301,13 @@ console.log('the analyser reports the shapes it must report:');
   );
 
   check(
-    'a brace inside a string in a prop is not a real brace',
-    auditSource('<div title={"}"} className="overflow-x-auto">\n<table className="w-full" />\n</div>').length === 0,
-    'MUTATION FOUND THIS GAP TOO: without skipping strings inside a prop expression the braces ' +
-      'close on the one in the string and the tag ends early, losing the className that wraps this table',
+    'a brace inside a string in a prop does not let a SIBLING\'s scroller cover the table',
+    auditSource('<div className="p-2" title={"}"}>\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1,
+    'MUTATION FOUND THIS GAP TOO, and the first fixture written for it did not kill the mutant: ' +
+      'an unskipped brace inside a string unbalances the count, the tag never ends, and the ' +
+      '"parent" swallows the whole subtree after it — including a CLOSED sibling\'s overflow-x-auto, ' +
+      'which then reads as the table\'s wrapper. That is the false-negative direction: a ' +
+      'body-scrolling page passing',
   );
 
   check(
