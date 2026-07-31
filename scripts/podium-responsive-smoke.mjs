@@ -489,10 +489,13 @@ console.log('\nevery table in src/pages is inside a horizontal-scroll container:
     smears.length === 0,
     `\n    ${smears.join('\n    ')}`,
   );
-  // Recorded rather than left silently uncovered: raising this threshold cannot fail while
-  // nothing in the tree smears, so mutation cannot kill it. It is a signal for a future
-  // mis-parse — a regex literal in a prop is the shape still out of reach — not a property of
-  // today's tree. The fixtures above are what prove the scanner reads the known shapes.
+  // BOTH backstops are unkillable by mutation, and that is recorded rather than left silently
+  // uncovered: blinding either one (or raising this threshold) cannot fail while nothing in the
+  // tree smears. They are signals for a FUTURE mis-parse — a regex literal in a prop is the
+  // shape still out of reach — not properties of today's tree. Eight other mutants do die: the
+  // fragment flag, named fragments, enclosingTag skipping them, quote tracking at any depth,
+  // comments in props, the brace-aware tag end, escape handling, and line-comment termination.
+  // The fixtures above are what prove the scanner reads the known shapes.
   check(
     `no tag is absurdly long (longest is ${longest.len} chars)`,
     longest.len < 5000,
