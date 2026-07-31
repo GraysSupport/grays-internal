@@ -174,6 +174,22 @@ describe('F19 incr 2e — no form control is crushed into a sliver of a row on a
     expect(productCell.classList.contains('md:col-span-2')).toBe(true);
   });
 
+  test('stacked items stay visually separable on a phone', async () => {
+    // Stacking creates this problem: `gap-2` between the four controls of one item and `mb-2`
+    // between items is the same 8px, so two items read as eight anonymous fields. Measured at
+    // 375px with two items: 8px within an item, 16px plus a 1px divider between them. Pinned
+    // because mutation testing found deleting the whole `max-md:` group left every other test
+    // green — the separation was in the diff and in nothing that could fail.
+    renderPage();
+    const row = (await screen.findByPlaceholderText('Qty')).parentElement;
+
+    expect(row.classList.contains('max-md:border-b')).toBe(true);
+    expect(row.classList.contains('max-md:mb-4')).toBe(true);
+    // …and it is a phone-only rule: the desktop row keeps its 8px margin and no divider.
+    expect(row.classList.contains('border-b')).toBe(false);
+    expect(row.classList.contains('mb-2')).toBe(true);
+  });
+
   test('the row still renders every control it had', async () => {
     renderPage();
 
