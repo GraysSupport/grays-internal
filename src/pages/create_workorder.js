@@ -513,9 +513,15 @@ export default function CreateWorkorderPage() {
                   : (item.product_id ? String(item.product_id) : '');
 
                 return (
-                  <div key={index} className="grid grid-cols-5 gap-2 mb-2">
+                  // One control per row on a phone; the five-column row returns at `md`.
+                  // Measured in Chrome: at 375px the unconditional five columns left this row
+                  // 279px wide with tracks 107/49/49/49 — the Condition select's own label
+                  // ("Select Condition") is 116px, so it rendered about two characters. `md`
+                  // rather than `sm` because 640px was measured with the select still clipped
+                  // (100px box, 128px of content); at 768px it fits.
+                  <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-2">
                     {/* Product */}
-                    <div className="relative col-span-2">
+                    <div className="relative md:col-span-2">
                       {!item.is_custom ? (
                         <>
                           <input
