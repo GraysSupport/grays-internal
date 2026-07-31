@@ -65,7 +65,14 @@ function check(name, cond, detail) {
 //      increments the skip counter with nothing to match it, so the walk skips a genuine parent —
 //      wrongly reporting a wrapped table (false positive) or, worse, skipping a non-scrolling
 //      parent and landing on a scroller above it, which passes a page that really does scroll its
-//      body. There are 28 fragments across 16 pages in `src/pages`.
+//      body. There are 29 fragments across 16 pages in `src/pages`, plus the named
+//      `<Fragment key={…}>` in schedule.js, which is equally transparent and was equally mis-read.
+//
+//      Making `<>` visible to the tokeniser is NOT what fixes this, and mutation says so: revert
+//      the character class alone and every check stays green, because `</>` still matches on its
+//      `/`, is still flagged a fragment, and is still skipped. The load-bearing parts are the
+//      fragment flag and `enclosingTag` skipping it; the character class only keeps the tag
+//      stream honest for the smear check below.
 //
 //   2. THE END OF A TAG. "The first `>` not preceded by `=`" ends the tag inside
 //      `className={`p-2 ${n > 3 ? 'a' : 'b'}`}`, leaving a truncated tag with no readable
@@ -76,8 +83,15 @@ function check(name, cond, detail) {
 //      delivery_operations/workorder/[id].js.
 //
 // NEITHER CHANGES A SINGLE VERDICT IN THIS REPO TODAY: all 23 tables resolve to the same parent
-// before and after (measured). This is latent-defect hardening, and the fixtures below are the
-// whole visible effect.
+// before and after (measured, both directions). This is latent-defect hardening, and the fixtures
+// below are the whole visible effect.
+//
+// "No page was affected" would nonetheless be the wrong lesson. The intermediate, comment-blind
+// version of this fix DID move a parent: the table at workorder/[id].js:970 resolved to a
+// 2,593-character smeared `<button onClick=…` blob rather than its real `overflow-x-auto` div,
+// and the suite stayed green only because that blob happened to contain the substring
+// `overflow-x-auto`. A smear can pass by luck, which is why the repo section below checks for
+// one directly.
 //
 // Still not understood, and out of reach of a scanner this size: a regex literal in a prop
 // (`onChange={e => /['"{]/.test(e)}`) can carry unbalanced quotes or braces. None exists in the
@@ -105,15 +119,26 @@ function tagsIn(text) {
         if (braces > 0 && c === '/' && (text[j + 1] === '/' || text[j + 1] === '*')) {
           comment = text[j + 1] === '/' ? 'line' : 'block';
           j += 1;
-        } else if (braces > 0 && (c === '"' || c === "'" || c === '`')) quote = c;
+          // Quotes are tracked at ANY depth, not just inside a prop expression. Code review
+          // caught the gated version as a REGRESSION against the rule it replaced: in
+          // `<div title="a { b">` the quote was invisible, the brace in the attribute VALUE
+          // incremented the count, and the tag never ended — so a closed sibling's
+          // `overflow-x-auto` was swallowed and read as the table's wrapper (a body-scrolling
+          // page passing). Inside a tag there is no bare text, so tracking quotes throughout is
+          // safe; `class="row-block${impClass}"` shapes already appear 5× in this repo's
+          // print-document strings and pass today only because `${…}` happens to balance.
+        } else if (c === '"' || c === "'" || c === '`') quote = c;
         else if (c === '{') braces += 1;
         else if (c === '}') braces -= 1;
         else if (c === '>' && braces === 0) break;
       }
       const raw = text.slice(i, j + 1);
       // A fragment is transparent to layout and to this walk: it is neither a parent nor a
-      // closing tag, so it must not move the depth counter in either direction.
-      const fragment = raw === '<>' || raw === '</>';
+      // closing tag, so it must not move the depth counter in either direction. The NAMED forms
+      // count too (code review): `<Fragment key={…}>` is the only way to key a fragment, and
+      // schedule.js:694 uses exactly that — reported as a table's parent it would be a false
+      // violation, since a fragment renders no element and can never carry `overflow-x-auto`.
+      const fragment = /^<\/?(React\.)?Fragment(\s[^>]*)?\s*\/?>$/.test(raw) || raw === '<>' || raw === '</>';
       out.push({ raw, fragment, closing: !fragment && raw[1] === '/', selfClosing: !fragment && /\/>$/.test(raw) });
       i = j;
     }
@@ -311,6 +336,44 @@ console.log('the analyser reports the shapes it must report:');
   );
 
   check(
+    'a brace inside an ATTRIBUTE string does not smear the tag',
+    auditSource('<div className="p-2" title="a { b">\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1
+      && auditSource('<div className="p-2" title="a } b">\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1
+      && auditSource("<div className=\"p-2\" title='a { b'>\n<div className=\"overflow-x-auto\"><Toolbar /></div>\n<table className=\"w-full\" />\n</div>").length === 1,
+    'CODE REVIEW CAUGHT THIS AS A REGRESSION in the first cut of the brace tracking: quotes were ' +
+      'only tracked INSIDE a prop expression, so a brace in an attribute VALUE was counted, the tag ' +
+      'never ended, and a closed sibling\'s overflow-x-auto was swallowed and read as this table\'s ' +
+      'wrapper. The rule it replaced handled both shapes correctly',
+  );
+
+  check(
+    'a named fragment is transparent too',
+    auditSource('<div className="overflow-x-auto">\n<Fragment key={i}>\n<table className="w-full" />\n</Fragment>\n</div>').length === 0
+      && auditSource('<div className="overflow-x-auto">\n<React.Fragment>\n<table className="w-full" />\n</React.Fragment>\n</div>').length === 0,
+    'schedule.js:694 uses `<Fragment key={row.delivery_id}>` — the keyed form is the ONLY way to ' +
+      'key a fragment, so it cannot be written as `<>`, and a fragment renders no element to scroll',
+  );
+
+  check(
+    'a single-quoted or backticked string in a prop is skipped like a double-quoted one',
+    auditSource('<div className="p-2" title={\'}\'}>\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1
+      && auditSource('<div className="p-2" title={`}`}>\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1,
+    'the first string fixture used only double quotes, and this repo\'s props are full of ' +
+      "single-quoted JS (`toast.loading('Syncing lots…')`)",
+  );
+
+  check(
+    'a BLOCK comment inside a prop ends where it should',
+    auditSource('<div className="p-2" onClick={() => { /* close } here */ go(); }}>\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1,
+    'the block-comment branch had no fixture at all — it is dead code in this tree today',
+  );
+
+  check(
+    'an escaped quote inside a prop string does not end it early',
+    auditSource('<div className="p-2" title={"a\\"}"}>\n<div className="overflow-x-auto"><Toolbar /></div>\n<table className="w-full" />\n</div>').length === 1,
+  );
+
+  check(
     'a `>` inside a prop expression does not truncate the tag',
     auditSource('<div className={`p-2 ${n > 3 ? "a" : "b"}`}>\n<table className="w-full" />\n</div>').length === 1,
     'the tag used to end inside the comparison, so the parent read as a truncated string with no ' +
@@ -398,26 +461,43 @@ console.log('\nevery table in src/pages is inside a horizontal-scroll container:
   const withTables = files.filter((f) => /<table\b/.test(readFileSync(f, 'utf8')));
   check(`found the table pages (${withTables.length})`, withTables.length >= 15, 'suspiciously few tables found');
 
-  // The backstop for the failure mode F40 fixed, and for the regex-literal case it did not: when
-  // the scanner loses track of where a tag ends, one "tag" swallows the rest of the file and every
-  // table inside it silently leaves the scan. Nothing else in this suite can see that — the
-  // comment-blind version produced a 9,405-character tag in workorder/[id].js and stayed green.
-  // The longest genuine tag in the tree is 1,472 characters (collections/[id].js).
-  const longest = files.reduce((worst, file) => {
+  // THE BACKSTOP, aimed at the harm rather than at a length. When the scanner loses the end of a
+  // tag, that "tag" swallows the markup after it — and a swallowed table is exactly when a smear
+  // changes an answer. The comment-blind version of this scanner did that to workorder/[id].js
+  // and STAYED GREEN: the table at :970 resolved to a 2,593-character smeared `<button onClick=…`
+  // blob instead of its real `overflow-x-auto` parent, and passed only because that blob happened
+  // to contain the substring `overflow-x-auto` somewhere inside it. An accidental pass, not an
+  // unaffected file — which is the whole argument for checking this at all.
+  //
+  // A pure length cap was the first version and code review showed it is both too tight and too
+  // loose: the longest genuine tag here is 1,472 characters (an inline handler in
+  // collections/[id].js) and the smear that actually flipped a parent was 2,593 — 4% above the
+  // line a 2,500 cap would have drawn. The `<table` test is sharp regardless of how long handlers
+  // grow; the length cap is kept far above today's tags purely as a second signal.
+  const smears = [];
+  let longest = { len: 0, file: '', head: '' };
+  for (const file of files) {
     for (const tag of tagsIn(readFileSync(file, 'utf8'))) {
-      if (tag.raw.length > worst.len) worst = { len: tag.raw.length, file: relative(ROOT, file), head: tag.raw.slice(0, 60) };
+      // `.slice(1)`: a table's OWN tag naturally starts with `<table`. What is being looked for is
+      // a `<table` INSIDE some other tag's text — the signature of a tag that never ended.
+      if (/<table\b/.test(tag.raw.slice(1))) smears.push(`${relative(ROOT, file).replace(/\\/g, '/')} — a single "tag" of ${tag.raw.length} chars swallows a <table>: ${JSON.stringify(tag.raw.slice(0, 60))}`);
+      if (tag.raw.length > longest.len) longest = { len: tag.raw.length, file: relative(ROOT, file), head: tag.raw.slice(0, 60) };
     }
-    return worst;
-  }, { len: 0, file: '', head: '' });
-  // Known-unkillable by mutation, and recorded rather than left silently uncovered: raising this
-  // threshold cannot fail while no file in the repo smears. It is a backstop for a future
-  // mis-parse (a regex literal in a prop is the shape still out of reach), not a property of
-  // today's tree. The fixtures above are what prove the scanner reads the two known shapes.
+  }
   check(
-    `no tag smears across the file (longest is ${longest.len} chars)`,
-    longest.len < 2500,
+    'no tag swallows a <table> (the scanner still knows where tags end)',
+    smears.length === 0,
+    `\n    ${smears.join('\n    ')}`,
+  );
+  // Recorded rather than left silently uncovered: raising this threshold cannot fail while
+  // nothing in the tree smears, so mutation cannot kill it. It is a signal for a future
+  // mis-parse — a regex literal in a prop is the shape still out of reach — not a property of
+  // today's tree. The fixtures above are what prove the scanner reads the known shapes.
+  check(
+    `no tag is absurdly long (longest is ${longest.len} chars)`,
+    longest.len < 5000,
     `${longest.file} has a ${longest.len}-character "tag" starting ${JSON.stringify(longest.head)} — the scanner has ` +
-      'lost the end of a tag, and every table inside it is invisible to the scan below',
+      'probably lost the end of a tag, and everything inside it is invisible to the scan below',
   );
 
   const offenders = [];
