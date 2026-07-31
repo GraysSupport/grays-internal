@@ -100,14 +100,23 @@ export function tagsIn(text) {
       let j = i + 1;
       let braces = 0;
       let quote = null; // the delimiter of the string/template literal currently open, if any
+      let comment = null; // 'line' | 'block' — inside a prop expression only
       for (; j < text.length; j += 1) {
         const c = text[j];
+        if (comment) {
+          if (comment === 'line' && c === '\n') comment = null;
+          else if (comment === 'block' && c === '*' && text[j + 1] === '/') { comment = null; j += 1; }
+          continue;
+        }
         if (quote) {
           if (c === '\\') j += 1;
           else if (c === quote) quote = null;
           continue;
         }
-        if (braces > 0 && (c === '"' || c === "'" || c === '`')) quote = c;
+        if (braces > 0 && c === '/' && (text[j + 1] === '/' || text[j + 1] === '*')) {
+          comment = text[j + 1] === '/' ? 'line' : 'block';
+          j += 1;
+        } else if (braces > 0 && (c === '"' || c === "'" || c === '`')) quote = c;
         else if (c === '{') braces += 1;
         else if (c === '}') braces -= 1;
         else if (c === '>' && braces === 0) break;
@@ -439,6 +448,27 @@ console.log('the analyser reports the shapes it must report:');
   );
 
   check(
+    'an apostrophe inside a // comment inside a prop does not swallow the rest of the file',
+    auditFormGrids(
+      '<button onClick={() => {\n// Turning it ON — start clean so the first char is seen and stale values don\'t leak.\ngo();\n}}>x</button>\n' +
+        '<div className="grid grid-cols-5 gap-2">\n<input placeholder="Qty" />\n</div>',
+    ).length === 1,
+    'measured on this repo: with comment-blind brace tracking that apostrophe opened a phantom ' +
+      'string, the braces never rebalanced, and workorder/[id].js:918 became a single 9,405-character ' +
+      '"tag" swallowing everything after it — any grid inside is invisible to the scan',
+  );
+
+  check(
+    'a block comment inside a prop is skipped too',
+    auditFormGrids('<div onClick={() => { /* it\'s fine */ go(); }} className="grid grid-cols-5">\n<input />\n</div>').length === 1,
+  );
+
+  check(
+    'a brace inside a STRING in a prop is still not a real brace',
+    auditFormGrids('<div title={"}"} className="grid grid-cols-5">\n<input />\n</div>').length === 1,
+  );
+
+  check(
     'an arbitrary column value is reported, not skipped',
     auditFormGrids('<div className="grid grid-cols-[repeat(5,minmax(0,1fr))] gap-2">\n<input />\n</div>').length === 1,
     'it is the same five crushed columns, written in a form the scanner cannot read',
@@ -505,6 +535,24 @@ console.log('\nno form control in src/pages or src/components sits in a crushed 
     `found the files with a base multi-column grid (${gridPages.length})`,
     gridPages.length === 13,
     `expected 13, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
+  );
+
+  // A smeared tag is how this scan goes quietly blind: one mis-parsed prop expression and a
+  // single "tag" swallows the rest of the file, taking every grid inside it out of the scan. The
+  // comment-blind version of the brace tracking did exactly that to workorder/[id].js — a
+  // 9,405-character tag — and the suite stayed green because nothing inside it was a base grid.
+  // The longest genuine tag in the tree is 1,472 characters (collections/[id].js).
+  const longest = files.reduce((worst, file) => {
+    for (const tag of tagsIn(readFileSync(file, 'utf8'))) {
+      if (tag.raw.length > worst.len) worst = { len: tag.raw.length, file: relative(ROOT, file), line: tag.raw.slice(0, 60) };
+    }
+    return worst;
+  }, { len: 0, file: '', line: '' });
+  check(
+    `no tag smears across the file (longest is ${longest.len} chars)`,
+    longest.len < 2500,
+    `${longest.file} has a ${longest.len}-character "tag" starting ${JSON.stringify(longest.line)} — the scanner ` +
+      'has lost track of where a tag ends, and every grid inside it is invisible to the scan below',
   );
 
   const offenders = [];
