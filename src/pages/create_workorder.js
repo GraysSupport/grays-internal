@@ -519,7 +519,16 @@ export default function CreateWorkorderPage() {
                   // ("Select Condition") is 116px, so it rendered about two characters. `md`
                   // rather than `sm` because 640px was measured with the select still clipped
                   // (100px box, 128px of content); at 768px it fits.
-                  <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-2">
+                  //
+                  // The `max-md:` rule is the cost of stacking: once four controls sit one above
+                  // the other with `gap-2`, an 8px `mb-2` between items is the same 8px as
+                  // between the controls WITHIN an item, so two items read as eight anonymous
+                  // fields. The divider and wider margin below `md` mark where one item ends;
+                  // above `md` nothing changes (measured identical at 1280px).
+                  <div
+                    key={index}
+                    className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-2 max-md:mb-4 max-md:border-b max-md:border-gray-200 max-md:pb-4"
+                  >
                     {/* Product */}
                     <div className="relative md:col-span-2">
                       {!item.is_custom ? (

@@ -7,11 +7,15 @@
 // 31px of text area at a 16px font. The Condition select's own label ("Select Condition") needs
 // 116px: its scrollWidth was 128px inside a 47px box.
 //
-// WHY THIS TEST EXISTS ALONGSIDE scripts/podium-formgrid-smoke.mjs: the smoke is a source scan
-// over `src/pages/**`. This runs the same rule over the RENDERED DOM, after JSX nesting,
-// fragments and conditional branches have been resolved — the layer where the source scan is
-// guessing. A rewrite that moved the controls into a nested wrapper would satisfy the scan's
-// text and still crush them here.
+// WHY THIS TEST EXISTS ALONGSIDE scripts/podium-formgrid-smoke.mjs: the smoke is a source scan,
+// so its idea of which element holds which control is inferred from JSX nesting. This asserts the
+// same rule against the DOM React actually produced — the element that really is the Qty input's
+// parent, with the branch that really rendered and the classes it really carries.
+//
+// It is NOT a superset of the scan. Code review checked the shape this comment used to claim:
+// moving the three controls into a nested `<div className="flex gap-2">` inside a base-one-column
+// grid is invisible to BOTH layers (neither sees a crushed column, because there is no column).
+// What catches that rewrite here is the `qty.parentElement` assertion, not the rule.
 //
 // What it CANNOT prove: that anything was actually too narrow. jsdom has no layout engine, so
 // every width in it is zero. The pixel numbers above come from a real browser and are reported
@@ -71,7 +75,9 @@ const baseColSpan = (el, cols) => {
   return Number.isInteger(n) ? n : 1;
 };
 
-const CONTROLS = 'input, select, textarea';
+// Checkboxes and radios render a fixed ~16px box, so a narrow track does not shrink them —
+// excluded here for the same reason the source scan excludes them.
+const CONTROLS = 'input:not([type="checkbox"]):not([type="radio"]), select, textarea';
 
 /** Every form control the rendered page puts in less than a third of a base-tier grid row. */
 function crushedControls(container) {
@@ -92,6 +98,54 @@ function crushedControls(container) {
 }
 
 const renderPage = () => render(<MemoryRouter><CreateWorkorderPage /></MemoryRouter>);
+
+describe('the rule itself reports what it must', () => {
+  // Without these, `crushedControls` is decorative: after the fix the create-workorder page
+  // renders NO base multi-column grid, so the assertion below loops over zero grids and would
+  // stay green with the whole rule gutted. Code review found exactly that. These fixtures make
+  // the rule's own behaviour the thing under test.
+  test('a five-column row of controls is reported', () => {
+    const { container } = render(
+      <div className="grid grid-cols-5 gap-2">
+        <div className="col-span-2"><input placeholder="Search product..." /></div>
+        <input placeholder="Qty" />
+        <select><option>Reco</option></select>
+      </div>,
+    );
+
+    expect(crushedControls(container)).toEqual(['input[Qty] in 1/5', 'select[] in 1/5']);
+  });
+
+  test('a child that spans the whole row is not reported', () => {
+    const { container } = render(
+      <div className="grid grid-cols-12 gap-6">
+        <main className="col-span-12"><input placeholder="Search" /></main>
+      </div>,
+    );
+
+    expect(crushedControls(container)).toEqual([]);
+  });
+
+  test('a breakpoint-prefixed column count is not a base column count', () => {
+    const { container } = render(
+      <div className="grid md:grid-cols-5 gap-2">
+        <input placeholder="Qty" />
+      </div>,
+    );
+
+    expect(crushedControls(container)).toEqual([]);
+  });
+
+  test('a checkbox in a narrow track is not reported', () => {
+    const { container } = render(
+      <div className="grid grid-cols-5 gap-2">
+        <input type="checkbox" />
+      </div>,
+    );
+
+    expect(crushedControls(container)).toEqual([]);
+  });
+});
 
 describe('F19 incr 2e — no form control is crushed into a sliver of a row on a phone', () => {
   test('the create-workorder item row stacks at the base tier', async () => {

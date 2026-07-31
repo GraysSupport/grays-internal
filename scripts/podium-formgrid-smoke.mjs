@@ -20,24 +20,33 @@
 // that audit looked for. A page can be entirely unusable without moving that metric one pixel.
 //
 // WHY A THIRD, AND WHY ONLY THE BASE BREAKPOINT: the threshold is calibrated against the one
-// viewport F19's acceptance line names (~375px) and the widest form row this repo puts there
-// (279px). A third of that is 93px; the defect's tracks are 49px. Above the base breakpoint the
-// same ratio means something different — at 640px a quarter-row track is 146px, which is not a
-// defect — so this checks the base tier only and claims nothing about `sm:`/`md:`. The fix for
-// this defect deliberately restores its five columns at `md` and not at `sm`, because 640px was
-// ALSO measured as too narrow for the Condition select (100px box vs 128px of content) even
-// though the relative rule would call it fine.
+// viewport F19's acceptance line names (~375px) and the row the measured defect lives in (279px
+// — this page's form card; the widest form row in the repo at that viewport is the 343px
+// twelve-column page shell). A third of 279px is 93px; the defect's tracks are 49px. Above the
+// base tier the same ratio means something else — at 640px this row is 544px, so a quarter of it
+// is 128px, not a defect — so this checks the base tier only and claims nothing about `sm:`/`md:`.
+// The fix for this defect deliberately restores its five columns at `md` and not at `sm`, because
+// 640px was ALSO measured as too narrow for the Condition select (100px box vs 128px of content)
+// even though the relative rule would call it fine.
 //
 // WHAT THIS DOES NOT CLAIM — read before treating a green run as "the forms are fine on a phone":
-//   - It is a source scan of `src/pages/**/*.js`. jsdom has no layout engine, so nothing offline
-//     can measure that a control was too narrow to use; the numbers above come from a real
-//     browser and the paired RTL test (src/pages/__tests__/formGridStacking.test.js) proves the
-//     stacking in the RENDERED DOM, where JSX nesting and conditionals have been resolved.
+//   - It is a source scan of `src/pages/**` and `src/components/**`. jsdom has no layout engine,
+//     so nothing offline can measure that a control was too narrow to use; the numbers above come
+//     from a real browser and the paired RTL test (src/pages/__tests__/formGridStacking.test.js)
+//     proves the stacking in the RENDERED DOM, where JSX nesting and conditionals are resolved.
+//   - A THIRD IS NOT A GUARANTEE OF USABILITY. A base `grid-cols-3` of controls passes and gives
+//     93px tracks at 375px — still narrower than the 128px the Condition select's own label needs.
+//     The rule catches the crushed case; it does not certify the ones it lets through.
 //   - It sees `<input>`, `<select>` and `<textarea>` written as JSX. A control rendered by a
-//     COMPONENT (`<CustomerPicker />`) is invisible to it. Buttons are deliberately out of scope:
-//     an icon-only button is legitimately narrow.
+//     COMPONENT (`<CustomerPicker />`) is invisible to it. Buttons, checkboxes and radios are
+//     deliberately out of scope: their boxes do not shrink with the track.
 //   - A className computed at runtime (`className={`grid grid-cols-${n}`}`) carries no literal
 //     column count and is skipped — pinned as a fixture below so the blind spot is explicit.
+//   - It only understands COLUMNS. A row built with `flex` + `w-1/5`, or with an inline
+//     `style={{ gridTemplateColumns: … }}`, can crush controls exactly the same way and is
+//     invisible here (code review checked all three shapes). The two Tailwind grid forms whose
+//     column count it cannot read — `grid-cols-[…]` and `grid-flow-col` — are REPORTED rather
+//     than skipped, so they cannot become a silent hiding place.
 //   - It reasons about COLUMN SHARE, not pixels: it cannot know how wide the container is. A
 //     two-column row of controls inside a 200px sidebar would pass and still be unusable.
 //
@@ -48,7 +57,9 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const PAGES_DIR = join(ROOT, 'src', 'pages');
+// Components are scanned too: a modal component with a crushed row would otherwise escape both
+// this guard and the page-level RTL test (CollectionModal.js already renders a grid).
+const SCAN_DIRS = [join(ROOT, 'src', 'pages'), join(ROOT, 'src', 'components')];
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -61,8 +72,16 @@ function check(name, cond, detail) {
 // The analyser (pure — the fixtures below are its own tests)
 // ---------------------------------------------------------------------------
 
-// Every JSX tag in `text`, in order, with its offsets. `text[j - 1] !== '='` keeps an arrow
-// function inside a prop (`onChange={(e) => …}`) from being mistaken for the end of the tag.
+// Every JSX tag in `text`, in order, with its offsets.
+//
+// THE TAG ENDS AT A `>` OUTSIDE ANY PROP EXPRESSION. Skipping brace-delimited props (and the
+// strings and template literals inside them) is what makes that true. Code review found the
+// cheaper rule — "the first `>` not preceded by `=`" — reads
+// `className={`grid grid-cols-5 ${n > 3 ? 'a' : 'b'}`}` as ending at the `>` in the COMPARISON,
+// which truncates the className mid-literal, leaves `classNameOf` with nothing to match, and
+// drops the element from the scan entirely. A five-column row of crushed inputs written that
+// way was invisible: 0 violations, suite green. `src/pages/integrations.js:76` shows the shape
+// is not hypothetical in this repo.
 //
 // FRAGMENTS ARE TAGGED, NOT IGNORED. The first cut matched `<` only when a letter or `/`
 // followed, which reads `</>` as an ordinary closing tag while its `<>` opener is invisible —
@@ -79,7 +98,20 @@ export function tagsIn(text) {
   for (let i = 0; i < text.length; i += 1) {
     if (text[i] === '<' && /[A-Za-z/>]/.test(text[i + 1] || '')) {
       let j = i + 1;
-      while (j < text.length && !(text[j] === '>' && text[j - 1] !== '=')) j += 1;
+      let braces = 0;
+      let quote = null; // the delimiter of the string/template literal currently open, if any
+      for (; j < text.length; j += 1) {
+        const c = text[j];
+        if (quote) {
+          if (c === '\\') j += 1;
+          else if (c === quote) quote = null;
+          continue;
+        }
+        if (braces > 0 && (c === '"' || c === "'" || c === '`')) quote = c;
+        else if (c === '{') braces += 1;
+        else if (c === '}') braces -= 1;
+        else if (c === '>' && braces === 0) break;
+      }
       const raw = text.slice(i, j + 1);
       const fragment = raw === '<>' || raw === '</>';
       out.push({
@@ -109,10 +141,24 @@ export function classNameOf(tag) {
 // 375px — is NOT read as the base column count.
 const unprefixed = (utility) => new RegExp(`(?:^|[\\s"'\`{])${utility}(?![\\w-])`);
 
+const isGrid = (className) => /(?:^|[\s"'`{])(inline-)?grid(?![\w-])/.test(className);
+
+// A base-tier grid whose column count this scanner cannot read: an arbitrary value
+// (`grid-cols-[repeat(5,minmax(0,1fr))]`) or implicit columns (`grid-flow-col`). Code review
+// found both pass silently, which is worse than a false positive — they are the two ways to
+// write the exact defect this file exists to catch and stay green. They are reported rather
+// than skipped; there are none in the repo today, so the cost of the strict reading is zero.
+export function unanalysableGrid(className) {
+  if (!isGrid(className)) return null;
+  if (/(?:^|[\s"'`{])grid-cols-\[/.test(className)) return 'grid-cols-[…] (arbitrary value)';
+  if (unprefixed('grid-flow-col').test(className)) return 'grid-flow-col (implicit columns)';
+  return null;
+}
+
 // The number of columns the grid has at the base tier, or null if it is not a base multi-column
 // grid. `grid-cols-*` without a `grid` display class styles nothing, so both are required.
 export function baseGridCols(className) {
-  if (!/(?:^|[\s"'`{])(inline-)?grid(?![\w-])/.test(className)) return null;
+  if (!isGrid(className)) return null;
   const m = className.match(/(?:^|[\s"'`{])grid-cols-(\d+)(?![\w-])/);
   if (!m) return null;
   const n = Number(m[1]);
@@ -120,11 +166,18 @@ export function baseGridCols(className) {
 }
 
 // How many columns a child occupies at the base tier. Unspanned children take one; `col-span-full`
-// takes the row. A `sm:col-span-2` is not a base span — at 375px that child still takes one.
+// takes the row; an explicit `col-start-A col-end-B` pair spans B − A (code review: without it a
+// full-width `col-start-1 col-end-7` child in a six-column grid was reported as a violation, and
+// false positives are what gets a guard deleted). A `sm:col-span-2` is not a base span — at 375px
+// that child still takes one.
 export function baseColSpan(className, cols) {
   if (unprefixed('col-span-full').test(className)) return cols;
-  const m = className.match(/(?:^|[\s"'`{])col-span-(\d+)(?![\w-])/);
-  return m ? Number(m[1]) : 1;
+  const span = className.match(/(?:^|[\s"'`{])col-span-(\d+)(?![\w-])/);
+  if (span) return Number(span[1]);
+  const start = className.match(/(?:^|[\s"'`{])col-start-(\d+)(?![\w-])/);
+  const end = className.match(/(?:^|[\s"'`{])col-end-(\d+)(?![\w-])/);
+  if (start && end) return Math.max(1, Number(end[1]) - Number(start[1]));
+  return 1;
 }
 
 // The direct children of the element whose opening tag is `tags[gridIdx]`, each with the source
@@ -149,8 +202,12 @@ export function directChildren(src, tags, gridIdx) {
   return kids.map((kid) => ({ ...kid, source: src.slice(kid.from, kid.to + 1) }));
 }
 
+// A checkbox and a radio are excluded for the same reason buttons are: their rendered box is a
+// fixed ~16px square, so a narrow track does not shrink anything. Flagging them would be a pure
+// false positive, and false positives are what gets a guard deleted.
 export function hasFormControl(source) {
-  return /<(input|select|textarea)\b/.test(source);
+  const tags = source.match(/<(input|select|textarea)\b[^>]*/g) || [];
+  return tags.some((t) => !/type\s*=\s*["']?(checkbox|radio)\b/.test(t));
 }
 
 // Every place a page puts a form control in a base-tier track narrower than a third of the row.
@@ -159,7 +216,23 @@ export function auditFormGrids(src) {
   const tags = tagsIn(src);
   tags.forEach((tag, i) => {
     if (tag.fragment || tag.closing || tag.selfClosing) return;
-    const cols = baseGridCols(classNameOf(tag.raw));
+    const className = classNameOf(tag.raw);
+    const line = () => src.slice(0, tag.start).split('\n').length;
+
+    const unreadable = unanalysableGrid(className);
+    if (unreadable) {
+      if (directChildren(src, tags, i).some((kid) => hasFormControl(kid.source))) {
+        violations.push({
+          line: line(),
+          reason:
+            `a grid holding form controls declares its columns as ${unreadable}, which this ` +
+            'scanner cannot read — so it could crush them at 375px unchecked. Use grid-cols-N.',
+        });
+      }
+      return;
+    }
+
+    const cols = baseGridCols(className);
     if (!cols) return;
     for (const kid of directChildren(src, tags, i)) {
       if (!hasFormControl(kid.source)) continue;
@@ -168,24 +241,25 @@ export function auditFormGrids(src) {
       violations.push({
         line: src.slice(0, kid.from).split('\n').length,
         reason:
-          `a form control sits in ${span} of ${cols} base columns — below a third of the row ` +
-          `(~${Math.round((279 * span) / cols)}px of a 279px row at 375px). Give the grid a ` +
-          'single-column base and restore the columns at a breakpoint.',
+          `a form control sits in ${span} of ${cols} base columns — below a third of the row. ` +
+          'Give the grid a single-column base and restore the columns at a breakpoint.',
       });
     }
   });
   return violations;
 }
 
-function pageFiles(dir) {
+function sourceFiles(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...pageFiles(full));
-    else if (entry.endsWith('.js') && !entry.endsWith('.test.js')) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
+    else if (/\.jsx?$/.test(entry) && !/\.test\.jsx?$/.test(entry)) out.push(full);
   }
   return out;
 }
+
+const scannedFiles = () => SCAN_DIRS.flatMap(sourceFiles);
 
 console.log('F19 incr 2e form-grid smoke — pure, no DOM, no network\n');
 
@@ -229,8 +303,8 @@ console.log('the analyser reports the shapes it must report:');
   check(
     'a twelve-column page shell whose single child spans all twelve passes',
     auditFormGrids('<div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">\n<main className="col-span-12">\n<input placeholder="Search" />\n</main>\n</div>').length === 0,
-    'seven delivery_operations/workshop pages use exactly this shell — the discriminating case ' +
-      'for reading col-span, without which the guard reports every one of them',
+    'eight files use exactly this shell (seven under delivery_operations/, plus workshop/index.js) ' +
+      '— the discriminating case for reading col-span, without which the guard reports every one',
   );
 
   check(
@@ -354,22 +428,81 @@ console.log('the analyser reports the shapes it must report:');
     'a page with no grid at all is clean',
     auditFormGrids('<div className="p-6"><input /></div>').length === 0,
   );
+
+  // --- the shapes code review proved could reinstate the defect silently ---
+
+  check(
+    'a `>` inside a prop expression does not truncate the tag',
+    auditFormGrids('<div className={`grid grid-cols-5 gap-2 ${n > 3 ? "a" : "b"}`}>\n<input placeholder="Qty" />\n</div>').length === 1,
+    'the cheaper "first > not preceded by =" rule ended the tag inside the comparison, so the ' +
+      'className was unreadable, the element was skipped, and this exact row scanned as 0 violations',
+  );
+
+  check(
+    'an arbitrary column value is reported, not skipped',
+    auditFormGrids('<div className="grid grid-cols-[repeat(5,minmax(0,1fr))] gap-2">\n<input />\n</div>').length === 1,
+    'it is the same five crushed columns, written in a form the scanner cannot read',
+  );
+
+  check(
+    'grid-flow-col is reported, not skipped',
+    auditFormGrids('<div className="grid grid-flow-col auto-cols-fr gap-2">\n<input />\n</div>').length === 1,
+  );
+
+  check(
+    'an unreadable grid with no form control in it is left alone',
+    auditFormGrids('<div className="grid grid-flow-col auto-cols-fr gap-2">\n<span>x</span>\n</div>').length === 0,
+    'the report is about controls being crushed, not about the syntax',
+  );
+
+  check(
+    'a full-width child written as col-start/col-end is not a violation',
+    auditFormGrids('<div className="grid grid-cols-6">\n<div className="col-start-1 col-end-7"><input /></div>\n</div>').length === 0,
+  );
+
+  check(
+    'a genuinely narrow col-start/col-end child still is',
+    auditFormGrids('<div className="grid grid-cols-6">\n<div className="col-start-1 col-end-2"><input /></div>\n</div>').length === 1,
+  );
+
+  check(
+    'a checkbox is not crushed by a narrow track and is not reported',
+    auditFormGrids('<div className="grid grid-cols-4">\n<input type="checkbox" />\n<input type="radio" />\n</div>').length === 0,
+    'their boxes are a fixed square; flagging them is a pure false positive',
+  );
+
+  check(
+    'a text input alongside a checkbox in the same cell is still reported',
+    auditFormGrids('<div className="grid grid-cols-4">\n<div><input type="checkbox" /><input type="text" /></div>\n</div>').length === 1,
+    'the exclusion is per control, not per cell',
+  );
 }
 
 // ---------------------------------------------------------------------------
 // 2. The repo-wide contract.
 // ---------------------------------------------------------------------------
-console.log('\nno form control in src/pages sits in a crushed grid track on a phone:');
+console.log('\nno form control in src/pages or src/components sits in a crushed grid track on a phone:');
 {
-  const files = pageFiles(PAGES_DIR);
-  check(`scanned the pages tree (${files.length} files)`, files.length >= 25, 'too few files — did the scan path break?');
+  const files = scannedFiles();
+  check(`scanned the pages and components trees (${files.length} files)`, files.length >= 35, 'too few files — did the scan path break?');
+
+  // The one file this increment exists to protect, named explicitly. The pinned count below
+  // cannot cover it: after the fix create_workorder.js has no base multi-column grid at all, so
+  // it is not one of the counted pages (code review's point — the count would not notice the
+  // scanner going blind on precisely this file).
+  const itemRow = readFileSync(join(ROOT, 'src', 'pages', 'create_workorder.js'), 'utf8');
+  check(
+    'create_workorder.js still stacks its item row at the base tier',
+    /className="grid grid-cols-1 md:grid-cols-5 gap-2/.test(itemRow) && /className="relative md:col-span-2"/.test(itemRow),
+    'the measured defect was `grid grid-cols-5` + `col-span-2`: 49px tracks at 375px',
+  );
 
   // PINNED, not a floor. A floor cannot fail when the scanner stops finding grids — which is the
   // one failure that would make the scan below silently vacuous. Adding a base multi-column grid
   // is fine: bump this number in the same commit, having checked the new grid against the rule.
   const gridPages = files.filter((f) => tagsIn(readFileSync(f, 'utf8')).some((t) => !t.closing && baseGridCols(classNameOf(t.raw))));
   check(
-    `found the pages with a base multi-column grid (${gridPages.length})`,
+    `found the files with a base multi-column grid (${gridPages.length})`,
     gridPages.length === 13,
     `expected 13, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
   );
