@@ -120,7 +120,7 @@ export default function PelotonPage() {
     <div className="flex flex-col h-screen bg-gray-100">
 
       {/* ── top bar ── */}
-      <header className="bg-white shadow-md px-4 py-3 flex items-center gap-3 flex-shrink-0">
+      <header className="bg-white shadow-md px-4 py-3 flex flex-wrap items-center gap-3 flex-shrink-0">
         <BackButton />
         <HomeButton />
 
