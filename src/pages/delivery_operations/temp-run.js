@@ -174,9 +174,9 @@ export default function TempDeliveryRunPage() {
 
   // Carriers a run can go with. Customer Collect is a pickup, never a run carrier.
   const carrierNames = useMemo(
-    () => candidates.removalists
+    () => [...new Set(candidates.removalists
       .map((r) => (r?.name || '').trim())
-      .filter((n) => n && n.toLowerCase() !== 'customer collect'),
+      .filter((n) => n && n.toLowerCase() !== 'customer collect'))],
     [candidates.removalists]
   );
 

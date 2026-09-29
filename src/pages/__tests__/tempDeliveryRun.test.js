@@ -5,7 +5,7 @@
 // call is a gated GET. The "zero write requests" test drives a whole planning session — load,
 // add, reorder, name the carrier, pick a day, print, export, clear — and then asserts every
 // request the page made was a GET to the read-only candidates endpoint. The server half (that
-// endpoint issues exactly two SELECTs) is pinned in scripts/ops-temp-run-smoke.mjs.
+// endpoint issues exactly three SELECTs) is pinned in scripts/ops-temp-run-smoke.mjs.
 
 import React from 'react';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
