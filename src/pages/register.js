@@ -186,7 +186,9 @@ export default function Register() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="flex justify-center mt-6">
+      {/* max-sm:mt-16 clears the fixed Home/Back overlay above: at 375px the overlay painted on
+          top of the "Register" tab button, so the tap opened Home instead (F19 incr 2d). */}
+      <div className="flex justify-center mt-6 max-sm:mt-16">
         <button
           onClick={() => setActiveTab('register')}
           className={`px-4 py-2 rounded-t ${activeTab === 'register' ? 'bg-gray-300 text-gray-700' : 'bg-white text-blue-500 font-bold'}`}

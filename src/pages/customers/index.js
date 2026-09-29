@@ -61,7 +61,8 @@ export default function CustomersPage() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="min-h-screen bg-gray-100 p-6">
+      {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
+      <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1 text-center">
             <h2 className="text-xl font-bold">Customers</h2>

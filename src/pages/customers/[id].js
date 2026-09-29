@@ -121,7 +121,8 @@ export default function CustomerDetailPage() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="min-h-screen bg-gray-100 p-6">
+      {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
+      <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
         <div className="max-w-3xl mx-auto">
           {/* Customer summary */}
           {loading && !customer ? (

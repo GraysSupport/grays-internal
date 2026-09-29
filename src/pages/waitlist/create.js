@@ -126,7 +126,8 @@ export default function CreateWaitlistPage() {
           }}
         />
       )}
-      <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6">
+      {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
+      <div className="min-h-screen bg-gray-100 flex justify-center items-center p-6 max-sm:pt-16">
         <div className="bg-white p-6 rounded shadow-md w-full max-w-lg">
           <h2 className="text-xl font-bold mb-4 text-center">Add to Waitlist</h2>
           <form onSubmit={handleSubmit} className="space-y-3 relative">

@@ -69,7 +69,11 @@ export default function EditCustomerPage() {
         <HomeButton />
         <BackButton />
       </div>
-      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg mx-auto">
+      {/* Clears the fixed Home/Back overlay above. This page is the one that renders the overlay
+          INSIDE the grey page container; padding that container would work too (a fixed child
+          ignores its parent's padding), but the class sits on the card because the card is what
+          has to move (F19 incr 2d). */}
+      <div className="bg-white p-6 rounded shadow-md w-full max-w-lg mx-auto max-sm:mt-16">
         <h2 className="text-xl font-bold mb-4 text-center">Edit Customer</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           {['name', 'email', 'phone', 'address', 'notes'].map((field) => (
