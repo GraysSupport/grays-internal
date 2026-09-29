@@ -29,6 +29,7 @@ import CompletedOperationsPage from './pages/delivery_operations/completed-opera
 
 import ToBeBookedDeliveriesPage from './pages/delivery_operations/to-be-booked';
 import DeliverySchedulePage from './pages/delivery_operations/schedule';
+import TempDeliveryRunPage from './pages/delivery_operations/temp-run';
 import CompletedDeliveriesPage from './pages/delivery_operations/completed-deliveries';
 
 import CurrentCollectionsPage from './pages/delivery_operations/current-collections';
@@ -133,6 +134,7 @@ function App() {
 
         <Route path="delivery_operations/to-be-booked" element={<ToBeBookedDeliveriesPage />} />
         <Route path="delivery_operations/schedule" element={<DeliverySchedulePage />} />
+        <Route path="delivery_operations/temp-run" element={<TempDeliveryRunPage />} />
         <Route path="delivery_operations/completed-deliveries" element={<CompletedDeliveriesPage />} />
 
         <Route path="delivery_operations/current-collections" element={<CurrentCollectionsPage />} />
