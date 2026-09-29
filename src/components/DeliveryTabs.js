@@ -1,7 +1,13 @@
 import { Link, useLocation } from 'react-router-dom';
+import { getRoles, hasAnyRole } from '../utils/auth';
+
+// G8: who may plan a temporary delivery run. Mirrors TEMP_RUN_ROLES on the page and the
+// logistics handler's gate — the server is the real authority; this only decides what to show.
+const TEMP_RUN_ROLES = ['logistics', 'superadmin'];
 
 export default function DeliveryTabs({ className = '' }) {
   const { pathname } = useLocation();
+  const canPlanRun = hasAnyRole(getRoles(), TEMP_RUN_ROLES);
 
   // Normalize trailing slash (so "/delivery_operations/" matches "/delivery_operations")
   const path = pathname.replace(/\/+$/, '') || '/';
@@ -10,6 +16,7 @@ export default function DeliveryTabs({ className = '' }) {
     current: path === '/delivery_operations',
     toBeBooked: path.startsWith('/delivery_operations/to-be-booked'),
     schedule: path.startsWith('/delivery_operations/schedule'),
+    tempRun: path.startsWith('/delivery_operations/temp-run'),
     currentCollections: path.startsWith('/delivery_operations/current-collections'),
 
     completedOps: path.startsWith('/delivery_operations/completed-operations'),
@@ -68,6 +75,18 @@ export default function DeliveryTabs({ className = '' }) {
           >
             Current Collections
           </Link>
+
+          {/* G8 — planning only; never books anything (logistics + superadmin) */}
+          {canPlanRun && (
+            <Link
+              to="/delivery_operations/temp-run"
+              className={`ml-1 px-3 py-2 text-sm rounded-xl font-medium text-white hover:opacity-90 ${isActive.tempRun ? 'ring-2 ring-offset-1 ring-gray-400' : ''}`}
+              style={{ backgroundColor: '#B50B1D' }}
+              aria-current={isActive.tempRun ? 'page' : undefined}
+            >
+              Create temporary delivery run
+            </Link>
+          )}
 
           {/* Divider */}
           <div className="mx-2 h-6 w-px bg-gray-200" />

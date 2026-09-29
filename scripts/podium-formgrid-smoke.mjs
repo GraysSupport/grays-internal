@@ -554,8 +554,8 @@ console.log('\nno form control in src/pages or src/components sits in a crushed 
   const gridPages = files.filter((f) => tagsIn(readFileSync(f, 'utf8')).some((t) => !t.closing && baseGridCols(classNameOf(t.raw))));
   check(
     `found the files with a base multi-column grid (${gridPages.length})`,
-    gridPages.length === 13,
-    `expected 13, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
+    gridPages.length === 14,
+    `expected 14, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
   );
 
   // A smeared tag is how this scan goes quietly blind: one mis-parsed prop expression and a
