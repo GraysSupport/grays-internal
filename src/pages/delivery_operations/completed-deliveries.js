@@ -341,7 +341,7 @@ export default function CompletedDeliveriesPage() {
           onBlur={() => saveDelivery(row.delivery_id, { notes: val || null })}
           disabled={savingIds.has(row.delivery_id)}
         />
-        {busy && <span className="text-xs text-gray-400">Saving…</span>}
+        {busy && <span className="text-xs text-gray-600">Saving…</span>}
       </div>
     );
   };
@@ -406,7 +406,7 @@ export default function CompletedDeliveriesPage() {
         </button>
         {nums.map((n, i) =>
           n === '…' ? (
-            <span key={`gap-${i}`} className="px-2 text-gray-400">…</span>
+            <span key={`gap-${i}`} className="px-2 text-gray-600">…</span>
           ) : (
             <button
               key={n}

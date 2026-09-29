@@ -150,7 +150,7 @@ export default function PelotonPage() {
 
         <div className="ml-auto flex items-center gap-3">
           {meta?.fetchedAt && (
-            <span className="text-xs text-gray-400 hidden sm:block">
+            <span className="text-xs text-gray-600 hidden sm:block">
               Last updated: {fmtTime(meta.fetchedAt)}
             </span>
           )}
@@ -204,7 +204,7 @@ export default function PelotonPage() {
           Include zero-stock items
         </label>
 
-        <span className="ml-auto text-xs text-gray-400">
+        <span className="ml-auto text-xs text-gray-600">
           {loading ? 'Fetching…' : `${rows.length} SKU${rows.length !== 1 ? 's' : ''}`}
         </span>
       </div>
@@ -247,7 +247,7 @@ export default function PelotonPage() {
 
         {/* Empty state */}
         {!loading && !error && rows.length === 0 && (
-          <div className="flex flex-col items-center justify-center gap-3 py-20 text-gray-400">
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-gray-600">
             <Wifi size={40} strokeWidth={1.5} />
             <p className="text-sm">
               {data.length === 0
@@ -270,7 +270,7 @@ export default function PelotonPage() {
                   <th className="px-4 py-3 font-semibold text-gray-700 text-right whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       Unrestricted
-                      <span className="text-[10px] font-normal text-gray-400">(avail)</span>
+                      <span className="text-[10px] font-normal text-gray-600">(avail)</span>
                     </span>
                   </th>
                   <th className="px-4 py-3 font-semibold text-gray-700 text-right whitespace-nowrap">In Transit</th>
@@ -312,21 +312,21 @@ export default function PelotonPage() {
 
                       {/* In transit (SO + STO combined) */}
                       <td className="px-4 py-3 text-right text-gray-600">
-                        {inTransit > 0 ? fmt(inTransit) : <span className="text-gray-300">—</span>}
+                        {inTransit > 0 ? fmt(inTransit) : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* Reserved for delivery */}
                       <td className="px-4 py-3 text-right text-gray-600">
                         {parseFloat(r.ReservedDelivery) > 0
                           ? fmt(r.ReservedDelivery)
-                          : <span className="text-gray-300">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* On purchase order (not in total) */}
                       <td className="px-4 py-3 text-right text-blue-600 font-medium">
                         {parseFloat(r.OnPurchaseOrder) > 0
                           ? fmt(r.OnPurchaseOrder)
-                          : <span className="text-gray-300">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
 
                       {/* Total stock */}
@@ -338,7 +338,7 @@ export default function PelotonPage() {
                       <td className="px-4 py-3 text-center text-gray-500">
                         {r.InstallLeadTime != null && r.InstallLeadTime !== ''
                           ? r.InstallLeadTime
-                          : <span className="text-gray-300">—</span>}
+                          : <span className="text-gray-500">—</span>}
                       </td>
                     </tr>
                   );
@@ -348,7 +348,7 @@ export default function PelotonPage() {
             </div>
 
             {/* Table footer */}
-            <div className="border-t px-4 py-2 bg-gray-50 flex items-center justify-between text-xs text-gray-400">
+            <div className="border-t px-4 py-2 bg-gray-50 flex items-center justify-between text-xs text-gray-600">
               <span>
                 {FACILITIES.find(f => f.code === facility)?.label} warehouse
                 {meta?.env ? ` · ${meta.env} environment` : ''}

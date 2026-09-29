@@ -545,7 +545,7 @@ export default function DeliverySchedulePage() {
           disabled={savingIds.has(row.delivery_id)}
           {...stopRowNav}
         />
-        {busy && <span className="text-xs text-gray-400">Saving…</span>}
+        {busy && <span className="text-xs text-gray-600">Saving…</span>}
       </div>
     );
   };
@@ -587,7 +587,7 @@ export default function DeliverySchedulePage() {
           disabled={busy}
         />
         {busy ? (
-          <span className="text-xs text-gray-400">Saving…</span>
+          <span className="text-xs text-gray-600">Saving…</span>
         ) : (
           <div className="w-full flex justify-center">{label}</div>
         )}

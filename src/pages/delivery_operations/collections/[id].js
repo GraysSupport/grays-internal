@@ -457,7 +457,7 @@ export default function CollectionDetailPage() {
 
               <div className="md:col-span-3">
                 <label className="block text-xs uppercase text-gray-600 mb-1">
-                  Purchase Price <span className="text-xs text-gray-400">(can be 0)</span>
+                  Purchase Price <span className="text-xs text-gray-500">(can be 0)</span>
                 </label>
                 <input
                   type="number"
@@ -629,7 +629,7 @@ export default function CollectionDetailPage() {
                           <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
                             l.status === 'Sold' ? 'bg-green-100 text-green-800'
                             : l.status === 'Assigned' ? 'bg-blue-100 text-blue-800'
-                            : l.status === 'Void' ? 'bg-gray-200 text-gray-500'
+                            : l.status === 'Void' ? 'bg-gray-200 text-gray-700'
                             : 'bg-amber-100 text-amber-800'}`}>
                             {l.status}
                           </span>
@@ -735,7 +735,7 @@ export default function CollectionDetailPage() {
                   toast.error(err.message, { id: toastId });
                 }
               }}
-              className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
+              className="bg-green-700 text-white px-6 py-2 rounded hover:bg-green-800"
             >
               Save Collection
             </button>

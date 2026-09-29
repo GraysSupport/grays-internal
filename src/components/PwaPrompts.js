@@ -157,7 +157,7 @@ export default function PwaPrompts() {
           type="button"
           onClick={handleDismiss}
           aria-label="Dismiss install prompt"
-          className="rounded px-2 py-2 text-sm text-gray-500 hover:bg-gray-100"
+          className="rounded px-2 py-2 text-sm text-gray-600 hover:bg-gray-100"
         >
           Not now
         </button>

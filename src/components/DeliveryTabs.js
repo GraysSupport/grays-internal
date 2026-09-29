@@ -105,7 +105,7 @@ export default function DeliveryTabs({ className = '' }) {
           <div className="mx-2 h-6 w-px bg-gray-200" />
           <Link
             to="/dashboard"
-            className="px-3 py-2 text-sm rounded-xl hover:bg-red-50 text-red-600 font-semibold"
+            className="px-3 py-2 text-sm rounded-xl hover:bg-red-50 text-red-700 font-semibold"
           >
             Exit
           </Link>
