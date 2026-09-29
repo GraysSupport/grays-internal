@@ -194,7 +194,7 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
       return `<tr>
         <td class="n">${si + 1}</td>
         <td><strong>${esc(s.customer_name)}</strong><br>${esc(s.phone) || '—'}</td>
-        <td><span class="lbl">Delivery suburb</span> ${esc(suburb) || '—'}<br><span class="lbl">Customer address</span> ${esc(s.address) || '—'}</td>
+        <td>${esc(suburb) || '—'}</td>
         <td>${s.delivery_type ? `<span class="type">${esc(s.delivery_type)}</span><br>` : ''}${esc(s.items_text)}</td>
         <td>${s.workorder_id != null ? `WO ${esc(s.workorder_id)}` : ''}${s.invoice_id ? `<br>Inv ${esc(s.invoice_id)}` : ''}</td>
         <td>${esc(s.notes)}</td>
@@ -204,7 +204,7 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
     return `<section class="run">
       <h2>${title}</h2>
       <table>
-        <thead><tr><th>#</th><th>Customer / phone</th><th>Where</th><th>Items</th><th>Ref</th><th>Notes</th></tr></thead>
+        <thead><tr><th>#</th><th>Customer / phone</th><th>Suburb</th><th>Items</th><th>Ref</th><th>Notes</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </section>`;
@@ -231,7 +231,6 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
   th, td { border: 1px solid #ccc; padding: 6px 8px; font-size: 12px; vertical-align: top; text-align: left; }
   th { background: #f3f4f6; }
   td.n { width: 24px; font-weight: 700; text-align: center; }
-  .lbl { color: #555; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
   .type { font-weight: 700; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   thead { display: table-header-group; }

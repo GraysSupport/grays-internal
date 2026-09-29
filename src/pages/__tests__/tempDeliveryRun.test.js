@@ -22,7 +22,16 @@ const CANDIDATES = {
     { workorder_id: 12, invoice_id: '20500', customer_name: 'Wes Workorder', customer_phone: '0411 111 111', customer_address: '2 Test Rd', delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack', notes: 'Owes $200 — chase' },
     { workorder_id: 13, invoice_id: '20501', customer_name: 'Ola Other', customer_phone: '0422 222 222', customer_address: '3 Test Ave', delivery_suburb: 'Werribee', delivery_state: 'VIC', items_text: '1.00 × Bench', notes: null },
   ],
+  removalists: [
+    { id: 1, name: 'Cobbs' },
+    { id: 2, name: 'Customer Collect' },
+    { id: 3, name: 'Nelson' },
+  ],
 };
+
+// The left panel shows ONE source at a time; these flip it (Nick's feedback, 29 Sep 2026).
+const showCurrentOps = () => fireEvent.click(screen.getByRole('button', { name: /^Current operations/ }));
+const showToBeBooked = () => fireEvent.click(screen.getByRole('button', { name: /^To be booked/ }));
 
 // base64url JWT payload so utils/auth.getRoles() reads the roles the way it does in the app.
 function tokenFor(roles) {
@@ -75,19 +84,68 @@ async function blobText(blob) {
   });
 }
 
-test('loads candidates from the gated read with the login token, both sources listed', async () => {
+test('loads candidates from the gated read with the login token', async () => {
   login(['logistics']);
   const fetchMock = installFetch();
   renderPage();
 
   expect(await screen.findByText('Dana Delivery')).toBeInTheDocument();
-  expect(screen.getByText('Wes Workorder')).toBeInTheDocument();
   expect(screen.getByText(/Temporary run — not booked/)).toBeInTheDocument();
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
   const [url, init] = fetchMock.mock.calls[0];
   expect(url).toBe('/api/logistics?resource=run-candidates');
   expect(init.headers.Authorization).toMatch(/^Bearer /);
+});
+
+test('the left panel toggles between To be booked and Current operations, one list at a time', async () => {
+  login(['logistics']);
+  installFetch();
+  renderPage();
+  await screen.findByText('Dana Delivery');
+
+  const tbb = screen.getByRole('button', { name: /^To be booked/ });
+  const ops = screen.getByRole('button', { name: /^Current operations/ });
+  expect(tbb).toHaveAttribute('aria-pressed', 'true');
+  expect(ops).toHaveAttribute('aria-pressed', 'false');
+  expect(tbb).toHaveTextContent('(1)');
+  expect(ops).toHaveTextContent('(2)');
+  expect(screen.queryByText('Wes Workorder')).toBeNull();
+
+  showCurrentOps();
+  expect(ops).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByText('Wes Workorder')).toBeInTheDocument();
+  expect(screen.getByText('Ola Other')).toBeInTheDocument();
+  expect(screen.queryByText('Dana Delivery')).toBeNull();
+
+  showToBeBooked();
+  expect(screen.getByText('Dana Delivery')).toBeInTheDocument();
+  expect(screen.queryByText('Wes Workorder')).toBeNull();
+});
+
+test('the carrier is picked from our carriers list (Customer Collect is not a run carrier)', async () => {
+  login(['logistics']);
+  installFetch();
+  renderPage();
+  await screen.findByText('Dana Delivery');
+
+  const select = screen.getByLabelText('Run 1 carrier');
+  expect(select.tagName).toBe('SELECT');
+  const options = [...select.options].map((o) => o.textContent);
+  expect(options).toEqual(['Select carrier…', 'Cobbs', 'Nelson']);
+  fireEvent.change(select, { target: { value: 'Nelson' } });
+  expect(select).toHaveValue('Nelson');
+});
+
+test('a carrier saved before the list existed is kept, not silently blanked', async () => {
+  login(['logistics']);
+  localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify({ runs: [{ id: 'run-x', carrier: 'Old Mate Transport', day: '', stops: [] }], stops: {} }));
+  installFetch();
+  renderPage();
+  await screen.findByText('Dana Delivery');
+  const select = screen.getByLabelText('Run 1 carrier');
+  expect(select).toHaveValue('Old Mate Transport');
+  expect([...select.options].map((o) => o.textContent)).toContain('Old Mate Transport (not in list)');
 });
 
 test('ZERO WRITE REQUESTS across a full planning session', async () => {
@@ -100,6 +158,7 @@ test('ZERO WRITE REQUESTS across a full planning session', async () => {
   await screen.findByText('Dana Delivery');
 
   fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
+  showCurrentOps();
   fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Move Wes Workorder up' }));
   fireEvent.change(screen.getByLabelText('Run 1 carrier'), { target: { value: 'Nelson' } });
@@ -132,6 +191,7 @@ test('stops are ordered, then printed and exported in that order', async () => {
   await screen.findByText('Dana Delivery');
 
   fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
+  showCurrentOps();
   fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Move Dana Delivery down' }));
   fireEvent.change(screen.getByLabelText('Run 1 carrier'), { target: { value: 'Nelson' } });
@@ -141,6 +201,7 @@ test('stops are ordered, then printed and exported in that order', async () => {
   expect(names).toEqual(['Wes Workorder', 'Dana Delivery']);
 
   // Added stops leave the "available" list — one customer can't go on two runs.
+  showToBeBooked();
   expect(screen.queryByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ })).toBeNull();
 
   fireEvent.click(screen.getByRole('button', { name: 'Print run sheet' }));
@@ -198,7 +259,8 @@ test('a planned workorder that has since become a To-Be-Booked delivery is not o
   login(['logistics']);
   installFetch();
   const first = renderPage();
-  await screen.findByText('Wes Workorder');
+  await screen.findByText('Dana Delivery');
+  showCurrentOps();
   fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   first.unmount();
 
@@ -210,16 +272,32 @@ test('a planned workorder that has since become a To-Be-Booked delivery is not o
   renderPage();
   const run = await screen.findByRole('list', { name: 'Run 1 stops' });
   await screen.findByText('Dana Delivery');
+  // Default tab is To be booked — exactly where the duplicate (delivery 200) would appear.
+  expect(screen.queryByRole('button', { name: /^Add Wes Workorder/ })).toBeNull();
+  showCurrentOps();
   expect(screen.queryByRole('button', { name: /^Add Wes Workorder/ })).toBeNull();
   expect(within(run).getByText(/now a to-be-booked delivery/i)).toBeInTheDocument();
   expect(within(run).queryByText(/no longer waiting/i)).toBeNull();
+});
+
+test('a stop on the run shows name + suburb/state, not the address (Nick, 29 Sep 2026)', async () => {
+  login(['logistics']);
+  installFetch();
+  renderPage();
+  await screen.findByText('Dana Delivery');
+  fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
+  const run = screen.getByRole('list', { name: 'Run 1 stops' });
+  expect(within(run).getByText('Altona North VIC')).toBeInTheDocument();
+  expect(within(run).queryByText(/1 Test St/)).toBeNull();
+  expect(within(run).queryByText(/address/i)).toBeNull();
 });
 
 test('workorder notes are shown on screen as internal and never printed', async () => {
   login(['logistics']);
   installFetch();
   renderPage();
-  await screen.findByText('Wes Workorder');
+  await screen.findByText('Dana Delivery');
+  showCurrentOps();
   fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   const run = screen.getByRole('list', { name: 'Run 1 stops' });
   expect(within(run).getByText(/Workorder notes \(internal — not printed\)/)).toBeInTheDocument();

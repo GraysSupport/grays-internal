@@ -196,12 +196,12 @@ describe('buildRunSheetHtml', () => {
     expect(buildCsv(plan)).not.toContain('owes $200');
   });
 
-  test('labels the customer-record address apart from the delivery suburb (they can differ)', () => {
+  test('prints suburb + state and leaves the customer address off the sheet (Nick, 29 Sep 2026)', () => {
     const { plan } = planWithTwoStops();
     const html = buildRunSheetHtml(plan);
-    expect(html).toContain('Customer address');
-    expect(html).toContain('Delivery suburb');
-    expect(html).not.toContain('1 Test St, Altona North VIC');
+    expect(html).toContain('Altona North VIC');
+    expect(html).not.toContain('1 Test St');
+    expect(html).not.toMatch(/Customer address/);
   });
 
   test('shows the delivery type on the sheet', () => {

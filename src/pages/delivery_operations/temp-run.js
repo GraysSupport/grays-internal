@@ -70,10 +70,7 @@ function RunStop({ stop: s, ready, live, nowDelivery }) {
         {s.workorder_id != null && <> · WO {s.workorder_id}</>}
         {s.delivery_type && <> · <span className="font-medium">{s.delivery_type}</span></>}
       </div>
-      <div className="text-sm text-gray-600">
-        Delivery suburb: {[s.suburb, s.state].filter(Boolean).join(' ') || '—'}
-        {' · '}Customer address: {s.address || '—'}
-      </div>
+      <div className="text-sm text-gray-600">{[s.suburb, s.state].filter(Boolean).join(' ') || 'No suburb'}</div>
       <div className="text-sm text-gray-700">{s.items_text}</div>
       {s.notes && <div className="text-sm italic text-gray-600">{s.notes}</div>}
       {s.internal_notes && (
@@ -102,7 +99,10 @@ export default function TempDeliveryRunPage() {
 
   const [plan, setPlan] = useState(loadPlan);
   const [targetRunId, setTargetRunId] = useState(null);
-  const [candidates, setCandidates] = useState({ deliveries: [], workorders: [] });
+  const [candidates, setCandidates] = useState({ deliveries: [], workorders: [], removalists: [] });
+  // Left panel shows one source at a time (Nick, 29 Sep 2026): 'tbb' = To be booked,
+  // 'ops' = Current operations (workorders still Work Ordered).
+  const [source, setSource] = useState('tbb');
   const [status, setStatus] = useState('loading'); // loading | ready | forbidden | error
   const [search, setSearch] = useState('');
 
@@ -124,6 +124,7 @@ export default function TempDeliveryRunPage() {
       setCandidates({
         deliveries: Array.isArray(data.deliveries) ? data.deliveries : [],
         workorders: Array.isArray(data.workorders) ? data.workorders : [],
+        removalists: Array.isArray(data.removalists) ? data.removalists : [],
       });
       setStatus('ready');
     } catch (e) {
@@ -169,6 +170,14 @@ export default function TempDeliveryRunPage() {
       s.customer_name, s.suburb, s.state, s.items_text, s.invoice_id, s.workorder_id, s.address,
     ].join(' ').toLowerCase().includes(q))),
     [planned, plannedWoIds, q]
+  );
+
+  // Carriers a run can go with. Customer Collect is a pickup, never a run carrier.
+  const carrierNames = useMemo(
+    () => candidates.removalists
+      .map((r) => (r?.name || '').trim())
+      .filter((n) => n && n.toLowerCase() !== 'customer collect'),
+    [candidates.removalists]
   );
 
   const activeRunId = plan.runs.some((r) => r.id === targetRunId) ? targetRunId : plan.runs[0].id;
@@ -316,19 +325,31 @@ export default function TempDeliveryRunPage() {
             )}
             {status === 'ready' && (
               <>
-                <h3 className="bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
-                  To be booked ({visible(deliveryStops).length})
-                </h3>
+                <div role="group" aria-label="Show stops from" className="flex gap-1 border-b bg-gray-50 p-2">
+                  {[
+                    { id: 'tbb', label: 'To be booked', list: deliveryStops },
+                    { id: 'ops', label: 'Current operations', list: workorderStops },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      aria-pressed={source === t.id}
+                      onClick={() => setSource(t.id)}
+                      className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
+                        source === t.id ? 'bg-white text-gray-900 shadow ring-1 ring-gray-300' : 'text-gray-700 hover:bg-white'
+                      }`}
+                    >
+                      {t.label} ({visible(t.list).length})
+                    </button>
+                  ))}
+                </div>
                 <ul className="divide-y">
-                  {visible(deliveryStops).map((s) => <CandidateRow key={s.key} stop={s} onAdd={onAdd} />)}
-                  {visible(deliveryStops).length === 0 && <li className="px-3 py-3 text-sm text-gray-600">Nothing to add.</li>}
-                </ul>
-                <h3 className="bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
-                  Current workorders ({visible(workorderStops).length})
-                </h3>
-                <ul className="divide-y">
-                  {visible(workorderStops).map((s) => <CandidateRow key={s.key} stop={s} onAdd={onAdd} />)}
-                  {visible(workorderStops).length === 0 && <li className="px-3 py-3 text-sm text-gray-600">Nothing to add.</li>}
+                  {visible(source === 'tbb' ? deliveryStops : workorderStops).map((s) => (
+                    <CandidateRow key={s.key} stop={s} onAdd={onAdd} />
+                  ))}
+                  {visible(source === 'tbb' ? deliveryStops : workorderStops).length === 0 && (
+                    <li className="px-3 py-3 text-sm text-gray-600">Nothing to add.</li>
+                  )}
                 </ul>
               </>
             )}
@@ -346,14 +367,19 @@ export default function TempDeliveryRunPage() {
                   <h2 className="mr-auto font-semibold">Run {n}</h2>
                   <label className="text-sm text-gray-700">
                     <span className="block">Carrier / driver</span>
-                    <input
-                      type="text"
+                    <select
                       aria-label={`Run ${n} carrier`}
                       value={run.carrier}
                       onChange={(e) => { const carrier = e.target.value; setPlan((p) => updateRun(p, run.id, { carrier })); }}
-                      placeholder="e.g. Nelson"
-                      className="mt-1 w-44 rounded border px-2 py-1"
-                    />
+                      className="mt-1 w-48 rounded border bg-white px-2 py-1"
+                    >
+                      <option value="">Select carrier…</option>
+                      {/* A carrier typed before the list existed stays selectable rather than vanishing. */}
+                      {run.carrier && !carrierNames.includes(run.carrier) && (
+                        <option value={run.carrier}>{`${run.carrier} (not in list)`}</option>
+                      )}
+                      {carrierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </select>
                   </label>
                   <label className="text-sm text-gray-700">
                     <span className="block">Planned day</span>

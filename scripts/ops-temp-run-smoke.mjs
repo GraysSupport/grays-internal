@@ -60,6 +60,7 @@ function makeRes() {
 
 const DELIV_RE = /FROM delivery d/i;
 const WO_RE = /FROM workorder wo/i;
+const REM_RE = /FROM removalist\s+ORDER BY/i;
 const deliveryRows = { rowCount: 1, rows: [
   { delivery_id: 101, workorder_id: 9, invoice_id: '20431', customer_name: 'Demo Customer', customer_phone: '0400 000 000', customer_address: '1 Test St', delivery_suburb: 'Altona North', delivery_state: 'VIC', items_text: '1 × Treadmill (Grade A)', notes: 'Rear access' },
 ] };
@@ -94,17 +95,21 @@ console.log('\nGET ?resource=run-candidates:');
   const client = makeClient([
     { match: WO_RE, result: woRows },
     { match: DELIV_RE, result: deliveryRows },
+    { match: REM_RE, result: { rowCount: 2, rows: [{ id: 1, name: 'Cobbs' }, { id: 3, name: 'Nelson' }] } },
   ]);
   const res = makeRes();
   await logisticsHandler(makeReq(), res, [], depsFor(client));
   check('200', res.statusCode === 200, `status ${res.statusCode}`);
-  check('body is { deliveries, workorders }', Array.isArray(res.body?.deliveries) && Array.isArray(res.body?.workorders));
+  check('body is { deliveries, workorders, removalists }', Array.isArray(res.body?.deliveries) && Array.isArray(res.body?.workorders) && Array.isArray(res.body?.removalists));
+  check('carriers list carried through (for the run carrier picker)', res.body.removalists.length === 2 && res.body.removalists[1].name === 'Nelson');
   check('deliveries carried through', res.body.deliveries.length === 1 && res.body.deliveries[0].delivery_id === 101);
   check('workorders carried through', res.body.workorders.length === 1 && res.body.workorders[0].workorder_id === 12);
   check('client released', client.released === true);
 
   // ⭐ the zero-write proof on the server side
-  check('EXACTLY two statements issued', client.calls.length === 2, `got ${client.calls.length}`);
+  check('EXACTLY three statements issued (deliveries, workorders, carriers)', client.calls.length === 3, `got ${client.calls.length}`);
+  const rq = client.calls.find((c) => REM_RE.test(c.sql));
+  check('carriers: id + name only (no carrier contact details)', !!rq && /SELECT id, name FROM removalist/i.test(rq.sql) && !/phone|email|contact_person/i.test(rq.sql));
   check('every statement is a read (starts with SELECT or WITH)',
     client.calls.every((c) => /^\s*(SELECT|WITH)\b/i.test(c.sql)));
   check('no write keyword anywhere (INSERT/UPDATE/DELETE/UPSERT/TRUNCATE/ALTER)',
