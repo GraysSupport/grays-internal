@@ -7,7 +7,7 @@ import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import { endExpiredSession } from '../../utils/session';
 import {
   emptyPlan, toStop, addRun, updateRun, removeRun, addStop, removeStop, moveStop,
-  plannedKeys, buildCsv, buildRunSheetHtml, loadPlan, savePlan, clearPlan,
+  plannedKeys, buildCsv, buildRunSheetHtml, loadPlan, savePlan, clearPlan, refreshStops,
 } from '../../utils/tempRun';
 
 // G8 (Nick, 28 Sep 2026) — "Create temporary delivery run".
@@ -29,6 +29,12 @@ function isPristine(plan) {
     && !plan.runs[0].carrier && !plan.runs[0].day;
 }
 
+// A distinct accessible name per row: two customers can share a name, and a row can lack one.
+function stopRef(stop) {
+  if (stop.workorder_id != null) return `WO ${stop.workorder_id}`;
+  return `delivery ${stop.delivery_id}`;
+}
+
 function CandidateRow({ stop, onAdd }) {
   return (
     <li className="flex items-start gap-3 px-3 py-2">
@@ -43,13 +49,50 @@ function CandidateRow({ stop, onAdd }) {
       </div>
       <button
         type="button"
-        aria-label={`Add ${stop.customer_name} to run`}
+        aria-label={`Add ${stop.customer_name || 'stop'} (${stopRef(stop)}) to run`}
         onClick={() => onAdd(stop)}
         className="shrink-0 rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-gray-50"
       >
         + Add
       </button>
     </li>
+  );
+}
+
+// One stop as it appears on a run. `live` = still in the candidates list; `nowDelivery` = a
+// planned workorder that has since completed and become a To-Be-Booked delivery.
+function RunStop({ stop: s, ready, live, nowDelivery }) {
+  return (
+    <div>
+      <div className="font-medium" data-testid="stop-name">{s.customer_name || '—'}</div>
+      <div className="text-sm text-gray-700">
+        {s.phone || 'No phone'}
+        {s.workorder_id != null && <> · WO {s.workorder_id}</>}
+        {s.delivery_type && <> · <span className="font-medium">{s.delivery_type}</span></>}
+      </div>
+      <div className="text-sm text-gray-600">
+        Delivery suburb: {[s.suburb, s.state].filter(Boolean).join(' ') || '—'}
+        {' · '}Customer address: {s.address || '—'}
+      </div>
+      <div className="text-sm text-gray-700">{s.items_text}</div>
+      {s.notes && <div className="text-sm italic text-gray-600">{s.notes}</div>}
+      {s.internal_notes && (
+        <div className="text-sm text-gray-600">
+          <span className="font-medium">Workorder notes (internal — not printed):</span> {s.internal_notes}
+        </div>
+      )}
+      {ready && !live && (
+        s.source === 'workorder' && nowDelivery ? (
+          <div className="mt-1 inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+            Workorder completed — now a To-Be-Booked delivery. The stop stays as planned.
+          </div>
+        ) : (
+          <div className="mt-1 inline-block rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-900">
+            No longer waiting to be booked — check before sending this sheet.
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
@@ -100,14 +143,32 @@ export default function TempDeliveryRunPage() {
     () => new Set([...deliveryStops, ...workorderStops].map((s) => s.key)),
     [deliveryStops, workorderStops]
   );
+  // Workorders that now have a To-Be-Booked delivery row (the workorder completed after it
+  // was planned). Same customer, same goods — not a new stop.
+  const deliveryWoIds = useMemo(
+    () => new Set(deliveryStops.map((s) => s.workorder_id).filter((id) => id != null)),
+    [deliveryStops]
+  );
+
+  // Pick up corrections (phone, address, items) for stops already on a run, keeping order.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    setPlan((p) => refreshStops(p, [...deliveryStops, ...workorderStops]));
+  }, [status, deliveryStops, workorderStops]);
 
   const planned = useMemo(() => plannedKeys(plan), [plan]);
+  const plannedWoIds = useMemo(
+    () => new Set([...planned].map((k) => plan.stops[k]?.workorder_id).filter((id) => id != null)),
+    [planned, plan.stops]
+  );
   const q = search.trim().toLowerCase();
   const visible = useCallback(
-    (list) => list.filter((s) => !planned.has(s.key) && (!q || [
+    (list) => list.filter((s) => !planned.has(s.key)
+      && !(s.workorder_id != null && plannedWoIds.has(s.workorder_id))
+      && (!q || [
       s.customer_name, s.suburb, s.state, s.items_text, s.invoice_id, s.workorder_id, s.address,
     ].join(' ').toLowerCase().includes(q))),
-    [planned, q]
+    [planned, plannedWoIds, q]
   );
 
   const activeRunId = plan.runs.some((r) => r.id === targetRunId) ? targetRunId : plan.runs[0].id;
@@ -307,6 +368,7 @@ export default function TempDeliveryRunPage() {
                   {plan.runs.length > 1 && (
                     <button
                       type="button"
+                      aria-label={`Remove run ${n}`}
                       onClick={() => setPlan((p) => removeRun(p, run.id))}
                       className="rounded border px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
                     >
@@ -324,19 +386,7 @@ export default function TempDeliveryRunPage() {
                     onRemove={(s) => setPlan((p) => removeStop(p, run.id, s.key))}
                     emptyText="No stops yet — add them from the list."
                     renderItem={(s) => (
-                      <div>
-                        <div className="font-medium" data-testid="stop-name">{s.customer_name || '—'}</div>
-                        <div className="text-sm text-gray-600">
-                          {s.phone || 'No phone'} · {[s.address, [s.suburb, s.state].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'No address'}
-                        </div>
-                        <div className="text-sm text-gray-700">{s.items_text}</div>
-                        {s.notes && <div className="text-sm italic text-gray-600">{s.notes}</div>}
-                        {status === 'ready' && !liveKeys.has(s.key) && (
-                          <div className="mt-1 inline-block rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-900">
-                            No longer waiting to be booked — check before sending this sheet.
-                          </div>
-                        )}
-                      </div>
+                      <RunStop stop={s} ready={status === 'ready'} live={liveKeys.has(s.key)} nowDelivery={deliveryWoIds.has(s.workorder_id)} />
                     )}
                   />
                 </div>

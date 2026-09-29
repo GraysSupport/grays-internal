@@ -115,6 +115,10 @@ console.log('\nGET ?resource=run-candidates:');
   check('deliveries: only To Be Booked', !!dq && /delivery_status\s*=\s*'To Be Booked'/i.test(dq.sql));
   check('deliveries: customer phone + address for the run sheet', !!dq && /c\.phone/i.test(dq.sql) && /c\.address/i.test(dq.sql));
   check('deliveries: cancelled items excluded from items_text', !!dq && /<>\s*'Canceled'/i.test(dq.sql));
+  // Review fix: a Customer Collect is a pickup, not a stop — it must never reach a driver's sheet.
+  check('deliveries: Customer Collect (by type) excluded', !!dq && /d\.delivery_type IS DISTINCT FROM 'Customer Collect'/i.test(dq.sql));
+  check('deliveries: Customer Collect (by carrier name) excluded', !!dq && /lower\(r\.name\)[^\n]*'customer collect'/i.test(dq.sql));
+  check('deliveries: delivery_type selected (installation must be visible)', !!dq && /d\.delivery_type/.test(dq.sql.split('FROM delivery d')[0]));
 
   const wq = client.calls.find((c) => WO_RE.test(c.sql));
   check('workorders: only current (Work Ordered)', !!wq && /wo\.status\s*=\s*'Work Ordered'/i.test(wq.sql));

@@ -42,9 +42,35 @@ export function toStop(row, source) {
     address: row.customer_address ?? '',
     suburb: row.delivery_suburb ?? '',
     state: row.delivery_state ?? '',
+    delivery_type: isDelivery ? (row.delivery_type ?? '') : '',
     items_text: tidyQuantities(row.items_text || '—'),
-    notes: row.notes ?? '',
+    // Only a DELIVERY's notes are delivery instructions. A workorder's notes field is the
+    // general internal notes box (balances, chasing, pricing) — shown on screen for context
+    // but never printed or exported to a driver, who may work for a third-party carrier.
+    notes: isDelivery ? (row.notes ?? '') : '',
+    internal_notes: isDelivery ? '' : (row.notes ?? ''),
   };
+}
+
+const SNAPSHOT_FIELDS = ['invoice_id', 'customer_name', 'phone', 'address', 'suburb', 'state', 'delivery_type', 'items_text', 'notes', 'internal_notes'];
+
+/**
+ * Refresh planned stops' snapshots from the latest live candidates (e.g. a corrected phone
+ * number), keeping every run's order. Stops that are no longer live keep their snapshot.
+ * Returns the SAME plan object when nothing changed, so React doesn't re-render or re-save.
+ */
+export function refreshStops(plan, liveStops) {
+  let changed = false;
+  const stops = { ...plan.stops };
+  for (const live of liveStops) {
+    const cur = stops[live.key];
+    if (!cur) continue;
+    if (SNAPSHOT_FIELDS.some((f) => (cur[f] ?? '') !== (live[f] ?? ''))) {
+      stops[live.key] = { ...cur, ...live };
+      changed = true;
+    }
+  }
+  return changed ? { ...plan, stops } : plan;
 }
 
 function mapRun(plan, runId, fn) {
@@ -127,7 +153,9 @@ function csvCell(value) {
   return s;
 }
 
-const CSV_HEADERS = ['Run', 'Carrier', 'Day', 'Stop', 'Customer', 'Phone', 'Address', 'Suburb', 'State', 'Items', 'WO', 'Invoice', 'Notes'];
+// "Customer address" is the customer record's address; the delivery itself only carries a
+// suburb + state. They usually agree but can differ, so they are never merged into one line.
+const CSV_HEADERS = ['Run', 'Carrier', 'Day', 'Stop', 'Customer', 'Phone', 'Customer address', 'Delivery suburb', 'State', 'Type', 'Items', 'WO', 'Invoice', 'Notes'];
 
 export function buildCsv(plan) {
   const lines = [CSV_HEADERS.join(',')];
@@ -137,7 +165,7 @@ export function buildCsv(plan) {
       if (!s) return;
       lines.push([
         ri + 1, run.carrier, run.day, si + 1, s.customer_name, s.phone, s.address,
-        s.suburb, s.state, s.items_text, s.workorder_id ?? '', s.invoice_id, s.notes,
+        s.suburb, s.state, s.delivery_type, s.items_text, s.workorder_id ?? '', s.invoice_id, s.notes,
       ].map(csvCell).join(','));
     });
   });
@@ -162,12 +190,12 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
     const rows = run.stops.map((k, si) => {
       const s = plan.stops[k];
       if (!s) return '';
-      const where = [s.address, [s.suburb, s.state].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      const suburb = [s.suburb, s.state].filter(Boolean).join(' ');
       return `<tr>
         <td class="n">${si + 1}</td>
         <td><strong>${esc(s.customer_name)}</strong><br>${esc(s.phone) || '—'}</td>
-        <td>${esc(where) || '—'}</td>
-        <td>${esc(s.items_text)}</td>
+        <td><span class="lbl">Delivery suburb</span> ${esc(suburb) || '—'}<br><span class="lbl">Customer address</span> ${esc(s.address) || '—'}</td>
+        <td>${s.delivery_type ? `<span class="type">${esc(s.delivery_type)}</span><br>` : ''}${esc(s.items_text)}</td>
         <td>${s.workorder_id != null ? `WO ${esc(s.workorder_id)}` : ''}${s.invoice_id ? `<br>Inv ${esc(s.invoice_id)}` : ''}</td>
         <td>${esc(s.notes)}</td>
       </tr>`;
@@ -176,7 +204,7 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
     return `<section class="run">
       <h2>${title}</h2>
       <table>
-        <thead><tr><th>#</th><th>Customer / phone</th><th>Address</th><th>Items</th><th>Ref</th><th>Notes</th></tr></thead>
+        <thead><tr><th>#</th><th>Customer / phone</th><th>Where</th><th>Items</th><th>Ref</th><th>Notes</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </section>`;
@@ -203,6 +231,8 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
   th, td { border: 1px solid #ccc; padding: 6px 8px; font-size: 12px; vertical-align: top; text-align: left; }
   th { background: #f3f4f6; }
   td.n { width: 24px; font-weight: 700; text-align: center; }
+  .lbl { color: #555; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  .type { font-weight: 700; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   thead { display: table-header-group; }
   footer { margin-top: 16px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 11px; color: #333; }
@@ -216,23 +246,49 @@ export function buildRunSheetHtml(plan, printedAt = new Date()) {
   </header>
   ${body || '<p>No stops on this run yet.</p>'}
   <footer>Grays Fitness · <strong>1300 769 556</strong> · graysfitness.com.au</footer>
-  <script>window.onload = () => window.print();</script>
+  <script>
+    // Wait for Inter: web fonts aren't guaranteed to be ready at onload.
+    window.onload = () => {
+      const ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+      ready.then(() => window.print());
+    };
+  </script>
 </body>
 </html>`;
 }
 
 /* ------------------------------ browser storage ------------------------------ */
 
-function isPlan(p) {
-  return p && Array.isArray(p.runs) && p.runs.length > 0 && p.stops && typeof p.stops === 'object'
-    && p.runs.every((r) => r && typeof r.id === 'string' && Array.isArray(r.stops));
+// Normalise a saved plan: drop stop keys with no snapshot and keys repeated across runs (a
+// damaged entry would otherwise misalign the reorder indices), and default text fields so the
+// inputs stay controlled. Anything unrecognisable falls back to an empty plan.
+function normalisePlan(p) {
+  if (!p || !Array.isArray(p.runs) || !p.runs.length || !p.stops || typeof p.stops !== 'object') return null;
+  const seen = new Set();
+  const runs = [];
+  for (const r of p.runs) {
+    if (!r || typeof r.id !== 'string' || !Array.isArray(r.stops)) return null;
+    const stops = r.stops.filter((k) => {
+      if (typeof k !== 'string' || !p.stops[k] || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    runs.push({
+      id: r.id,
+      carrier: typeof r.carrier === 'string' ? r.carrier : '',
+      day: typeof r.day === 'string' ? r.day : '',
+      stops,
+    });
+  }
+  const stops = {};
+  seen.forEach((k) => { stops[k] = p.stops[k]; });
+  return { runs, stops };
 }
 
 export function loadPlan() {
   try {
     const raw = localStorage.getItem(PLAN_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return isPlan(parsed) ? parsed : emptyPlan();
+    return normalisePlan(raw ? JSON.parse(raw) : null) || emptyPlan();
   } catch {
     return emptyPlan();
   }

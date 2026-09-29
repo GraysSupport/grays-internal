@@ -19,7 +19,8 @@ const CANDIDATES = {
     { delivery_id: 101, workorder_id: 9, invoice_id: '20431', customer_name: 'Dana Delivery', customer_phone: '0400 000 000', customer_address: '1 Test St', delivery_suburb: 'Altona North', delivery_state: 'VIC', items_text: '1.00 × Treadmill (Grade A)', notes: 'Rear access' },
   ],
   workorders: [
-    { workorder_id: 12, invoice_id: '20500', customer_name: 'Wes Workorder', customer_phone: '0411 111 111', customer_address: '2 Test Rd', delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack', notes: null },
+    { workorder_id: 12, invoice_id: '20500', customer_name: 'Wes Workorder', customer_phone: '0411 111 111', customer_address: '2 Test Rd', delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack', notes: 'Owes $200 — chase' },
+    { workorder_id: 13, invoice_id: '20501', customer_name: 'Ola Other', customer_phone: '0422 222 222', customer_address: '3 Test Ave', delivery_suburb: 'Werribee', delivery_state: 'VIC', items_text: '1.00 × Bench', notes: null },
   ],
 };
 
@@ -92,17 +93,24 @@ test('loads candidates from the gated read with the login token, both sources li
 test('ZERO WRITE REQUESTS across a full planning session', async () => {
   login(['logistics']);
   const fetchMock = installFetch();
+  // Not just fetch: any other way out of the browser counts as a request too.
+  const xhrOpen = jest.spyOn(XMLHttpRequest.prototype, 'open');
+  navigator.sendBeacon = jest.fn(() => true);
   renderPage();
   await screen.findByText('Dana Delivery');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add Dana Delivery to run' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Add Wes Workorder to run' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Move Wes Workorder up' }));
   fireEvent.change(screen.getByLabelText('Run 1 carrier'), { target: { value: 'Nelson' } });
   fireEvent.change(screen.getByLabelText('Run 1 day'), { target: { value: '2026-10-02' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add another run' }));
+  fireEvent.change(screen.getByLabelText('Add stops to'), { target: { value: screen.getByLabelText('Add stops to').options[1].value } });
+  fireEvent.click(screen.getByRole('button', { name: /^Add Ola Other \(WO 13\) to run$/ }));
+  expect(within(screen.getByRole('list', { name: 'Run 2 stops' })).getByText('Ola Other')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Print run sheet' }));
   fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove run 2' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove Dana Delivery' }));
   fireEvent.click(screen.getByRole('button', { name: 'Clear run' }));
 
@@ -113,6 +121,8 @@ test('ZERO WRITE REQUESTS across a full planning session', async () => {
     expect(init.body).toBeUndefined();
     expect(String(url)).toBe('/api/logistics?resource=run-candidates');
   }
+  expect(xhrOpen).not.toHaveBeenCalled();
+  expect(navigator.sendBeacon).not.toHaveBeenCalled();
 });
 
 test('stops are ordered, then printed and exported in that order', async () => {
@@ -121,8 +131,8 @@ test('stops are ordered, then printed and exported in that order', async () => {
   renderPage();
   await screen.findByText('Dana Delivery');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add Dana Delivery to run' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Add Wes Workorder to run' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Move Dana Delivery down' }));
   fireEvent.change(screen.getByLabelText('Run 1 carrier'), { target: { value: 'Nelson' } });
 
@@ -131,7 +141,7 @@ test('stops are ordered, then printed and exported in that order', async () => {
   expect(names).toEqual(['Wes Workorder', 'Dana Delivery']);
 
   // Added stops leave the "available" list — one customer can't go on two runs.
-  expect(screen.queryByRole('button', { name: 'Add Dana Delivery to run' })).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ })).toBeNull();
 
   fireEvent.click(screen.getByRole('button', { name: 'Print run sheet' }));
   expect(openedHtml.indexOf('Wes Workorder')).toBeGreaterThan(-1);
@@ -152,7 +162,7 @@ test('the draft survives a refresh (localStorage) and "Clear run" empties it', a
   installFetch();
   const first = renderPage();
   await screen.findByText('Dana Delivery');
-  fireEvent.click(screen.getByRole('button', { name: 'Add Dana Delivery to run' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
   fireEvent.change(screen.getByLabelText('Run 1 carrier'), { target: { value: 'Cobbs' } });
   first.unmount();
 
@@ -174,7 +184,7 @@ test('a stop planned earlier but since booked/completed is kept, and flagged', a
   installFetch();
   const first = renderPage();
   await screen.findByText('Dana Delivery');
-  fireEvent.click(screen.getByRole('button', { name: 'Add Dana Delivery to run' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ }));
   first.unmount();
 
   installFetch({ deliveries: [], workorders: CANDIDATES.workorders });
@@ -182,6 +192,39 @@ test('a stop planned earlier but since booked/completed is kept, and flagged', a
   const run = await screen.findByRole('list', { name: 'Run 1 stops' });
   await waitFor(() => expect(within(run).getByText(/no longer waiting to be booked/i)).toBeInTheDocument());
   expect(within(run).getByText('Dana Delivery')).toBeInTheDocument();
+});
+
+test('a planned workorder that has since become a To-Be-Booked delivery is not offered twice', async () => {
+  login(['logistics']);
+  installFetch();
+  const first = renderPage();
+  await screen.findByText('Wes Workorder');
+  fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
+  first.unmount();
+
+  // WO 12 completed → a delivery row now exists for it; the workorder list no longer has it.
+  installFetch({
+    deliveries: [...CANDIDATES.deliveries, { delivery_id: 200, workorder_id: 12, invoice_id: '20500', customer_name: 'Wes Workorder', customer_phone: '0411 111 111', customer_address: '2 Test Rd', delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack', notes: null }],
+    workorders: [CANDIDATES.workorders[1]],
+  });
+  renderPage();
+  const run = await screen.findByRole('list', { name: 'Run 1 stops' });
+  await screen.findByText('Dana Delivery');
+  expect(screen.queryByRole('button', { name: /^Add Wes Workorder/ })).toBeNull();
+  expect(within(run).getByText(/now a to-be-booked delivery/i)).toBeInTheDocument();
+  expect(within(run).queryByText(/no longer waiting/i)).toBeNull();
+});
+
+test('workorder notes are shown on screen as internal and never printed', async () => {
+  login(['logistics']);
+  installFetch();
+  renderPage();
+  await screen.findByText('Wes Workorder');
+  fireEvent.click(screen.getByRole('button', { name: /^Add Wes Workorder \(WO 12\) to run$/ }));
+  const run = screen.getByRole('list', { name: 'Run 1 stops' });
+  expect(within(run).getByText(/Workorder notes \(internal — not printed\)/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Print run sheet' }));
+  expect(openedHtml).not.toContain('Owes $200');
 });
 
 test('roles without logistics/superadmin get no planner and make no request', async () => {

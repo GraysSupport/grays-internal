@@ -17,11 +17,13 @@ import {
   buildRunSheetHtml,
   loadPlan,
   savePlan,
+  refreshStops,
   clearPlan,
   PLAN_STORAGE_KEY,
 } from '../tempRun';
 
 const deliveryRow = {
+  delivery_type: 'Standard + Installation',
   delivery_id: 101, workorder_id: 9, invoice_id: '20431',
   customer_name: 'Demo Customer', customer_phone: '0400 000 000', customer_address: '1 Test St',
   delivery_suburb: 'Altona North', delivery_state: 'VIC',
@@ -30,7 +32,8 @@ const deliveryRow = {
 const woRow = {
   workorder_id: 12, invoice_id: '20500',
   customer_name: 'Another Customer', customer_phone: '+61 411 111 111', customer_address: '2 Test Rd',
-  delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack', notes: null,
+  delivery_suburb: 'Geelong', delivery_state: 'VIC', items_text: '2.00 × Dumbbell rack',
+  notes: 'Internal: customer owes $200, chase before dispatch',
 };
 
 function planWithTwoStops() {
@@ -48,6 +51,18 @@ describe('toStop', () => {
     expect(d.key).toBe('D-101');
     expect(w.key).toBe('W-12');
     expect(d).toMatchObject({ customer_name: 'Demo Customer', phone: '0400 000 000', address: '1 Test St', workorder_id: 9, invoice_id: '20431', notes: 'Rear access' });
+  });
+
+  test('carries the delivery type (installation matters to the driver)', () => {
+    expect(toStop(deliveryRow, 'delivery').delivery_type).toBe('Standard + Installation');
+    expect(toStop(woRow, 'workorder').delivery_type).toBe('');
+  });
+
+  test('workorder notes are INTERNAL — kept off the driver-facing notes field', () => {
+    const w = toStop(woRow, 'workorder');
+    expect(w.notes).toBe('');
+    expect(w.internal_notes).toBe('Internal: customer owes $200, chase before dispatch');
+    expect(toStop(deliveryRow, 'delivery').notes).toBe('Rear access');
   });
 
   test('tidies Postgres numeric quantities ("1.00 ×" → "1 ×", keeps real fractions)', () => {
@@ -114,13 +129,29 @@ describe('plan editing', () => {
   });
 });
 
+describe('refreshStops', () => {
+  test('updates planned snapshots from live rows (corrected phone) and keeps order', () => {
+    const { plan, runId } = planWithTwoStops();
+    const live = [toStop({ ...deliveryRow, customer_phone: '0499 999 999' }, 'delivery')];
+    const out = refreshStops(plan, live);
+    expect(out.stops['D-101'].phone).toBe('0499 999 999');
+    expect(out.stops['W-12'].phone).toBe('+61 411 111 111'); // not live → snapshot kept
+    expect(out.runs.find((r) => r.id === runId).stops).toEqual(['D-101', 'W-12']);
+  });
+
+  test('returns the same object when nothing changed (no needless re-save)', () => {
+    const { plan } = planWithTwoStops();
+    expect(refreshStops(plan, [toStop(deliveryRow, 'delivery')])).toBe(plan);
+  });
+});
+
 describe('buildCsv', () => {
   test('one row per stop, in run order, with stop numbers', () => {
     let { plan, runId } = planWithTwoStops();
     plan = updateRun(plan, runId, { carrier: 'Nelson', day: '2026-10-02' });
     plan = moveStop(plan, runId, 1, 0);
     const lines = buildCsv(plan).trim().split('\r\n');
-    expect(lines[0]).toBe('Run,Carrier,Day,Stop,Customer,Phone,Address,Suburb,State,Items,WO,Invoice,Notes');
+    expect(lines[0]).toBe('Run,Carrier,Day,Stop,Customer,Phone,Customer address,Delivery suburb,State,Type,Items,WO,Invoice,Notes');
     expect(lines[1].startsWith('1,Nelson,2026-10-02,1,Another Customer,')).toBe(true);
     expect(lines[2].startsWith('1,Nelson,2026-10-02,2,Demo Customer,')).toBe(true);
     expect(lines).toHaveLength(3);
@@ -129,9 +160,9 @@ describe('buildCsv', () => {
   test('quotes commas/quotes/newlines and keeps an international phone intact', () => {
     let plan = emptyPlan();
     const runId = plan.runs[0].id;
-    plan = addStop(plan, runId, toStop({ ...woRow, notes: 'Ring "first"\nthen knock' }, 'workorder'));
+    plan = addStop(plan, runId, toStop({ ...deliveryRow, notes: 'Ring "first"\nthen knock', customer_phone: '+61 411 111 111' }, 'delivery'));
     const csv = buildCsv(plan);
-    expect(csv).toContain(',2 × Dumbbell rack,'); // no comma inside → left unquoted
+    expect(csv).toContain(',Standard + Installation,'); // no comma inside → left unquoted
     expect(csv).toContain('"Ring ""first""\nthen knock"');
     expect(csv).toContain(',+61 411 111 111,');
   });
@@ -139,7 +170,7 @@ describe('buildCsv', () => {
   test('neutralises spreadsheet formula injection in free text', () => {
     let plan = emptyPlan();
     const runId = plan.runs[0].id;
-    plan = addStop(plan, runId, toStop({ ...woRow, customer_name: '=HYPERLINK("http://x")', notes: '@SUM(A1)' }, 'workorder'));
+    plan = addStop(plan, runId, toStop({ ...deliveryRow, customer_name: '=HYPERLINK("http://x")', notes: '@SUM(A1)' }, 'delivery'));
     const csv = buildCsv(plan);
     expect(csv).toContain(`"'=HYPERLINK(""http://x"")"`);
     expect(csv).toContain(`'@SUM(A1)`);
@@ -157,6 +188,29 @@ describe('buildRunSheetHtml', () => {
     expect(html).toContain('Inter');
     expect(html).toContain('Demo Customer');
     expect(html).toContain('0400 000 000');
+  });
+
+  test('never prints internal workorder notes', () => {
+    const { plan } = planWithTwoStops();
+    expect(buildRunSheetHtml(plan)).not.toContain('owes $200');
+    expect(buildCsv(plan)).not.toContain('owes $200');
+  });
+
+  test('labels the customer-record address apart from the delivery suburb (they can differ)', () => {
+    const { plan } = planWithTwoStops();
+    const html = buildRunSheetHtml(plan);
+    expect(html).toContain('Customer address');
+    expect(html).toContain('Delivery suburb');
+    expect(html).not.toContain('1 Test St, Altona North VIC');
+  });
+
+  test('shows the delivery type on the sheet', () => {
+    const { plan } = planWithTwoStops();
+    expect(buildRunSheetHtml(plan)).toContain('Standard + Installation');
+  });
+
+  test('waits for fonts before printing so Inter is used', () => {
+    expect(buildRunSheetHtml(emptyPlan())).toContain('document.fonts');
   });
 
   test('escapes customer-entered text', () => {
@@ -197,6 +251,21 @@ describe('persistence (browser only)', () => {
     expect(loadPlan().runs[0].stops).toEqual([]);
     localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify({ runs: 'nope' }));
     expect(loadPlan().runs[0].stops).toEqual([]);
+  });
+
+  test('normalises a damaged saved plan: orphan/duplicate keys dropped, strings defaulted', () => {
+    const { plan } = planWithTwoStops();
+    const damaged = {
+      runs: [
+        { id: plan.runs[0].id, carrier: null, day: undefined, stops: ['D-101', 'GHOST', 'D-101'] },
+        { id: 'run-2', stops: ['W-12', 'D-101'] },
+      ],
+      stops: plan.stops,
+    };
+    localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(damaged));
+    const out = loadPlan();
+    expect(out.runs[0]).toMatchObject({ carrier: '', day: '', stops: ['D-101'] });
+    expect(out.runs[1]).toMatchObject({ carrier: '', day: '', stops: ['W-12'] });
   });
 
   test('clearPlan removes the saved run', () => {
