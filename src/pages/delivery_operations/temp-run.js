@@ -8,6 +8,7 @@ import { endExpiredSession } from '../../utils/session';
 import {
   emptyPlan, toStop, addRun, updateRun, removeRun, addStop, removeStop, moveStop,
   plannedKeys, buildCsv, buildRunSheetHtml, loadPlan, savePlan, clearPlan, refreshStops,
+  TEMP_RUN_ROLES,
 } from '../../utils/tempRun';
 
 // G8 (Nick, 28 Sep 2026) — "Create temporary delivery run".
@@ -21,7 +22,7 @@ import {
 // until "Clear run". Nothing here books a delivery, changes a status or writes a log row —
 // pinned by src/pages/__tests__/tempDeliveryRun.test.js ("ZERO WRITE REQUESTS").
 
-export const TEMP_RUN_ROLES = ['logistics', 'superadmin'];
+export { TEMP_RUN_ROLES };
 const BRAND_RED = '#B50B1D';
 
 function isPristine(plan) {
@@ -227,7 +228,7 @@ export default function TempDeliveryRunPage() {
         <main className="flex-1 p-6">
           <div className="mx-auto max-w-lg rounded-xl border bg-white p-6">
             <h1 className="text-xl font-semibold">Temporary delivery run</h1>
-            <p className="mt-2 text-gray-700">Planning delivery runs is available to logistics or superadmin users.</p>
+            <p className="mt-2 text-gray-700">Planning delivery runs is available to logistics, admin or superadmin users.</p>
             <Link to="/delivery_operations" className="mt-4 inline-block text-sm underline">Back to Delivery Operations</Link>
           </div>
         </main>

@@ -146,6 +146,19 @@ console.log('\npath form + roles:');
   check('200 for superadmin', res.statusCode === 200);
 }
 {
+  // Prod has no `logistics` users — the people who run deliveries log in as `admin`.
+  const res = makeRes();
+  await logisticsHandler(makeReq({ roles: ['admin'] }), res, [], depsFor(makeClient()));
+  check('200 for admin (run-candidates)', res.statusCode === 200 && Array.isArray(res.body?.deliveries));
+}
+{
+  // ...but admin is widened for the temp-run planner ONLY, not the Awaiting-Workorder queue.
+  const client = makeClient();
+  const res = makeRes();
+  await logisticsHandler(makeReq({ roles: ['admin'], query: { resource: 'awaiting-workorder' } }), res, [], depsFor(client));
+  check('403 for admin on awaiting-workorder — and no query ran', res.statusCode === 403 && client.calls.length === 0);
+}
+{
   const client = makeClient([{ match: DELIV_RE, throws: Object.assign(new Error('boom'), { code: 'XX000' }) }]);
   const res = makeRes();
   await logisticsHandler(makeReq(), res, [], depsFor(client));

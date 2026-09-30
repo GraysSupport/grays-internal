@@ -305,11 +305,19 @@ test('workorder notes are shown on screen as internal and never printed', async 
   expect(openedHtml).not.toContain('Owes $200');
 });
 
-test('roles without logistics/superadmin get no planner and make no request', async () => {
+test('admin (how logistics staff log in on prod) gets the planner and loads candidates', async () => {
+  login(['admin']);
+  const fetchMock = installFetch();
+  renderPage();
+  expect(await screen.findByRole('button', { name: /^Add Dana Delivery \(WO 9\) to run$/ })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith('/api/logistics?resource=run-candidates', expect.anything());
+});
+
+test('roles without logistics/admin/superadmin get no planner and make no request', async () => {
   login(['staff']);
   const fetchMock = installFetch();
   renderPage();
-  expect(await screen.findByText(/logistics or superadmin/i)).toBeInTheDocument();
+  expect(await screen.findByText(/logistics, admin or superadmin/i)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Print run sheet' })).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
 });
@@ -330,7 +338,7 @@ describe('DeliveryTabs entry point', () => {
     );
   }
 
-  test.each([['logistics'], ['superadmin']])('shows "Create temporary delivery run" for %s', (role) => {
+  test.each([['logistics'], ['admin'], ['superadmin']])('shows "Create temporary delivery run" for %s', (role) => {
     login([role]);
     renderTabs();
     const link = screen.getByRole('link', { name: 'Create temporary delivery run' });
