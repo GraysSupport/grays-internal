@@ -159,6 +159,20 @@ console.log('\npath form + roles:');
   check('403 for admin on awaiting-workorder — and no query ran', res.statusCode === 403 && client.calls.length === 0);
 }
 {
+  // Same via the path form...
+  const client = makeClient();
+  const res = makeRes();
+  await logisticsHandler(makeReq({ roles: ['admin'], query: {} }), res, ['awaiting-workorder'], depsFor(client));
+  check('403 for admin on awaiting-workorder (path form) — and no query ran', res.statusCode === 403 && client.calls.length === 0);
+}
+{
+  // ...and when path and query disagree, the gate follows the resource that would actually run (the path).
+  const client = makeClient();
+  const res = makeRes();
+  await logisticsHandler(makeReq({ roles: ['admin'], query: { resource: 'run-candidates' } }), res, ['awaiting-workorder'], depsFor(client));
+  check('403 for admin when path=awaiting-workorder but ?resource=run-candidates', res.statusCode === 403 && client.calls.length === 0);
+}
+{
   const client = makeClient([{ match: DELIV_RE, throws: Object.assign(new Error('boom'), { code: 'XX000' }) }]);
   const res = makeRes();
   await logisticsHandler(makeReq(), res, [], depsFor(client));
