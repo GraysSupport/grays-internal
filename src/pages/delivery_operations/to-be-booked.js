@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import DeliveryBoardNotes from '../../components/DeliveryBoardNotes';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 
 // ⛔ TEMPORARY LOCKDOWN (Nick, 20 Jul 2026): only these roles are offered the
@@ -946,6 +947,8 @@ export default function ToBeBookedDeliveriesPage() {
 
       <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
         <main className="col-span-12">
+          {/* G7: shared "when are drivers coming in next" notes (hidden until migrated). */}
+          <DeliveryBoardNotes />
           <div className="rounded-xl border bg-white">
             <div className="border-b p-4">
               <h2 className="text-lg font-semibold text-center sm:text-left">Deliveries to be Booked</h2>
