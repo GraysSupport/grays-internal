@@ -213,7 +213,12 @@ export default function Register() {
                   key={field}
                   type={field.toLowerCase().includes('password') ? 'password' : 'text'}
                   name={field}
-                  placeholder={field === 'confirmPassword' ? 'Confirm Password' : field.charAt(0).toUpperCase() + field.slice(1)}
+                  placeholder={
+                    field === 'confirmPassword' ? 'Confirm Password'
+                      : field === 'id' ? 'ID (2 characters, e.g. GS)'
+                        : field.charAt(0).toUpperCase() + field.slice(1)
+                  }
+                  maxLength={field === 'id' ? 2 : undefined}
                   value={form[field]}
                   onChange={handleChange}
                   className="w-full mb-4 px-4 py-2 border rounded"

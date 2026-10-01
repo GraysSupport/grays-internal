@@ -2,8 +2,8 @@
 import { compare, hash } from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
-import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole, requireRoles } from '../lib/rbac.js';
-import { usersSelectList, buildUserUpdate } from '../lib/usersAdmin.js';
+import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole, legacyAccessFor, requireRoles } from '../lib/rbac.js';
+import { usersSelectList, buildUserUpdate, registerUser } from '../lib/usersAdmin.js';
 // Formerly standalone /api functions (workorder/delivery/collections/winnings),
 // relocated under lib/handlers/ and routed here so they don't each consume one of the
 // Vercel Hobby plan's 12 Serverless-Function slots. Their handler logic is unchanged;
@@ -429,25 +429,10 @@ async function handleAuth(req, res, action) {
       const gate = requireRoles(req, ['superadmin']);
       if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
 
-      const { id, name, email, password } = req.body;
-
-      const existing = await client.query('SELECT 1 FROM users WHERE email = $1', [email]);
-      if (existing.rows.length) return res.status(409).json({ error: 'Email is already registered' });
-
-      // F0b: role set from the multi-select (falls back to a single `access` value
-      // or 'staff'). users.access mirrors the primary (highest-precedence) role.
-      let roles = sanitizeRoles(req.body.roles);
-      if (!roles.length && req.body.access) roles = sanitizeRoles([req.body.access]);
-      if (!roles.length) roles = ['staff'];
-      const primary = primaryRole(roles);
-
-      const hashed = await hash(password, 10);
-      await client.query(
-        'INSERT INTO users (id, name, email, password, access) VALUES ($1,$2,$3,$4,$5)',
-        [id, name, email, hashed, primary]
-      );
-      await syncUserRoles(client, id, roles, gate.auth.id); // F9: granted_by = the acting admin
-      return res.status(200).json({ message: 'User registered successfully', roles });
+      // G6: validation, the enum-safe users.access value and the role write live in
+      // lib/usersAdmin.js registerUser (tested offline by scripts/ops-create-user-smoke.mjs).
+      const out = await registerUser(client, req.body, gate.auth.id, { hash });
+      return res.status(out.status).json(out.body);
     }
 
     if (action === 'change-password') {
@@ -561,7 +546,9 @@ async function handleUsers(req, res) {
       // longer round-trips it. buildUserUpdate preserves the existing password when none is
       // supplied (no lockout on a name/role edit) and hashes a genuinely new one (the raw
       // write this replaced would have stored plaintext and broken login).
-      const upd = await buildUserUpdate({ id, name, email, primary, password }, { hash });
+      // G6: users.access is an enum without logistics/sales/workshop — write the enum-safe
+      // value (the full set still goes to user_roles below).
+      const upd = await buildUserUpdate({ id, name, email, primary: legacyAccessFor(roles), password }, { hash });
       await client.query(upd.text, upd.params);
       await syncUserRoles(client, id, roles, gate.auth.id); // F9: granted_by = the acting admin
       return res.status(200).json({ message: 'User updated successfully', roles });

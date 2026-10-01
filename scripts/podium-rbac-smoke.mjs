@@ -113,7 +113,9 @@ console.log('\ngate is actually WIRED IN (not just sound in isolation):');
 
   const registerBlock = src.slice(src.indexOf("action === 'register'"), src.indexOf("action === 'change-password'"));
   check('register action gates on superadmin', /requireRoles\(req,\s*\['superadmin'\]\)/.test(registerBlock));
-  check('register passes the acting admin as granted_by', /syncUserRoles\(client,\s*id,\s*roles,\s*gate\.auth\.id\)/.test(registerBlock));
+  // G6 moved the create into lib/usersAdmin.js registerUser; the acting admin is its 3rd arg
+  // (granted_by is then proven behaviourally by scripts/ops-create-user-smoke.mjs).
+  check('register passes the acting admin as granted_by', /registerUser\(client,\s*req\.body,\s*gate\.auth\.id\b/.test(registerBlock));
 
   const usersBlock = src.slice(src.indexOf('async function handleUsers'));
   const gateCount = (usersBlock.match(/requireRoles\(req,\s*\['superadmin'\]\)/g) || []).length;
