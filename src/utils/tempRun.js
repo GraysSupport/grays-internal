@@ -12,6 +12,11 @@
 
 export const PLAN_STORAGE_KEY = 'grays.tempDeliveryRun.v1';
 
+// Who may plan a temporary run — the single client-side list (button + page). Mirrors
+// TEMP_RUN_ROLES in lib/handlers/logistics.js; the server is the real authority. `admin` added
+// 1 Oct 2026 (Nick): prod has no `logistics` users — the people who run deliveries are admins.
+export const TEMP_RUN_ROLES = ['logistics', 'admin', 'superadmin'];
+
 let seq = 0;
 function newRunId() {
   seq += 1;

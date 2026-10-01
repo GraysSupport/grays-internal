@@ -1,9 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { getRoles, hasAnyRole } from '../utils/auth';
-
-// G8: who may plan a temporary delivery run. Mirrors TEMP_RUN_ROLES on the page and the
-// logistics handler's gate — the server is the real authority; this only decides what to show.
-const TEMP_RUN_ROLES = ['logistics', 'superadmin'];
+// G8: who may plan a temporary delivery run — shared with the page; the server is the real authority.
+import { TEMP_RUN_ROLES } from '../utils/tempRun';
 
 export default function DeliveryTabs({ className = '' }) {
   const { pathname } = useLocation();
