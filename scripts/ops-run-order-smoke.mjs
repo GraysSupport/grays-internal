@@ -37,6 +37,8 @@ const seed = () => [
   { delivery_id: 9, removalist_id: null, delivery_date: '2026-10-02', delivery_status: BOOKED, run_order: null },
 ];
 
+const keyOf = (r) => `${r.removalist_id ?? 'none'}|${r.delivery_date}`;
+
 function makeClient({ missing = false } = {}) {
   const rows = seed();
   const calls = [];
@@ -46,14 +48,16 @@ function makeClient({ missing = false } = {}) {
       calls.push({ text, params });
       if (missing) throw Object.assign(new Error('column "run_order" does not exist'), { code: '42703' });
       const sql = text.replace(/\s+/g, ' ').trim();
-      if (/^SELECT delivery_id, run_order FROM delivery/i.test(sql)) {
-        return { rows: rows.filter((r) => r.run_order != null && r.delivery_status === BOOKED).map(({ delivery_id, run_order }) => ({ delivery_id, run_order })) };
+      if (/^SELECT d\.delivery_id, d\.run_order FROM delivery d/i.test(sql)) {
+        if (!/d\.run_order_key = COALESCE\(d\.removalist_id::text, 'none'\) \|\| '\|' \|\| to_char\(d\.delivery_date, 'YYYY-MM-DD'\)/.test(sql)) throw new Error('smoke: the read must only return numbers whose run key still matches');
+        return { rows: rows.filter((r) => r.run_order != null && r.delivery_status === BOOKED && r.run_order_key === keyOf(r)).map(({ delivery_id, run_order }) => ({ delivery_id, run_order })) };
       }
       if (/^WITH v AS .* UPDATE delivery d SET run_order = v\.pos/i.test(sql)) {
         const [ids, carrier, day] = params;
         const matching = ids.filter((id) => rows.some((r) => r.delivery_id === id && r.removalist_id === carrier && r.delivery_date === day && r.delivery_status === BOOKED));
         if (matching.length !== ids.length) return { rows: [] };
-        ids.forEach((id, i) => { rows.find((r) => r.delivery_id === id).run_order = i + 1; });
+        if (!/run_order_key = COALESCE\(d\.removalist_id::text, 'none'\)/.test(sql)) throw new Error('smoke: the save must stamp run_order_key');
+        ids.forEach((id, i) => { const r = rows.find((x) => x.delivery_id === id); r.run_order = i + 1; r.run_order_key = keyOf(r); });
         return { rows: ids.map((id, i) => ({ delivery_id: id, run_order: i + 1 })) };
       }
       throw new Error(`unexpected SQL in smoke: ${sql}`);
@@ -153,8 +157,24 @@ console.log('\nthe rule — same carrier AND same day, or nothing is written:');
   await put(client, { ...RUN, delivery_ids: [3, 2, 1] });
   const writes = client.calls.filter((c) => /\b(INSERT|UPDATE|DELETE)\b/i.test(c.text));
   check('a save is exactly ONE statement', client.calls.length === 1 && writes.length === 1);
-  check('…which sets run_order and nothing else', /SET run_order = v\.pos\s+FROM/i.test(writes[0].text) && !/workorder|delivery_status\s*=\s*\$|INSERT|DELETE/i.test(writes[0].text));
+  check('…which sets run_order + its run key and nothing else', /SET run_order = v\.pos,\s+run_order_key = [^;]*?\s+FROM v, ok/i.test(writes[0].text) && !/workorder|delivery_status\s*=\s*\$|INSERT|DELETE/i.test(writes[0].text));
   check('…and names the carrier + day in the same statement as the write', /removalist_id IS NOT DISTINCT FROM \$2::int/.test(writes[0].text) && /delivery_date::date = \$3::date/.test(writes[0].text) && /ok\.all_match/.test(writes[0].text));
+}
+
+console.log('\na re-booked delivery loses its stale stop number (no change to the booking code):');
+{
+  const client = makeClient();
+  await put(client, { ...RUN, delivery_ids: [3, 1, 2] });
+  // The legacy PUT /api/delivery?id= moves delivery 3 to another carrier — it knows nothing of run order.
+  client.rows.find((r) => r.delivery_id === 3).removalist_id = 9;
+  const moved = await run(client, { noAuth: true });
+  check('moved to another carrier → its number is no longer returned', JSON.stringify(moved.body.order) === JSON.stringify({ 1: 2, 2: 3 }));
+  client.rows.find((r) => r.delivery_id === 1).delivery_date = '2026-10-03';
+  const dayMoved = await run(client, { noAuth: true });
+  check('moved to another day → same', JSON.stringify(dayMoved.body.order) === JSON.stringify({ 2: 3 }));
+  client.rows.find((r) => r.delivery_id === 3).removalist_id = 7;
+  const back = await run(client, { noAuth: true });
+  check('moved back into its run → its number counts again', JSON.stringify(back.body.order) === JSON.stringify({ 2: 3, 3: 1 }));
 }
 
 console.log('\nbad input never reaches the database:');
@@ -169,6 +189,7 @@ for (const [label, body] of [
   ['no date (unscheduled)', { removalist_id: 7, delivery_date: null, delivery_ids: [1, 2] }],
   ['a malformed date', { removalist_id: 7, delivery_date: '02/10/2026', delivery_ids: [1, 2] }],
   ['an impossible date', { removalist_id: 7, delivery_date: '2026-13-45', delivery_ids: [1, 2] }],
+  ['30 February (parses in JS, Postgres would 500)', { removalist_id: 7, delivery_date: '2026-02-30', delivery_ids: [1, 2] }],
   ['a non-numeric carrier', { removalist_id: 'Nelson', delivery_date: '2026-10-02', delivery_ids: [1, 2] }],
 ]) {
   const client = makeClient();
@@ -208,8 +229,8 @@ console.log('\nwiring + migration:');
   const up = read('../db/migrations/0008_delivery_run_order.sql');
   const down = read('../db/migrations/0008_delivery_run_order_down.sql');
   const sqlOnly = (s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
-  check('migration is additive + idempotent (one nullable column)', /ALTER TABLE delivery ADD COLUMN IF NOT EXISTS run_order INTEGER;/.test(up) && !/DROP|NOT NULL|DEFAULT/i.test(sqlOnly(up)));
-  check('paired down migration drops only that column', /ALTER TABLE delivery DROP COLUMN IF EXISTS run_order;/.test(down) && (sqlOnly(down).match(/DROP /g) || []).length === 1);
+  check('migration is additive + idempotent (two nullable columns)', /ALTER TABLE delivery ADD COLUMN IF NOT EXISTS run_order INTEGER;/.test(up) && /ALTER TABLE delivery ADD COLUMN IF NOT EXISTS run_order_key VARCHAR\(24\);/.test(up) && !/DROP|NOT NULL|DEFAULT/i.test(sqlOnly(up)));
+  check('paired down migration drops only those columns', /DROP COLUMN IF EXISTS run_order;/.test(down) && /DROP COLUMN IF EXISTS run_order_key;/.test(down) && (sqlOnly(down).match(/DROP /g) || []).length === 2);
 }
 
 console.log(`\n✅ G9 run-order smoke: ${passed} checks passed`);

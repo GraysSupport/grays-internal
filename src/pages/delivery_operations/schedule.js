@@ -148,6 +148,8 @@ export default function DeliverySchedulePage() {
   const [runOrderAvailable, setRunOrderAvailable] = useState(false);
   const canReorderRole = useMemo(() => hasAnyRole(getRoles(), RUN_ORDER_ROLES), []);
   const dragRef = useRef(null);       // the delivery being dragged (a ref: no re-render mid-drag)
+  const runOrderRef = useRef({});     // latest order, for moves made faster than a re-render
+  const saveChainRef = useRef(Promise.resolve()); // run-order saves go one at a time, in order
   const refocusRef = useRef(null);    // `${delivery_id}-${dir}` — restore focus after a keyboard move
 
   const currentUserId = useMemo(() => {
@@ -256,22 +258,29 @@ export default function DeliverySchedulePage() {
 
   // G9: the saved stop order. Read separately (not in the big list query) so a database
   // without the run_order column simply answers `available: false`.
+  const applyRunOrder = useCallback((next) => {
+    runOrderRef.current = next;
+    setRunOrder(next);
+  }, []);
+  const loadRunOrder = useCallback(async () => {
+    try {
+      const res = await fetch('/api/delivery?resource=run-order');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.available ? (data.order || {}) : null;
+    } catch {
+      return null; // No saved order is not an error — the schedule keeps its default order.
+    }
+  }, []);
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      try {
-        const res = await fetch('/api/delivery?resource=run-order');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted || !data?.available) return;
-        setRunOrder(data.order || {});
-        setRunOrderAvailable(true);
-      } catch {
-        // No saved order is not an error — the schedule just keeps its default order.
-      }
-    })();
+    loadRunOrder().then((order) => {
+      if (!mounted || !order) return;
+      applyRunOrder(order);
+      setRunOrderAvailable(true);
+    });
     return () => { mounted = false; };
-  }, []);
+  }, [loadRunOrder, applyRunOrder]);
 
   // Helper to detect "Customer Collect" by resolved carrier name
   const isCustomerCollect = useCallback((row) => {
@@ -366,38 +375,44 @@ export default function DeliverySchedulePage() {
   // different from what the user sees.
   const reorderEnabled = canReorderRole && runOrderAvailable && filtered.length === rows.length;
 
-  // Move `fromId` to where `toId` sits — same carrier AND same day only (sameRun). Optimistic:
-  // the row moves at once and snaps back if the server refuses.
-  const moveRunStop = useCallback(async (fromId, toId) => {
-    const ids = moveStop(rows, runOrder, fromId, toId);
+  // Move `fromId` to where `toId` sits — same carrier AND same day only (sameRun).
+  //
+  // Optimistic: the row moves at once. Saves are QUEUED so two quick moves (↑ ↑ on the
+  // keyboard) reach the server in the order they were made — each save carries the run's
+  // complete order, so the last one in is the truth. If a save is refused, the screen is
+  // reloaded from the server rather than rewound to a snapshot (a snapshot would also throw
+  // away later moves that DID save).
+  const moveRunStop = useCallback((fromId, toId) => {
+    const ids = moveStop(rows, runOrderRef.current, fromId, toId);
     if (!ids) return false;
     const row = rows.find((r) => r.delivery_id === fromId);
-    const previous = runOrder;
-    setRunOrder((cur) => {
-      const next = { ...cur };
-      ids.forEach((id, i) => { next[id] = i + 1; });
-      return next;
-    });
-    try {
-      const res = await fetch('/api/delivery?resource=run-order', {
-        method: 'PUT',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(runOrderPayload(row, ids)),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const why = res.status === 401 ? 'your sign-in has expired — sign in again'
-          : res.status === 403 ? 'you don’t have permission to reorder runs'
-            : (data?.error || 'please try again');
-        throw new Error(why);
+    const next = { ...runOrderRef.current };
+    ids.forEach((id, i) => { next[id] = i + 1; });
+    applyRunOrder(next);
+
+    const payload = JSON.stringify(runOrderPayload(row, ids));
+    saveChainRef.current = saveChainRef.current.then(async () => {
+      try {
+        const res = await fetch('/api/delivery?resource=run-order', {
+          method: 'PUT',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: payload,
+        });
+        if (res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        throw new Error(
+          res.status === 401 ? 'your sign-in has expired — sign in again'
+            : res.status === 403 ? 'you don’t have permission to reorder runs'
+              : (data?.error || 'please try again')
+        );
+      } catch (e) {
+        toast.error(`Stop order not saved — ${e.message}`);
+        const fresh = await loadRunOrder();
+        if (fresh) applyRunOrder(fresh);
       }
-      return true;
-    } catch (e) {
-      setRunOrder(previous);
-      toast.error(`Stop order not saved — ${e.message}`);
-      return false;
-    }
-  }, [rows, runOrder]);
+    });
+    return true;
+  }, [rows, applyRunOrder, loadRunOrder]);
 
   // After a Move up/down the table re-renders and the button loses focus — put it back.
   useEffect(() => {
@@ -410,44 +425,54 @@ export default function DeliverySchedulePage() {
     (pick(dir) || pick(other))?.focus();
   }, [runOrder]);
 
-  // G9: drag handlers for one schedule row. The dragged row lives in a ref and the cues are
-  // set straight on the DOM node, so nothing re-renders (and re-mounts the table) mid-drag.
-  const DROP_CUES = ['outline', 'outline-2', 'outline-gray-400', 'outline-red-400', '!bg-red-50'];
-  const runDragProps = (row, orderable) => ({
-    draggable: reorderEnabled && orderable,
+  // G9 drag-and-drop. Only the ⠿ HANDLE is draggable — making the whole row draggable would
+  // stop people selecting an invoice number or a name to copy, and breaks text inputs inside a
+  // draggable ancestor in Firefox. The row is the DROP TARGET. The dragged delivery lives in a
+  // ref and the cues are set straight on the DOM node, so nothing re-renders (and re-mounts
+  // the table) mid-drag. Backgrounds as well as outlines: Safari doesn't draw outline on <tr>.
+  const DROP_CUES = ['outline', 'outline-2', 'outline-gray-400', 'outline-red-400', '!bg-gray-200', '!bg-red-100'];
+  const clearCue = (el) => { el.classList.remove(...DROP_CUES); el.removeAttribute('title'); };
+  const runHandleProps = (row) => ({
+    draggable: true,
     onDragStart: (e) => {
-      if (!reorderEnabled) return;
       dragRef.current = row;
-      e.currentTarget.classList.add('opacity-50');
-      try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(row.delivery_id)); } catch { /* jsdom */ }
+      const tr = e.currentTarget.closest('tr');
+      tr?.classList.add('opacity-50');
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(row.delivery_id));
+        if (tr) e.dataTransfer.setDragImage(tr, 16, 16);
+      } catch { /* jsdom */ }
     },
+    onDragEnd: (e) => {
+      dragRef.current = null;
+      e.currentTarget.closest('tr')?.classList.remove('opacity-50');
+    },
+  });
+  const runDropProps = (row) => ({
     onDragOver: (e) => {
       const from = dragRef.current;
-      if (!from || from.delivery_id === row.delivery_id) return;
+      if (!reorderEnabled || !from || from.delivery_id === row.delivery_id) return;
       // Same carrier AND same day → a valid drop; anything else gets the red cue.
       if (sameRun(from, row)) {
         e.preventDefault();
-        e.currentTarget.classList.add('outline', 'outline-2', 'outline-gray-400');
+        e.currentTarget.classList.add('outline', 'outline-2', 'outline-gray-400', '!bg-gray-200');
       } else {
-        e.currentTarget.classList.add('outline', 'outline-2', 'outline-red-400', '!bg-red-50');
+        e.currentTarget.classList.add('outline', 'outline-2', 'outline-red-400', '!bg-red-100');
         e.currentTarget.title = 'Stops can only be reordered within the same carrier and day';
       }
     },
     onDragLeave: (e) => {
-      e.currentTarget.classList.remove(...DROP_CUES);
-      e.currentTarget.removeAttribute('title');
+      if (e.currentTarget.contains(e.relatedTarget)) return; // moving between this row's own cells
+      clearCue(e.currentTarget);
     },
     onDrop: (e) => {
-      e.preventDefault();
-      e.currentTarget.classList.remove(...DROP_CUES);
-      e.currentTarget.removeAttribute('title');
+      clearCue(e.currentTarget);
       const from = dragRef.current;
       dragRef.current = null;
-      if (from && sameRun(from, row)) moveRunStop(from.delivery_id, row.delivery_id);
-    },
-    onDragEnd: (e) => {
-      dragRef.current = null;
-      e.currentTarget.classList.remove('opacity-50');
+      if (!from) return;
+      e.preventDefault();
+      if (sameRun(from, row)) moveRunStop(from.delivery_id, row.delivery_id);
     },
   });
 
@@ -472,6 +497,13 @@ export default function DeliverySchedulePage() {
           r.delivery_id === deliveryId ? { ...r, ...patch } : r
         );
       });
+      // G9: a stop number belongs to one run (carrier + day). Re-booked → it no longer applies
+      // (the server stops returning it too — see run_order_key in lib/deliveryRunOrder.js).
+      if (('removalist_id' in patch || 'delivery_date' in patch) && runOrderRef.current[deliveryId] != null) {
+        const next = { ...runOrderRef.current };
+        delete next[deliveryId];
+        applyRunOrder(next);
+      }
 
       resolveToast(toastId, true, 'Saved');
     } catch (e) {
@@ -483,7 +515,7 @@ export default function DeliverySchedulePage() {
         return copy;
       });
     }
-  }, [currentUserId]);
+  }, [currentUserId, applyRunOrder]);
 
   const saveWorkorderPayment = useCallback(async (workorder_id, newOutstanding) => {
     if (!workorder_id) return;
@@ -838,7 +870,7 @@ export default function DeliverySchedulePage() {
                     <tr
                       className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} cursor-pointer hover:bg-gray-100 align-top`}
                       tabIndex={0}
-                      {...runDragProps(row, stopNo > 0)}
+                      {...runDropProps(row)}
                       onClick={(e) => {
                         if (shouldBlockRowNav(e)) return;
                         goWorkorder(row.workorder_id);
@@ -851,7 +883,7 @@ export default function DeliverySchedulePage() {
                         <td className="px-3 py-2 text-sm whitespace-nowrap" onKeyDown={(e) => e.stopPropagation()}>
                           {stopNo > 0 ? (
                             <span className="inline-flex items-center gap-1">
-                              <span aria-hidden="true" title="Drag to reorder within this carrier and day" className="cursor-grab select-none text-gray-500">⠿</span>
+                              <span {...runHandleProps(row)} data-run-handle={row.delivery_id} aria-hidden="true" title="Drag to reorder within this carrier and day" className="cursor-grab select-none px-1 text-gray-500">⠿</span>
                               <span className="w-5 text-right font-semibold text-gray-700">{stopNo}</span>
                               <button
                                 type="button"
