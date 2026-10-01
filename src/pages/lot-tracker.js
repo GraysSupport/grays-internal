@@ -46,7 +46,7 @@ function Section({ title, empty, children }) {
 }
 
 function Journey({ journey }) {
-  const { lot, product, origin, assignment, workshop, deliveries, timeline } = journey;
+  const { lot, product, origin, assignment, workshop, deliveries, delivered, timeline } = journey;
   return (
     <div className="mt-6 space-y-4">
       <section className="rounded-xl border bg-white p-4">
@@ -111,15 +111,26 @@ function Journey({ journey }) {
 
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-base font-semibold">Delivery</h2>
-        {deliveries.length === 0 && <p className="mt-2 text-sm text-gray-600">No delivery has been raised for this item yet.</p>}
+        {deliveries.length === 0 && <p className="mt-2 text-sm text-gray-600">No delivery has been raised for this workorder yet.</p>}
+        {deliveries.length > 1 && (
+          <p className="mt-2 text-sm text-gray-700">
+            This workorder has {deliveries.length} deliveries. The portal records deliveries per workorder, not per item, so it can’t say which one this item went on.
+          </p>
+        )}
         {deliveries.map((d) => (
           <dl key={d.delivery_id} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Status">{d.delivery_status}</Field>
-            <Field label={d.delivery_status === 'Delivery Completed' ? 'Delivered on' : 'Delivery date'}>{d.delivery_date ? formatWhen(d.delivery_date, true) : 'Not scheduled'}</Field>
+            <Field label="Delivery date">{d.delivery_date ? formatWhen(d.delivery_date, true) : 'No date set'}</Field>
             <Field label={d.delivery_status === 'Delivery Completed' ? 'Delivered by (carrier)' : 'Carrier'}>{d.carrier}</Field>
             <Field label="To">{[d.suburb, d.state].filter(Boolean).join(', ')}</Field>
           </dl>
         ))}
+        {delivered && (
+          <dl className="mt-3 grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-2">
+            <Field label="Marked completed">{formatWhen(delivered.completed_at)}</Field>
+            <Field label="Marked completed by">{delivered.completed_by_name || delivered.completed_by}</Field>
+          </dl>
+        )}
       </section>
 
       <section className="rounded-xl border bg-white p-4">
@@ -153,6 +164,7 @@ export default function LotTrackerPage() {
   const [camera, setCamera] = useState(false);
   const [view, setView] = useState(null); // { journey } | { results, q } | { notFound } | { error }
   const inputRef = useRef(null);
+  const latestRef = useRef(0); // only the most recent lookup may update the screen
   // The lot lives in the URL (?lot=L00042) so a journey can be bookmarked, shared and reloaded.
   const lotParam = params.get('lot');
 
@@ -163,45 +175,46 @@ export default function LotTrackerPage() {
     return { res, data };
   }, [navigate]);
 
-  const openLot = useCallback(async (raw) => {
-    const lot = String(raw || '').trim().toUpperCase();
-    if (!lot) return;
+  // Run one lookup. If another starts before it finishes (two stickers scanned quickly), the
+  // slower, older answer is dropped instead of overwriting the newer one.
+  const lookup = useCallback(async (url, onResult) => {
+    const mine = ++latestRef.current;
     setLoading(true);
     try {
-      const out = await request(`/api/lots?resource=journey&lot_number=${encodeURIComponent(lot)}`);
-      if (!out) return;
-      if (out.res.status === 404) setView({ notFound: lot });
-      else if (!out.res.ok) setView({ error: out.res.status === 403 ? 'You don’t have access to the Lot Tracker.' : (out.data?.error || 'Lookup failed') });
-      else setView({ journey: out.data });
+      const out = await request(url);
+      if (out && mine === latestRef.current) setView(onResult(out));
     } catch {
-      setView({ error: 'Network error — check your connection and try again.' });
+      if (mine === latestRef.current) setView({ error: 'Network error — check your connection and try again.' });
     } finally {
-      setLoading(false);
-      setCode('');
-      inputRef.current?.focus();
+      if (mine === latestRef.current) setLoading(false);
     }
   }, [request]);
 
-  const search = useCallback(async (raw) => {
+  const openLot = useCallback((raw) => {
+    const lot = String(raw || '').trim().toUpperCase();
+    if (!lot) return;
+    lookup(`/api/lots?resource=journey&lot_number=${encodeURIComponent(lot)}`, ({ res, data }) => {
+      if (res.status === 404) return { notFound: lot };
+      if (!res.ok) return { error: res.status === 403 ? 'You don’t have access to the Lot Tracker.' : (data?.error || 'Lookup failed') };
+      return { journey: data };
+    });
+  }, [lookup]);
+
+  const search = useCallback((raw) => {
     const q = String(raw || '').trim();
-    setLoading(true);
-    try {
-      const out = await request(`/api/lots?resource=journey-search&q=${encodeURIComponent(q)}`);
-      if (!out) return;
-      if (!out.res.ok) setView({ error: out.data?.error || 'Search failed' });
-      else setView({ results: out.data.results || [], q, limit: out.data.limit });
-    } catch {
-      setView({ error: 'Network error — check your connection and try again.' });
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
-    }
-  }, [request]);
+    lookup(`/api/lots?resource=journey-search&q=${encodeURIComponent(q)}`, ({ res, data }) => (
+      res.ok ? { results: data.results || [], q, limit: data.limit } : { error: data?.error || 'Search failed' }
+    ));
+  }, [lookup]);
 
   // A scanned sticker (or a typed lot number) opens the journey; anything else is a search.
   const submit = useCallback((raw) => {
     const text = String(raw || '').trim();
     if (!text) return;
+    // Clear the box NOW (not when the answer arrives) so the next sticker can be scanned
+    // straight away without its first characters being wiped mid-scan.
+    setCode('');
+    inputRef.current?.focus();
     if (looksLikeLotNumber(text)) {
       const lot = text.toUpperCase();
       if (lot === lotParam) openLot(lot); // same sticker scanned again → refresh it
@@ -212,8 +225,10 @@ export default function LotTrackerPage() {
     }
   }, [search, setParams, openLot, lotParam]);
   useEffect(() => {
-    if (!localStorage.getItem('user')) { navigate('/'); return; }
-    if (allowed && lotParam) openLot(lotParam);
+    if (!localStorage.getItem('user')) { navigate('/', { replace: true }); return; }
+    if (!allowed) return;
+    if (lotParam) openLot(lotParam);
+    else setView((v) => (v?.journey || v?.notFound ? null : v)); // Back to a URL with no lot → no stale journey
   }, [allowed, lotParam, openLot, navigate]);
 
   if (!allowed) {

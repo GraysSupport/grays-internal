@@ -111,17 +111,19 @@ console.log('\nthe journey Nick asked for:');
   check('where it is assigned: workorder, invoice, customer', j.assignment.workorder_id === 883 && j.assignment.invoice_id === 'INV-883' && j.assignment.customer_name === 'Dana Customer');
   check('when it went to the workshop + who did it', j.workshop.in_workshop === '2026-08-18T04:54:01.000Z' && j.workshop.technician_id === 'ED' && j.workshop.technician_name === 'Eden' && j.workshop.item_status === 'Completed');
   check('the details: serial number (from the item when the lot has none)', j.lot.serial_number === 'SN-12345' && j.workshop.serial_number === 'SN-12345');
-  check('when it was delivered + by who', j.deliveries.length === 1 && j.deliveries[0].delivery_date === '2026-08-21' && j.deliveries[0].carrier === 'Cobbs Transport' && j.deliveries[0].delivery_status === 'Delivery Completed');
+  check('delivery: date, carrier, status', j.deliveries.length === 1 && j.deliveries[0].delivery_date === '2026-08-21' && j.deliveries[0].carrier === 'Cobbs Transport' && j.deliveries[0].delivery_status === 'Delivery Completed');
+  check('when it was delivered + by who = the completion record (timestamp + the person who marked it)', j.delivered.completed_at === '2026-08-25T00:30:00.000Z' && j.delivered.completed_by === 'GL' && j.delivered.completed_by_name === 'Shaun Cronin');
   check('product', j.product.sku === '2609' && j.product.name === 'Life Fitness 95T Treadmill' && j.product.brand === 'Life Fitness');
 
   const titles = j.timeline.map((e) => e.title);
   check('timeline is oldest-first and reads as a story', titles.join(' > ') === [
     'Collected (extraction)', 'Lot number issued', 'Workorder created', 'Went into the workshop',
-    'Workshop completed', 'Delivery booked', 'Delivered', 'Order dispatched',
+    'Workshop completed', 'Delivery booked', 'Delivery completed',
   ].join(' > '), titles.join(' > '));
+  check('nothing is called "dispatched" after it was delivered, and no invented "Delivered" date', !titles.includes('Order dispatched') && !titles.includes('Delivered'));
   const by = Object.fromEntries(j.timeline.map((e) => [e.title, e.by_name]));
-  check('every step names who did it', by['Collected (extraction)'] === 'Nelson Removals' && by['Lot number issued'] === 'Nick Enrique Wijaya' && by['Went into the workshop'] === 'Eden' && by['Delivery booked'] === 'Shaun Cronin' && by['Delivered'] === 'Cobbs Transport');
-  check('date-only steps are marked so the page does not invent a time', j.timeline.filter((e) => e.date_only).map((e) => e.title).join(',') === 'Collected (extraction),Delivered');
+  check('every step names who did it', by['Collected (extraction)'] === 'Nelson Removals' && by['Lot number issued'] === 'Nick Enrique Wijaya' && by['Went into the workshop'] === 'Eden' && by['Delivery booked'] === 'Shaun Cronin' && by['Delivery completed'] === 'Shaun Cronin');
+  check('date-only steps are marked so the page does not invent a time', j.timeline.filter((e) => e.date_only).map((e) => e.title).join(',') === 'Collected (extraction)');
 
   check('exactly THREE statements, all SELECTs', client.calls.length === 3 && !client.calls.some(isWrite) && client.calls.every((c) => /^\s*SELECT/i.test(c.text)));
   check('the lot number is upper-cased and passed as a parameter', client.calls[0].params[0] === 'L00001');
@@ -158,7 +160,30 @@ console.log('\nlots that have not got that far yet:');
 {
   const booked = [{ ...DELIVERIES[0], delivery_status: 'Booked for Delivery' }];
   const res = await run(makeClient({ deliveries: booked }));
-  check('a delivery that is only booked is listed but NOT reported as "Delivered"', res.body.deliveries[0].delivery_status === 'Booked for Delivery' && !res.body.timeline.some((e) => e.title === 'Delivered'));
+  check('a delivery that is only booked is listed but NOT reported as delivered', res.body.deliveries[0].delivery_status === 'Booked for Delivery' && res.body.delivered === null);
+}
+{
+  // Customer Collect: completed with NO delivery date — the completion record still says when + who.
+  const collect = [{ ...DELIVERIES[0], delivery_date: null, carrier: 'Customer Collect' }];
+  const res = await run(makeClient({ deliveries: collect }));
+  check('a completed delivery with no date still reports when it was completed and by whom', res.body.delivered?.completed_by_name === 'Shaun Cronin' && res.body.deliveries[0].delivery_date === null);
+}
+{
+  const lotSerial = await run(makeClient({ lot: { ...LOT_ROW, serial_number: 'LOT-SN', item_sn: 'ITEM-SN' } }));
+  check('one serial number everywhere (the lot’s own wins)', lotSerial.body.lot.serial_number === 'LOT-SN' && lotSerial.body.workshop.serial_number === 'LOT-SN');
+}
+{
+  const pending = await run(makeClient({ lot: { ...LOT_ROW, collection_status: 'Confirmed', collection_date: null } }));
+  check('a collection that is not completed is not called "Collected", and an undated one still comes first', pending.body.timeline[0].title === 'Collection confirmed (extraction)');
+}
+{
+  // 18 Aug 2026 00:30 Melbourne = 17 Aug 14:30 UTC. Compared in UTC it would sort BEFORE a
+  // collection dated 18 Aug; in Melbourne time it is correctly on the 18th, after it.
+  const early = await run(makeClient({
+    lot: { ...LOT_ROW, collection_date: '2026-08-18', created_at: new Date('2026-08-17T14:30:00Z') },
+    logs: [], deliveries: [],
+  }));
+  check('timeline order uses Melbourne time for date-only vs timestamped steps', early.body.timeline.map((e) => e.title).join(',') === 'Collected (extraction),Lot number issued');
 }
 
 console.log('\nlookups that fail cleanly:');

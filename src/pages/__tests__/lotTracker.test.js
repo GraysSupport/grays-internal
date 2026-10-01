@@ -22,11 +22,12 @@ const JOURNEY = {
   assignment: { workorder_id: 883, workorder_items_id: 2001, invoice_id: 'INV-883', workorder_status: 'Completed', workorder_created: '2026-08-18T03:00:00.000Z', customer_id: 26, customer_name: 'Dana Customer', delivery_suburb: 'Altona North', delivery_state: 'VIC', salesperson: 'GS' },
   workshop: { item_status: 'Completed', condition: 'Refurbished', in_workshop: '2026-08-18T04:54:01.000Z', technician_id: 'ED', technician_name: 'Eden', serial_number: 'SN-12345' },
   deliveries: [{ delivery_id: 700, delivery_date: '2026-08-21', delivery_status: 'Delivery Completed', delivery_type: 'Delivery', suburb: 'Altona North', state: 'VIC', carrier: 'Cobbs Transport' }],
+  delivered: { completed_at: '2026-08-25T00:30:00.000Z', completed_by: 'GL', completed_by_name: 'Shaun Cronin' },
   timeline: [
     { kind: 'origin', at: '2026-07-10', date_only: true, title: 'Collected (extraction)', detail: 'Anytime Fitness Geelong, Geelong, VIC', by_name: 'Nelson Removals' },
     { kind: 'lot', at: '2026-07-10T02:00:00.000Z', title: 'Lot number issued', detail: 'L00001 · Life Fitness 95T Treadmill', by: 'GS', by_name: 'Nick Enrique Wijaya' },
     { kind: 'workshop', at: '2026-08-18T04:54:00.000Z', title: 'Went into the workshop', detail: null, by: 'ED', by_name: 'Eden' },
-    { kind: 'delivery', at: '2026-08-21', date_only: true, title: 'Delivered', detail: 'Altona North, VIC', by_name: 'Cobbs Transport' },
+    { kind: 'delivery', at: '2026-08-25T00:30:00.000Z', title: 'Delivery completed', detail: 'Workorder 883 · invoice INV-883', by: 'GL', by_name: 'Shaun Cronin' },
   ],
 };
 
@@ -141,15 +142,61 @@ describe('the journey', () => {
     expect(within(workshop).getByText('SN-12345')).toBeInTheDocument();
     // when it was delivered + by who
     const delivery = screen.getByRole('heading', { name: 'Delivery' }).closest('section');
-    expect(within(delivery).getByText('Delivered on')).toBeInTheDocument();
+    expect(within(delivery).getByText('Delivery date')).toBeInTheDocument();
     expect(within(delivery).getByText('21 Aug 2026')).toBeInTheDocument();
+    expect(within(delivery).getByText('Delivered by (carrier)')).toBeInTheDocument();
     expect(within(delivery).getByText('Cobbs Transport')).toBeInTheDocument();
+    expect(within(delivery).getByText('Marked completed')).toBeInTheDocument();
+    expect(within(delivery).getByText(/25 Aug 2026, 10:30\s?am/i)).toBeInTheDocument();
+    expect(within(delivery).getByText('Shaun Cronin')).toBeInTheDocument();
     // the journey, in order, each step with who
     const steps = within(screen.getByRole('list', { name: 'Item journey' })).getAllByRole('listitem').map((li) => li.textContent);
     expect(steps).toHaveLength(4);
     expect(steps[0]).toMatch(/Collected \(extraction\).*10 July? 2026 · Nelson Removals/);
     expect(steps[2]).toMatch(/Went into the workshop.*Eden/);
-    expect(steps[3]).toMatch(/Delivered.*21 Aug 2026 · Cobbs Transport/);
+    expect(steps[3]).toMatch(/Delivery completed.*25 Aug 2026, 10:30\s?am · Shaun Cronin/i);
+  });
+
+  test('a booked (not completed) delivery is not presented as delivered', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, deliveries: [{ ...JOURNEY.deliveries[0], delivery_status: 'Booked for Delivery' }], delivered: null, timeline: JOURNEY.timeline.slice(0, 3) }] });
+    renderPage('/lot-tracker?lot=L00001');
+    await screen.findByRole('heading', { name: 'L00001' });
+    const delivery = screen.getByRole('heading', { name: 'Delivery' }).closest('section');
+    expect(within(delivery).getByText('Booked for Delivery')).toBeInTheDocument();
+    expect(within(delivery).getByText('Carrier')).toBeInTheDocument();
+    expect(within(delivery).queryByText('Delivered by (carrier)')).toBeNull();
+    expect(within(delivery).queryByText('Marked completed')).toBeNull();
+  });
+
+  test('a workorder with two deliveries says it cannot tell which one this item went on', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, deliveries: [JOURNEY.deliveries[0], { ...JOURNEY.deliveries[0], delivery_id: 701, delivery_status: 'Booked for Delivery', delivery_date: null }] }] });
+    renderPage('/lot-tracker?lot=L00001');
+    await screen.findByRole('heading', { name: 'L00001' });
+    expect(screen.getByText(/This workorder has 2 deliveries/)).toBeInTheDocument();
+    expect(screen.getByText('No date set')).toBeInTheDocument();
+  });
+
+  test('a second sticker scanned while the first is still loading wins — the slow answer is dropped', async () => {
+    login(['admin']);
+    let releaseFirst;
+    const second = { ...JOURNEY, lot: { ...JOURNEY.lot, lot_number: 'L00002' } };
+    global.fetch = jest.fn((url) => {
+      const reply = (json) => ({ ok: true, status: 200, json: async () => json });
+      if (String(url).includes('L00001')) return new Promise((resolve) => { releaseFirst = () => resolve(reply(JOURNEY)); });
+      return Promise.resolve(reply(second));
+    });
+    renderPage();
+    type('L00001');
+    expect(screen.getByLabelText('Lot number or search')).toHaveValue(''); // cleared at once, ready for the next scan
+    type('L00002');
+    expect(await screen.findByRole('heading', { name: 'L00002' })).toBeInTheDocument();
+    releaseFirst();
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByRole('heading', { name: 'L00002' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'L00001' })).toBeNull();
   });
 
   test('the phone camera scan opens the same journey', async () => {
@@ -185,7 +232,7 @@ describe('the journey', () => {
     await screen.findByRole('heading', { name: 'L00001' });
     expect(screen.getByText('Not assigned to a workorder yet.')).toBeInTheDocument();
     expect(screen.getByText(/No workshop record yet/)).toBeInTheDocument();
-    expect(screen.getByText(/No delivery has been raised/)).toBeInTheDocument();
+    expect(screen.getByText('No delivery has been raised for this workorder yet.')).toBeInTheDocument();
     expect(screen.getByText('Not recorded')).toBeInTheDocument(); // serial
   });
 
