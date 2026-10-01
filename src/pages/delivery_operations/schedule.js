@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
+import {
+  RUN_ORDER_ROLES, compareStops, sameRun, moveStop, neighbourInRun, runOrderPayload, stopsInRun,
+} from '../../utils/runOrder';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 
@@ -137,6 +141,17 @@ export default function DeliverySchedulePage() {
   const [savingIds, setSavingIds] = useState(new Set());
   const [savingWO, setSavingWO] = useState(new Set());
 
+  // G9: saved stop order per delivery ({ delivery_id: stop number }). `runOrderAvailable` is
+  // false until the run_order column exists on this database (prod before migration 0008) —
+  // the reorder controls stay hidden and the schedule sorts exactly as it always has.
+  const [runOrder, setRunOrder] = useState({});
+  const [runOrderAvailable, setRunOrderAvailable] = useState(false);
+  const canReorderRole = useMemo(() => hasAnyRole(getRoles(), RUN_ORDER_ROLES), []);
+  const dragRef = useRef(null);       // the delivery being dragged (a ref: no re-render mid-drag)
+  const runOrderRef = useRef({});     // latest order, for moves made faster than a re-render
+  const saveChainRef = useRef(Promise.resolve()); // run-order saves go one at a time, in order
+  const refocusRef = useRef(null);    // `${delivery_id}-${dir}` — restore focus after a keyboard move
+
   const currentUserId = useMemo(() => {
     try {
       const raw = localStorage.getItem('user');
@@ -241,6 +256,32 @@ export default function DeliverySchedulePage() {
     return () => { mounted = false; };
   }, [navigate]);
 
+  // G9: the saved stop order. Read separately (not in the big list query) so a database
+  // without the run_order column simply answers `available: false`.
+  const applyRunOrder = useCallback((next) => {
+    runOrderRef.current = next;
+    setRunOrder(next);
+  }, []);
+  const loadRunOrder = useCallback(async () => {
+    try {
+      const res = await fetch('/api/delivery?resource=run-order');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.available ? (data.order || {}) : null;
+    } catch {
+      return null; // No saved order is not an error — the schedule keeps its default order.
+    }
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    loadRunOrder().then((order) => {
+      if (!mounted || !order) return;
+      applyRunOrder(order);
+      setRunOrderAvailable(true);
+    });
+    return () => { mounted = false; };
+  }, [loadRunOrder, applyRunOrder]);
+
   // Helper to detect "Customer Collect" by resolved carrier name
   const isCustomerCollect = useCallback((row) => {
     const resolved =
@@ -329,6 +370,112 @@ export default function DeliverySchedulePage() {
       .map(([k, v]) => [k, v]);
   }, [nonCustomerCollectRows]);
 
+  // G9: reordering is offered only when the whole schedule is on screen. With a search or a
+  // filter applied, some of a run's stops are hidden, and "move up" would mean something
+  // different from what the user sees.
+  const reorderEnabled = canReorderRole && runOrderAvailable && filtered.length === rows.length;
+
+  // Move `fromId` to where `toId` sits — same carrier AND same day only (sameRun).
+  //
+  // Optimistic: the row moves at once. Saves are QUEUED so two quick moves (↑ ↑ on the
+  // keyboard) reach the server in the order they were made — each save carries the run's
+  // complete order, so the last one in is the truth. If a save is refused, the screen is
+  // reloaded from the server rather than rewound to a snapshot (a snapshot would also throw
+  // away later moves that DID save).
+  const moveRunStop = useCallback((fromId, toId) => {
+    const ids = moveStop(rows, runOrderRef.current, fromId, toId);
+    if (!ids) return false;
+    const row = rows.find((r) => r.delivery_id === fromId);
+    const next = { ...runOrderRef.current };
+    ids.forEach((id, i) => { next[id] = i + 1; });
+    applyRunOrder(next);
+
+    const payload = JSON.stringify(runOrderPayload(row, ids));
+    saveChainRef.current = saveChainRef.current.then(async () => {
+      try {
+        const res = await fetch('/api/delivery?resource=run-order', {
+          method: 'PUT',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: payload,
+        });
+        if (res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        throw new Error(
+          res.status === 401 ? 'your sign-in has expired — sign in again'
+            : res.status === 403 ? 'you don’t have permission to reorder runs'
+              : (data?.error || 'please try again')
+        );
+      } catch (e) {
+        toast.error(`Stop order not saved — ${e.message}`);
+        const fresh = await loadRunOrder();
+        if (fresh) applyRunOrder(fresh);
+      }
+    });
+    return true;
+  }, [rows, applyRunOrder, loadRunOrder]);
+
+  // After a Move up/down the table re-renders and the button loses focus — put it back.
+  useEffect(() => {
+    const key = refocusRef.current;
+    if (!key) return;
+    refocusRef.current = null;
+    const [id, dir] = key.split('-');
+    const other = dir === 'up' ? 'down' : 'up';
+    const pick = (d) => document.querySelector(`[data-run-move="${id}-${d}"]:not(:disabled)`);
+    (pick(dir) || pick(other))?.focus();
+  }, [runOrder]);
+
+  // G9 drag-and-drop. Only the ⠿ HANDLE is draggable — making the whole row draggable would
+  // stop people selecting an invoice number or a name to copy, and breaks text inputs inside a
+  // draggable ancestor in Firefox. The row is the DROP TARGET. The dragged delivery lives in a
+  // ref and the cues are set straight on the DOM node, so nothing re-renders (and re-mounts
+  // the table) mid-drag. Backgrounds as well as outlines: Safari doesn't draw outline on <tr>.
+  const DROP_CUES = ['outline', 'outline-2', 'outline-gray-400', 'outline-red-400', '!bg-gray-200', '!bg-red-100'];
+  const clearCue = (el) => { el.classList.remove(...DROP_CUES); el.removeAttribute('title'); };
+  const runHandleProps = (row) => ({
+    draggable: true,
+    onDragStart: (e) => {
+      dragRef.current = row;
+      const tr = e.currentTarget.closest('tr');
+      tr?.classList.add('opacity-50');
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(row.delivery_id));
+        if (tr) e.dataTransfer.setDragImage(tr, 16, 16);
+      } catch { /* jsdom */ }
+    },
+    onDragEnd: (e) => {
+      dragRef.current = null;
+      e.currentTarget.closest('tr')?.classList.remove('opacity-50');
+    },
+  });
+  const runDropProps = (row) => ({
+    onDragOver: (e) => {
+      const from = dragRef.current;
+      if (!reorderEnabled || !from || from.delivery_id === row.delivery_id) return;
+      // Same carrier AND same day → a valid drop; anything else gets the red cue.
+      if (sameRun(from, row)) {
+        e.preventDefault();
+        e.currentTarget.classList.add('outline', 'outline-2', 'outline-gray-400', '!bg-gray-200');
+      } else {
+        e.currentTarget.classList.add('outline', 'outline-2', 'outline-red-400', '!bg-red-100');
+        e.currentTarget.title = 'Stops can only be reordered within the same carrier and day';
+      }
+    },
+    onDragLeave: (e) => {
+      if (e.currentTarget.contains(e.relatedTarget)) return; // moving between this row's own cells
+      clearCue(e.currentTarget);
+    },
+    onDrop: (e) => {
+      clearCue(e.currentTarget);
+      const from = dragRef.current;
+      dragRef.current = null;
+      if (!from) return;
+      e.preventDefault();
+      if (sameRun(from, row)) moveRunStop(from.delivery_id, row.delivery_id);
+    },
+  });
+
   const saveDelivery = useCallback(async (deliveryId, patch) => {
     if (!deliveryId || !patch || typeof patch !== 'object') return;
     const toastId = startToast('saveDelivery', deliveryId);
@@ -350,6 +497,13 @@ export default function DeliverySchedulePage() {
           r.delivery_id === deliveryId ? { ...r, ...patch } : r
         );
       });
+      // G9: a stop number belongs to one run (carrier + day). Re-booked → it no longer applies
+      // (the server stops returning it too — see run_order_key in lib/deliveryRunOrder.js).
+      if (('removalist_id' in patch || 'delivery_date' in patch) && runOrderRef.current[deliveryId] != null) {
+        const next = { ...runOrderRef.current };
+        delete next[deliveryId];
+        applyRunOrder(next);
+      }
 
       resolveToast(toastId, true, 'Saved');
     } catch (e) {
@@ -361,7 +515,7 @@ export default function DeliverySchedulePage() {
         return copy;
       });
     }
-  }, [currentUserId]);
+  }, [currentUserId, applyRunOrder]);
 
   const saveWorkorderPayment = useCallback(async (workorder_id, newOutstanding) => {
     if (!workorder_id) return;
@@ -645,11 +799,9 @@ export default function DeliverySchedulePage() {
 
   // Renders a single date block; rows are CLICKABLE like To-Be-Booked
   const DateBlock = ({ dateKey, rowsForDate }) => {
-    const sorted = [...rowsForDate].sort((a, b) => {
-      const an = (a.removalist_name || '').localeCompare(b.removalist_name || '');
-      if (an !== 0) return an;
-      return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
-    });
+    // G9: carrier, then saved stop order, then customer (unordered rows sort as before).
+    const sorted = [...rowsForDate].sort(compareStops(runOrder));
+    const cols = reorderEnabled ? 14 : 13;
 
     let lastCarrier = null;
 
@@ -660,6 +812,7 @@ export default function DeliverySchedulePage() {
           <table className="min-w-full table-fixed">
             <thead className="bg-gray-100">
               <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                {reorderEnabled && <th className="px-3 py-2 w-28">Stop</th>}
                 <th className="px-3 py-2 w-28">Invoice</th>
                 <th className="px-3 py-2 w-40">Name</th>
                 <th className="px-3 py-2 w-32">Suburb</th>
@@ -677,10 +830,10 @@ export default function DeliverySchedulePage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && (
-                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                <tr><td colSpan={cols} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
               {!loading && sorted.length === 0 && (
-                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
+                <tr><td colSpan={cols} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
               )}
               {!loading && sorted.map((row, idx) => {
                 const margin =
@@ -690,18 +843,34 @@ export default function DeliverySchedulePage() {
                 const carrierChanged = (row.removalist_name || '—') !== lastCarrier;
                 lastCarrier = row.removalist_name || '—';
 
+                // G9: this row's place in its run (carrier + day), and its neighbours.
+                const runStops = reorderEnabled ? stopsInRun(rows, row, runOrder) : [];
+                const stopNo = runStops.findIndex((r) => r.delivery_id === row.delivery_id) + 1;
+                const up = reorderEnabled ? neighbourInRun(rows, runOrder, row, 'up') : null;
+                const down = reorderEnabled ? neighbourInRun(rows, runOrder, row, 'down') : null;
+                const label = row.customer_name || `delivery ${row.delivery_id}`;
+                const keyMove = (target, dir) => (e) => {
+                  e.stopPropagation();
+                  if (!target) return;
+                  refocusRef.current = `${row.delivery_id}-${dir}`;
+                  moveRunStop(row.delivery_id, target.delivery_id);
+                };
+
                 return (
                   <Fragment key={row.delivery_id}>
                     {carrierChanged && (
-                      <tr className="bg-gray-50/80">
-                        <td colSpan={12} className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                      <tr className="bg-gray-50/80" data-run-group={`${row.removalist_id ?? 'none'}|${dateKey}`}>
+                        <td colSpan={cols - 1} className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
                           Carrier: {lastCarrier}
+                          {/* G10 hook (not built): an "Auto-optimise run" button for this carrier + day
+                              belongs here; it would send its order through moveRunStop's PUT. */}
                         </td>
                       </tr>
                     )}
                     <tr
                       className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} cursor-pointer hover:bg-gray-100 align-top`}
                       tabIndex={0}
+                      {...runDropProps(row)}
                       onClick={(e) => {
                         if (shouldBlockRowNav(e)) return;
                         goWorkorder(row.workorder_id);
@@ -710,6 +879,36 @@ export default function DeliverySchedulePage() {
                         if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                       }}
                     >
+                      {reorderEnabled && (
+                        <td className="px-3 py-2 text-sm whitespace-nowrap" onKeyDown={(e) => e.stopPropagation()}>
+                          {stopNo > 0 ? (
+                            <span className="inline-flex items-center gap-1">
+                              <span {...runHandleProps(row)} data-run-handle={row.delivery_id} aria-hidden="true" title="Drag to reorder within this carrier and day" className="cursor-grab select-none px-1 text-gray-500">⠿</span>
+                              <span className="w-5 text-right font-semibold text-gray-700">{stopNo}</span>
+                              <button
+                                type="button"
+                                data-run-move={`${row.delivery_id}-up`}
+                                aria-label={`Move ${label} up`}
+                                disabled={!up}
+                                onClick={keyMove(up, 'up')}
+                                className="rounded border px-1.5 py-0.5 hover:bg-gray-50 disabled:opacity-40"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                data-run-move={`${row.delivery_id}-down`}
+                                aria-label={`Move ${label} down`}
+                                disabled={!down}
+                                onClick={keyMove(down, 'down')}
+                                className="rounded border px-1.5 py-0.5 hover:bg-gray-50 disabled:opacity-40"
+                              >
+                                ↓
+                              </button>
+                            </span>
+                          ) : <span className="text-gray-600" title="Set a delivery date to order this stop">—</span>}
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
                       <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
@@ -832,9 +1031,9 @@ export default function DeliverySchedulePage() {
       .sort((a, b) => {
         const d = ymd(a.delivery_date).localeCompare(ymd(b.delivery_date));
         if (d !== 0) return d;
-        const c = (a.removalist_name || '').localeCompare(b.removalist_name || '');
-        if (c !== 0) return c;
-        return (a.customer_name || '').localeCompare(b.customer_name || '');
+        // G9: carrier, then the saved stop order, then customer — the printed run sheet
+        // lists stops in the order logistics arranged them.
+        return compareStops(runOrder)(a, b);
       })
       .map((r) => {
         const charged = r.delivery_charged == null ? null : Number(r.delivery_charged);
@@ -863,7 +1062,7 @@ export default function DeliverySchedulePage() {
           status: r.delivery_status || '—',
         };
       });
-  }, [filtered]);
+  }, [filtered, runOrder]);
 
   const printableByCarrier = useMemo(() => {
     const map = new Map();
