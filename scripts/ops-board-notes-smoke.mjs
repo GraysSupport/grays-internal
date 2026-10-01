@@ -1,7 +1,7 @@
 // scripts/ops-board-notes-smoke.mjs — offline smoke for G7 (Nick, 28 Sep 2026): the shared
 // notes panel on the To-Be-Booked deliveries tab ("when drivers are coming in next").
 //
-//   GET /api/delivery?resource=board-notes   any logged-in user reads the note
+//   GET /api/delivery?resource=board-notes   anyone on the tab reads the note (no token)
 //   PUT /api/delivery?resource=board-notes   logistics / admin / superadmin save it
 //
 // Exercises lib/deliveryBoardNotes.js with a fake pg client that behaves like the one table
@@ -41,12 +41,13 @@ function makeClient({ missing = false, row = null } = {}) {
       if (missing) throw undefinedTable();
       if (/^SELECT/i.test(sql)) return { rows: joined() };
       if (/^INSERT INTO delivery_board_notes/i.test(sql)) {
-        const [board, body, userId, force, baseVersion] = params;
+        const [board, body, userId, baseVersion] = params;
+        if (params.length !== 4 || !Number.isInteger(baseVersion)) throw new Error('smoke: upsert expects (board, body, user, int version)');
         if (!state.row) {
           state.row = { board, body, updated_by: userId, updated_at: new Date('2026-10-01T04:00:00Z'), version: 1 };
           return { rows: [{ version: 1 }] };
         }
-        if (force || Number(baseVersion) === state.row.version) {
+        if (baseVersion === state.row.version) {
           state.row = { ...state.row, body, updated_by: userId, updated_at: new Date('2026-10-01T05:00:00Z'), version: state.row.version + 1 };
           return { rows: [{ version: state.row.version }] };
         }
@@ -81,8 +82,15 @@ console.log('G7 board-notes smoke — fake client, no DB\n');
 
 console.log('reading:');
 {
-  const res = await run(makeClient(), { noAuth: true });
-  check('401 without a token', res.statusCode === 401);
+  // Token-less on purpose: the 1h JWT expires mid-shift but the tab's other reads keep working.
+  const client = makeClient({ row: { board: 'to-be-booked', body: 'Nelson — Thu 2 Oct AM', updated_by: 'GA', updated_at: new Date('2026-10-01T03:00:00Z'), version: 3 } });
+  const res = await run(client, { noAuth: true });
+  check('readable without a token (like the rest of the tab)', res.statusCode === 200 && res.body.body === 'Nelson — Thu 2 Oct AM');
+  const expired = makeReq();
+  expired.headers.authorization = 'Bearer not.a.valid-token';
+  const res2 = makeRes();
+  await handleBoardNotes(expired, res2, client);
+  check('…and with an expired/garbage token', res2.statusCode === 200);
 }
 for (const role of ['technician', 'staff', 'sales', 'workshop', 'logistics', 'admin', 'superadmin']) {
   const client = makeClient({ row: { board: 'to-be-booked', body: 'Nelson — Thu 2 Oct AM', updated_by: 'GA', updated_at: new Date('2026-10-01T03:00:00Z'), version: 3 } });
@@ -137,8 +145,12 @@ console.log('\nsaving:');
   const res = await run(client, { method: 'PUT', body: { body: 'mine', base_version: 3 } });
   check('someone saved since I opened it → 409, nothing overwritten', res.statusCode === 409 && client.state.row.body === 'theirs');
   check('  the 409 carries their note so the page can show it', res.body.current?.body === 'theirs' && res.body.current?.updated_by_name === 'Vincent Ly' && res.body.current?.version === 5);
-  const forced = await run(client, { method: 'PUT', body: { body: 'mine', base_version: 3, force: true } });
-  check('  …and "overwrite anyway" (force) saves', forced.statusCode === 200 && client.state.row.body === 'mine' && forced.body.version === 6);
+  const blind = await run(client, { method: 'PUT', body: { body: 'mine', base_version: 3, force: true } });
+  check('  there is NO blind force — `force` is ignored, still 409', blind.statusCode === 409 && client.state.row.body === 'theirs');
+  const overwrite = await run(client, { method: 'PUT', body: { body: 'mine', base_version: 5 } });
+  check('  "Overwrite with mine" = saving on the version I was SHOWN', overwrite.statusCode === 200 && client.state.row.body === 'mine' && overwrite.body.version === 6);
+  const third = await run(client, { method: 'PUT', body: { body: 'late', base_version: 5 } });
+  check('  …so a third save in between is caught too', third.statusCode === 409 && client.state.row.body === 'mine');
 }
 {
   const client = makeClient({ row: { board: 'to-be-booked', body: 'theirs', updated_by: 'GA', updated_at: new Date(), version: 1 } });
@@ -156,6 +168,13 @@ console.log('\nsaving:');
   check(`400 over ${BOARD_NOTE_MAX_LENGTH} characters — and no query ran`, tooLong.statusCode === 400 && client.calls.length === 0);
   const notText = await run(client, { method: 'PUT', body: { body: { evil: true }, base_version: 0 } });
   check('400 when body is not text — and no query ran', notText.statusCode === 400 && client.calls.length === 0);
+  for (const bad of ['3', true, [5], 1.5, -1, 1e10, { v: 1 }]) {
+    const r = await run(client, { method: 'PUT', body: { body: 'hi', base_version: bad } });
+    check(`400 for base_version ${JSON.stringify(bad)} — and no query ran`, r.statusCode === 400 && client.calls.length === 0);
+  }
+  const nul = makeClient();
+  const nulRes = await run(nul, { method: 'PUT', body: { body: 'a\u0000b', base_version: 0 } });
+  check('a NUL character is dropped, not a 500', nulRes.statusCode === 200 && nul.state.row.body === 'ab');
   const atCap = await run(client, { method: 'PUT', body: { body: 'x'.repeat(BOARD_NOTE_MAX_LENGTH), base_version: 0 } });
   check('exactly at the cap is accepted', atCap.statusCode === 200);
 }
@@ -189,6 +208,11 @@ console.log('\nwiring + migration:');
   const at = handler.indexOf("=== 'board-notes'");
   check('delivery handler routes resource=board-notes to handleBoardNotes', at > 0 && /handleBoardNotes\(req,\s*res,\s*client\)/.test(handler));
   check('…and dispatches it BEFORE the ungated create/read paths', at < handler.indexOf("if (method === 'GET')"));
+  // The panel repeats two server constants (CRA can't import from lib/) — keep them honest.
+  const panel = read('../src/components/DeliveryBoardNotes.js');
+  const clientRoles = /const EDIT_ROLES = \[([^\]]*)\]/.exec(panel)?.[1].replace(/['\s]/g, '');
+  check('panel EDIT_ROLES matches the server list', clientRoles === BOARD_NOTES_EDIT_ROLES.join(','), clientRoles);
+  check('panel MAX_LENGTH matches the server cap', new RegExp(`const MAX_LENGTH = ${BOARD_NOTE_MAX_LENGTH};`).test(panel));
   const up = read('../db/migrations/0007_delivery_board_notes.sql');
   const down = read('../db/migrations/0007_delivery_board_notes_down.sql');
   check('migration is additive + idempotent', /CREATE TABLE IF NOT EXISTS delivery_board_notes/.test(up) && !/\b(DROP|ALTER TABLE (?!delivery_board_notes))/i.test(up));

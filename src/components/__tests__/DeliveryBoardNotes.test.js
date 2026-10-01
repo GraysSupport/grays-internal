@@ -44,7 +44,14 @@ test('everyone on the tab can read the note, with who edited it last and when (M
   expect(screen.getByText(/Last edited by Vincent Ly/)).toBeInTheDocument();
   expect(screen.getByText(/1 Oct 2026/)).toBeInTheDocument();
   expect(screen.getByText(/2:15\s?pm/i)).toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledWith('/api/delivery?resource=board-notes', expect.objectContaining({ headers: expect.objectContaining({ Authorization: expect.any(String) }) }));
+  expect(fetchMock).toHaveBeenCalledWith('/api/delivery?resource=board-notes');
+});
+
+test('the note is readable with no login token at all (the 1h token expires mid-shift)', async () => {
+  localStorage.setItem('user', JSON.stringify({ id: 'BR', name: 'Brett', access: 'technician' }));
+  installFetch([200, NOTE]);
+  render(<DeliveryBoardNotes />);
+  expect(await screen.findByText(/Nelson — Thu 2 Oct AM/)).toBeInTheDocument();
 });
 
 test.each([['technician'], ['staff'], ['sales'], ['workshop']])('%s cannot edit', async (role) => {
@@ -62,6 +69,7 @@ test.each([['logistics'], ['admin'], ['superadmin']])('%s can edit and save; the
   render(<DeliveryBoardNotes />);
   await screen.findByText(/Nelson — Thu/);
   fireEvent.click(screen.getByRole('button', { name: 'Edit notes' }));
+  expect(screen.getByLabelText('Notes text')).toHaveFocus();
   fireEvent.change(screen.getByLabelText('Notes text'), { target: { value: 'Nelson — Fri 3 Oct PM' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
   expect(await screen.findByText('Saved')).toBeInTheDocument();
@@ -93,6 +101,7 @@ test('warns when someone else saved since you opened it — nothing is overwritt
     [409, { error: 'Nick Enrique Wijaya saved these notes after you opened them', current: theirs }],
     [200, { ...theirs, body: 'Mine', updated_by: 'GL', updated_by_name: 'Shaun Cronin', version: 5 }],
   );
+  // (the third response is the "Overwrite with mine" save)
   render(<DeliveryBoardNotes />);
   await screen.findByText(/Nelson — Thu/);
   fireEvent.click(screen.getByRole('button', { name: 'Edit notes' }));
@@ -107,7 +116,10 @@ test('warns when someone else saved since you opened it — nothing is overwritt
 
   fireEvent.click(screen.getByRole('button', { name: 'Overwrite with mine' }));
   await screen.findByText('Saved');
-  expect(lastPutBody(fetchMock)).toEqual({ body: 'Mine', base_version: 4, force: true });
+  // Overwriting saves on the version I was SHOWN (4) — no blind force — so if a third person
+  // saved in the meantime the server refuses again instead of silently losing their note.
+  expect(lastPutBody(fetchMock)).toEqual({ body: 'Mine', base_version: 4 });
+  expect(putCalls(fetchMock)).toHaveLength(2);
 });
 
 test('…or take their version instead (no second save)', async () => {
@@ -147,7 +159,43 @@ test('shows a character count and blocks an over-long note before it is sent', a
   expect(screen.getByLabelText('Notes text')).toHaveAttribute('maxLength', '2000');
   fireEvent.change(screen.getByLabelText('Notes text'), { target: { value: 'abc' } });
   expect(screen.getByText('3 / 2000')).toBeInTheDocument();
+  // A paste can beat maxLength in some browsers — Save must still refuse it client-side.
+  fireEvent.change(screen.getByLabelText('Notes text'), { target: { value: 'x'.repeat(2001) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/limited to 2000 characters/);
   expect(putCalls(fetchMock)).toHaveLength(0);
+});
+
+test.each([
+  [401, { error: 'Authentication required' }, /sign-in has expired/],
+  [403, { error: 'Requires one of: logistics, admin, superadmin' }, /don’t have permission/],
+])('a %i on save gets a plain-English message and keeps the draft', async (status, payload, message) => {
+  login(['admin']);
+  installFetch([200, NOTE], [status, payload]);
+  render(<DeliveryBoardNotes />);
+  await screen.findByText(/Nelson — Thu/);
+  fireEvent.click(screen.getByRole('button', { name: 'Edit notes' }));
+  fireEvent.change(screen.getByLabelText('Notes text'), { target: { value: 'Keep me' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(screen.getByLabelText('Notes text')).toHaveValue('Keep me');
+});
+
+test('coming back to the tab refreshes the note — but never under someone who is typing', async () => {
+  login(['admin']);
+  const newer = { ...NOTE, body: 'Updated while you were away', version: 4 };
+  const fetchMock = installFetch([200, NOTE], [200, newer], [200, { ...newer, body: 'Even newer', version: 5 }]);
+  render(<DeliveryBoardNotes />);
+  await screen.findByText(/Nelson — Thu/);
+  fireEvent.focus(window);
+  expect(await screen.findByText('Updated while you were away')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit notes' }));
+  fireEvent.change(screen.getByLabelText('Notes text'), { target: { value: 'typing…' } });
+  fireEvent.focus(window);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  expect(screen.getByLabelText('Notes text')).toHaveValue('typing…');
+  expect(screen.queryByText('Even newer')).toBeNull();
 });
 
 test('Cancel discards the draft', async () => {
@@ -160,6 +208,9 @@ test('Cancel discards the draft', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.getByText(/Nelson — Thu/)).toBeInTheDocument();
   expect(putCalls(fetchMock)).toHaveLength(0);
+  // …and reopening starts from the saved note, not the scrapped draft.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit notes' }));
+  expect(screen.getByLabelText('Notes text')).toHaveValue(NOTE.body);
 });
 
 test('renders nothing while the table is not migrated (prod before merge) or the read fails', async () => {
