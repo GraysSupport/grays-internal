@@ -14,7 +14,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { ROLES, LEGACY_ACCESS_LEVELS, legacyAccessFor, syncUserRoles } from '../lib/rbac.js';
+import { ROLES, LEGACY_ACCESS_LEVELS, legacyAccessFor, getRolesForUser } from '../lib/rbac.js';
 import { registerUser } from '../lib/usersAdmin.js';
 
 let passed = 0;
@@ -53,6 +53,9 @@ function makeDb(seed = []) {
         if (users.has(id)) throw pgErr('23505', 'duplicate key value violates unique constraint "users_pkey"');
         users.set(id, { id, name, email, password, access });
         return { rows: [] };
+      }
+      if (/^SELECT role FROM user_roles WHERE user_id = \$1/i.test(sql)) {
+        return { rows: roles.filter((r) => r.user_id === params[0]).map((r) => ({ role: r.role })) };
       }
       if (/^DELETE FROM user_roles WHERE user_id = \$1/i.test(sql)) {
         for (let i = roles.length - 1; i >= 0; i -= 1) if (roles[i].user_id === params[0]) roles.splice(i, 1);
@@ -99,6 +102,9 @@ for (const role of ROLES) {
   check(`200 for ${role}`, out.status === 200, JSON.stringify(out.body));
   check(`  ${role}: user row written, password hashed`, db.users.get('ZZ')?.password === 'hashed(pw-123456)');
   check(`  ${role}: user_roles = [${role}], granted_by = acting admin`, rolesOf(db, 'ZZ') === role && db.roles.every((r) => r.granted_by === 'GS'));
+  // ...and that user can log in with it: login signs getRolesForUser() into the JWT.
+  const loginRoles = await getRolesForUser(db, 'ZZ', db.users.get('ZZ').access);
+  check(`  ${role}: login resolves roles = [${role}] (not the users.access fallback)`, loginRoles.join(',') === role, loginRoles.join(','));
 }
 
 console.log('\nmulti-role:');
@@ -131,6 +137,8 @@ for (const [label, over, re] of [
   ['missing email', { email: '' }, /email/i],
   ['malformed email', { email: 'not-an-email' }, /email/i],
   ['missing password', { password: '' }, /password/i],
+  ['over-long name', { name: 'n'.repeat(256) }, /255/],
+  ['over-long email', { email: `${'e'.repeat(250)}@x.com.au` }, /255/],
 ]) {
   const db = makeDb();
   const out = await registerUser(db, body(over), 'GS', deps);
@@ -146,11 +154,17 @@ for (const [label, over, re] of [
   };
   const out = await registerUser(db, body(), 'GS', deps);
   check('409 (not 500) when the INSERT hits a unique violation', out.status === 409);
+  db.query = async (text, params) => {
+    if (/^\s*INSERT INTO users/i.test(text)) throw Object.assign(new Error('dup'), { code: '23505', constraint: 'users_email_key' });
+    return realQuery(text, params);
+  };
+  const emailRace = await registerUser(db, body(), 'GS', deps);
+  check('...and it names the email when that is the constraint that fired', emailRace.status === 409 && /email/i.test(emailRace.body.error));
 }
 {
   const db = makeDb();
   const out = await registerUser(db, body({ id: ' zz ' }), 'GS', deps);
-  check('ID is trimmed', out.status === 200 && db.users.has('zz'));
+  check('ID is trimmed and upper-cased (IDs are upper-case everywhere)', out.status === 200 && db.users.has('ZZ') && !db.users.has('zz'));
 }
 
 console.log('\nno half-created user if the role write fails:');
