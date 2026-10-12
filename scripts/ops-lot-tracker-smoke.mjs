@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const jwt = (await import('jsonwebtoken')).default;
-const { handleLotJourney, LOT_TRACKER_ROLES, LOT_SEARCH_LIMIT } = await import('../lib/lotJourney.js');
+const { handleLotJourney, LOT_TRACKER_ROLES, LOT_SEARCH_LIMIT, PRODUCT_LOTS_LIMIT } = await import('../lib/lotJourney.js');
 
 let passed = 0;
 function check(name, cond, detail) {
@@ -46,7 +46,7 @@ const DELIVERIES = [
   { delivery_id: 700, delivery_date: '2026-08-21', delivery_status: 'Delivery Completed', delivery_type: 'Delivery', delivery_suburb: 'Altona North', delivery_state: 'VIC', date_created: new Date('2026-08-18T05:00:00Z'), carrier: 'Cobbs Transport' },
 ];
 
-function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, search = [] } = {}) {
+function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, search = [], productLots = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -57,6 +57,7 @@ function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, searc
       if (/FROM workorder_logs l/i.test(sql)) return { rows: logs };
       if (/FROM delivery d/i.test(sql)) return { rows: deliveries };
       if (/WHERE pl\.lot_number ILIKE \$1/i.test(sql)) return { rows: search };
+      if (/WHERE UPPER\(pl\.product_sku\) = \$1/i.test(sql)) return { rows: productLots };
       throw new Error(`unexpected SQL in smoke: ${sql.slice(0, 120)}`);
     },
   };
@@ -91,7 +92,7 @@ check('roles = admin, superadmin', LOT_TRACKER_ROLES.join(',') === 'admin,supera
   check('401 without a token — and no query ran', res.statusCode === 401 && client.calls.length === 0);
 }
 for (const role of ['logistics', 'technician', 'staff', 'sales', 'workshop']) {
-  for (const resource of ['journey', 'journey-search']) {
+  for (const resource of ['journey', 'journey-search', 'product-lots']) {
     const client = makeClient();
     const res = await run(client, { roles: [role], query: { resource, lot_number: 'L00001', q: 'tread' } });
     check(`403 for ${role} on ${resource} — and no query ran`, res.statusCode === 403 && client.calls.length === 0);
@@ -225,6 +226,32 @@ console.log('\nsearch:');
   check('400 for an over-long search — and no query ran', res2.statusCode === 400 && long.calls.length === 0);
 }
 
+console.log('\nproduct lots — "View Lots" on the Products page (in-stock lots for one product):');
+{
+  const IN_STOCK = [
+    { lot_number: 'L00007', serial_number: null, unit_cost: '450.00', created_at: new Date('2026-07-10T02:00:00Z'), collection_name: 'Anytime Fitness Geelong', collection_date: '2026-07-10' },
+    { lot_number: 'L00009', serial_number: 'SN-9', unit_cost: null, created_at: new Date('2026-08-01T02:00:00Z'), collection_name: null, collection_date: null },
+  ];
+  const client = makeClient({ productLots: IN_STOCK });
+  const res = await run(client, { query: { resource: 'product-lots', sku: ' lf-95t ' } });
+  check('returns the lots for that product', res.statusCode === 200 && res.body.sku === 'LF-95T' && res.body.count === 2 && res.body.lots.map((l) => l.lot_number).join(',') === 'L00007,L00009');
+  check('each lot carries serial, date issued and where it came from', res.body.lots[0].collection_name === 'Anytime Fitness Geelong' && res.body.lots[0].collection_date === '2026-07-10' && res.body.lots[0].created_at === '2026-07-10T02:00:00.000Z' && res.body.lots[1].serial_number === 'SN-9');
+  check('exactly ONE statement, a SELECT', client.calls.length === 1 && !isWrite(client.calls[0]) && /^\s*SELECT/i.test(client.calls[0].text));
+  check('the SKU is trimmed, upper-cased and passed as a parameter', client.calls[0].params.length === 1 && client.calls[0].params[0] === 'LF-95T');
+  check('only In Stock lots, in lot-number order, capped', /pl\.status = 'In Stock'/.test(client.calls[0].text) && /ORDER BY pl\.lot_number/.test(client.calls[0].text) && new RegExp(`LIMIT ${PRODUCT_LOTS_LIMIT}`).test(client.calls[0].text));
+  check('admin: no unit_cost in the response', !JSON.stringify(res.body).includes('unit_cost') && !JSON.stringify(res.body).includes('450'));
+  const sa = await run(makeClient({ productLots: IN_STOCK }), { roles: ['superadmin'], query: { resource: 'product-lots', sku: 'LF-95T' } });
+  check('superadmin: unit_cost present (null stays null)', sa.body.lots[0].unit_cost === 450 && sa.body.lots[1].unit_cost === null);
+  const empty = await run(makeClient(), { query: { resource: 'product-lots', sku: 'NOPE' } });
+  check('a product with no in-stock lots is an empty list, not an error', empty.statusCode === 200 && empty.body.count === 0 && empty.body.lots.length === 0);
+  const none = makeClient();
+  check('400 with no SKU — and no query ran', (await run(none, { query: { resource: 'product-lots' } })).statusCode === 400 && none.calls.length === 0);
+  const long = makeClient();
+  check('400 for an over-long SKU — and no query ran', (await run(long, { query: { resource: 'product-lots', sku: 'x'.repeat(61) } })).statusCode === 400 && long.calls.length === 0);
+  const post = makeClient();
+  check('405 for POST — and no query ran', (await run(post, { method: 'POST', query: { resource: 'product-lots', sku: 'LF-95T' } })).statusCode === 405 && post.calls.length === 0);
+}
+
 console.log('\nwiring — and the public scan is left alone:');
 {
   const read = (p) => readFileSync(fileURLToPath(new URL(p, import.meta.url)), 'utf8');
@@ -240,6 +267,9 @@ console.log('\nwiring — and the public scan is left alone:');
   const nav = read('../src/utils/nav.js');
   check('side panel has a Lot Tracker item gated on those roles', /key: 'lot-tracker', label: 'Lot Tracker', to: '\/lot-tracker'/.test(nav) && /hasAnyRole\(effectiveRoles, LOT_TRACKER_ROLES\)/.test(nav));
   check('the route exists', /path="\/lot-tracker"/.test(read('../src/App.js')));
+  check('lots handler also routes resource=product-lots there', /resource === 'product-lots'/.test(handler) && handler.indexOf("resource === 'product-lots'") < handler.indexOf('if (query.lot_number)'));
+  const products = read('../src/pages/products/index.js');
+  check('the Products page shows View Lots only to the tracker roles', /hasAnyRole\(getRoles\(\), LOT_TRACKER_ROLES\)/.test(products) && /View Lots/.test(products));
 }
 
 console.log(`\n✅ G11 lot-tracker smoke: ${passed} checks passed`);
