@@ -15,10 +15,11 @@ const PRODUCTS = [
   { sku: 'PRE-EFX', name: 'Precor EFX 885', brand: 'Precor', stock: 0, price: '2495' },
 ];
 const LOTS = {
-  sku: 'LF-95T', count: 2, limit: 500,
+  sku: 'LF-95T', count: 3, in_stock_count: 2, limit: 500,
   lots: [
-    { lot_number: 'L00007', serial_number: null, created_at: '2026-07-10T02:00:00.000Z', collection_name: 'Anytime Fitness Geelong', collection_date: '2026-07-10' },
-    { lot_number: 'L00009', serial_number: 'SN-9', created_at: '2026-08-01T02:00:00.000Z', collection_name: null, collection_date: null },
+    { lot_number: 'L00007', status: 'In Stock', assigned_to: null, serial_number: null, created_at: '2026-07-10T02:00:00.000Z', collection_name: 'Anytime Fitness Geelong', collection_date: '2026-07-10' },
+    { lot_number: 'L00009', status: 'In Stock', assigned_to: null, serial_number: 'SN-9', created_at: '2026-08-01T02:00:00.000Z', collection_name: null, collection_date: null },
+    { lot_number: 'L00003', status: 'Assigned', assigned_to: { workorder_id: 883, invoice_id: 'INV-883', customer_name: 'Dana Customer' }, serial_number: null, created_at: '2026-07-01T02:00:00.000Z', collection_name: null, collection_date: null },
   ],
 };
 
@@ -66,7 +67,7 @@ describe('Products page — View Lots', () => {
     expect(within(await rowFor('PRE-EFX')).getByRole('button', { name: 'View Lots for PRE-EFX' })).toBeInTheDocument();
   });
 
-  test('clicking it lists that product’s in-stock lots, each linking to the Lot Tracker', async () => {
+  test('clicking it lists that product’s lots, each linking to the Lot Tracker', async () => {
     login(['superadmin']);
     const mock = installFetch();
     renderPage();
@@ -74,11 +75,11 @@ describe('Products page — View Lots', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
-    expect(within(dialog).getByRole('heading', { name: /In-stock lots/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Lots' })).toBeInTheDocument();
     expect(within(dialog).getByText(/Life Fitness 95T Treadmill/)).toBeInTheDocument();
     expect(await within(dialog).findByRole('link', { name: 'L00007' })).toHaveAttribute('href', '/lot-tracker?lot=L00007');
     expect(within(dialog).getByRole('link', { name: 'L00009' })).toHaveAttribute('href', '/lot-tracker?lot=L00009');
-    expect(within(dialog).getByText('2 lots in stock')).toBeInTheDocument();
+    expect(within(dialog).getByText('2 in stock · 1 assigned to an order')).toBeInTheDocument();
     expect(within(dialog).getByText('SN-9')).toBeInTheDocument();
     expect(within(dialog).getByText('Anytime Fitness Geelong')).toBeInTheDocument();
 
@@ -90,7 +91,23 @@ describe('Products page — View Lots', () => {
     expect(mock.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
-  test('says when the lot count and the stock figure disagree', async () => {
+  test('an assigned lot shows where it went and that it is no longer in stock', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage();
+    fireEvent.click(within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' }));
+    const dialog = await screen.findByRole('dialog');
+    const assigned = (await within(dialog).findByRole('link', { name: 'L00003' })).closest('tr');
+    expect(within(assigned).getByText('Assigned — no longer in stock')).toBeInTheDocument();
+    expect(within(assigned).getByRole('link', { name: 'Workorder #883' })).toHaveAttribute('href', '/delivery_operations/workorder/883');
+    expect(assigned).toHaveTextContent('INV-883');
+    expect(assigned).toHaveTextContent('Dana Customer');
+    const inStock = within(dialog).getByRole('link', { name: 'L00007' }).closest('tr');
+    expect(within(inStock).getByText('In stock')).toBeInTheDocument();
+    expect(within(inStock).getByText('Not assigned')).toBeInTheDocument();
+  });
+
+  test('says when the in-stock lot count and the stock figure disagree', async () => {
     login(['admin']);
     installFetch();
     renderPage();
@@ -101,10 +118,10 @@ describe('Products page — View Lots', () => {
 
   test('a product with no in-stock lots says so', async () => {
     login(['admin']);
-    installFetch([200, { sku: 'PRE-EFX', count: 0, limit: 500, lots: [] }]);
+    installFetch([200, { sku: 'PRE-EFX', count: 0, in_stock_count: 0, limit: 500, lots: [] }]);
     renderPage();
     fireEvent.click(within(await rowFor('PRE-EFX')).getByRole('button', { name: 'View Lots for PRE-EFX' }));
-    expect(await screen.findByText('No lots in stock for this product.')).toBeInTheDocument();
+    expect(await screen.findByText('No lots recorded for this product.')).toBeInTheDocument();
   });
 
   test('a failed load shows the error in the dialog', async () => {
@@ -113,6 +130,16 @@ describe('Products page — View Lots', () => {
     renderPage();
     fireEvent.click(within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Insufficient role');
+  });
+
+  test('no mismatch note when the in-stock lots equal the stock figure, even with assigned lots listed', async () => {
+    login(['admin']);
+    installFetch([200, { ...LOTS, count: 4, in_stock_count: 3, lots: [...LOTS.lots, { ...LOTS.lots[0], lot_number: 'L00011' }] }]);
+    renderPage();
+    fireEvent.click(within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('link', { name: 'L00011' });
+    expect(within(dialog).queryByText(/Stock on hand is/)).not.toBeInTheDocument();
   });
 
   test('Escape and the Close button both close it', async () => {

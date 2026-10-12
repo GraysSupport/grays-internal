@@ -229,21 +229,25 @@ console.log('\nsearch:');
 console.log('\nproduct lots — "View Lots" on the Products page (in-stock lots for one product):');
 {
   const IN_STOCK = [
-    { lot_number: 'L00007', serial_number: null, unit_cost: '450.00', created_at: new Date('2026-07-10T02:00:00Z'), collection_name: 'Anytime Fitness Geelong', collection_date: '2026-07-10' },
-    { lot_number: 'L00009', serial_number: 'SN-9', unit_cost: null, created_at: new Date('2026-08-01T02:00:00Z'), collection_name: null, collection_date: null },
+    { lot_number: 'L00007', status: 'In Stock', serial_number: null, unit_cost: '450.00', created_at: new Date('2026-07-10T02:00:00Z'), collection_name: 'Anytime Fitness Geelong', collection_date: '2026-07-10', workorder_id: null, invoice_id: null, customer_name: null },
+    { lot_number: 'L00009', status: 'In Stock', serial_number: 'SN-9', unit_cost: null, created_at: new Date('2026-08-01T02:00:00Z'), collection_name: null, collection_date: null, workorder_id: null, invoice_id: null, customer_name: null },
+    { lot_number: 'L00003', status: 'Assigned', serial_number: null, unit_cost: '300.00', created_at: new Date('2026-07-01T02:00:00Z'), collection_name: null, collection_date: null, workorder_id: 883, invoice_id: 'INV-883', customer_name: 'Dana Customer' },
   ];
   const client = makeClient({ productLots: IN_STOCK });
   const res = await run(client, { query: { resource: 'product-lots', sku: ' lf-95t ' } });
-  check('returns the lots for that product', res.statusCode === 200 && res.body.sku === 'LF-95T' && res.body.count === 2 && res.body.lots.map((l) => l.lot_number).join(',') === 'L00007,L00009');
+  check('returns the lots for that product', res.statusCode === 200 && res.body.sku === 'LF-95T' && res.body.count === 3 && res.body.lots.map((l) => l.lot_number).join(',') === 'L00007,L00009,L00003');
   check('each lot carries serial, date issued and where it came from', res.body.lots[0].collection_name === 'Anytime Fitness Geelong' && res.body.lots[0].collection_date === '2026-07-10' && res.body.lots[0].created_at === '2026-07-10T02:00:00.000Z' && res.body.lots[1].serial_number === 'SN-9');
   check('exactly ONE statement, a SELECT', client.calls.length === 1 && !isWrite(client.calls[0]) && /^\s*SELECT/i.test(client.calls[0].text));
   check('the SKU is trimmed, upper-cased and passed as a parameter', client.calls[0].params.length === 1 && client.calls[0].params[0] === 'LF-95T');
-  check('only In Stock lots, in lot-number order, capped', /pl\.status = 'In Stock'/.test(client.calls[0].text) && /ORDER BY pl\.lot_number/.test(client.calls[0].text) && new RegExp(`LIMIT ${PRODUCT_LOTS_LIMIT}`).test(client.calls[0].text));
+  check('every lot of the product except voided ones, in-stock first then by lot number, capped', /pl\.status <> 'Void'/.test(client.calls[0].text) && /ORDER BY \(pl\.status = 'In Stock'\) DESC, pl\.lot_number/.test(client.calls[0].text) && new RegExp(`LIMIT ${PRODUCT_LOTS_LIMIT}`).test(client.calls[0].text));
+  check('each lot says whether it is still in stock', res.body.lots.map((l) => l.status).join(',') === 'In Stock,In Stock,Assigned' && res.body.in_stock_count === 2);
+  check('an assigned lot says where: workorder, invoice, customer', res.body.lots[2].assigned_to.workorder_id === 883 && res.body.lots[2].assigned_to.invoice_id === 'INV-883' && res.body.lots[2].assigned_to.customer_name === 'Dana Customer');
+  check('an in-stock lot has no assignment', res.body.lots[0].assigned_to === null && res.body.lots[1].assigned_to === null);
   check('admin: no unit_cost in the response', !JSON.stringify(res.body).includes('unit_cost') && !JSON.stringify(res.body).includes('450'));
   const sa = await run(makeClient({ productLots: IN_STOCK }), { roles: ['superadmin'], query: { resource: 'product-lots', sku: 'LF-95T' } });
   check('superadmin: unit_cost present (null stays null)', sa.body.lots[0].unit_cost === 450 && sa.body.lots[1].unit_cost === null);
   const empty = await run(makeClient(), { query: { resource: 'product-lots', sku: 'NOPE' } });
-  check('a product with no in-stock lots is an empty list, not an error', empty.statusCode === 200 && empty.body.count === 0 && empty.body.lots.length === 0);
+  check('a product with no lots is an empty list, not an error', empty.statusCode === 200 && empty.body.count === 0 && empty.body.in_stock_count === 0 && empty.body.lots.length === 0);
   const none = makeClient();
   check('400 with no SKU — and no query ran', (await run(none, { query: { resource: 'product-lots' } })).statusCode === 400 && none.calls.length === 0);
   const long = makeClient();

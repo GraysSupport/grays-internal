@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { authHeaders } from '../utils/auth';
 import { formatWhen } from '../utils/lotTracker';
 
-// "View Lots" on the Products page (Nick, 13 Oct 2026): the lot numbers of one product that
-// are In Stock right now. Read-only — one GET to /api/lots?resource=product-lots (admin +
+// "View Lots" on the Products page (Nick, 13 Oct 2026): the lot numbers of one product — the
+// ones In Stock right now, then the ones already assigned to an order (no longer in stock)
+// with the workorder each went to. Read-only — one GET to /api/lots?resource=product-lots (admin +
 // superadmin, see lib/lotJourney.js). Each lot number opens its journey in the Lot Tracker.
 //
 //   product: { sku, name, stock }
@@ -57,7 +58,9 @@ export default function ProductLotsModal({ product, onClose }) {
   const { loading, error, lots, limit } = state;
   const showCost = lots.some((l) => 'unit_cost' in l);
   const stock = Number(product.stock);
-  const stockDiffers = !loading && !error && Number.isFinite(stock) && stock !== lots.length;
+  const inStock = lots.filter((l) => l.status === 'In Stock').length;
+  const notInStock = lots.length - inStock;
+  const stockDiffers = !loading && !error && Number.isFinite(stock) && stock !== inStock;
 
   return (
     <div
@@ -69,28 +72,30 @@ export default function ProductLotsModal({ product, onClose }) {
     >
       <div
         ref={panelRef}
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white p-6 shadow-2xl"
+        className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg bg-white p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="product-lots-title" className="text-lg font-bold text-gray-900">In-stock lots</h2>
+        <h2 id="product-lots-title" className="text-lg font-bold text-gray-900">Lots</h2>
         <p className="mt-1 text-sm text-gray-700 break-words">{product.sku} · {product.name}</p>
 
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
           {loading && <p className="text-sm text-gray-600">Loading lots…</p>}
           {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           {!loading && !error && lots.length === 0 && (
-            <p className="text-sm text-gray-700">No lots in stock for this product.</p>
+            <p className="text-sm text-gray-700">No lots recorded for this product.</p>
           )}
           {!loading && !error && lots.length > 0 && (
             <>
               <p className="mb-2 text-sm font-semibold text-gray-900">
-                {lots.length} {lots.length === 1 ? 'lot' : 'lots'} in stock
+                {inStock} in stock · {notInStock} assigned to an order
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full border text-sm">
                   <thead className="bg-gray-100">
                     <tr>
                       <th className="border px-3 py-2 text-left">Lot number</th>
+                      <th className="border px-3 py-2 text-left">Status</th>
+                      <th className="border px-3 py-2 text-left">Assigned to</th>
                       <th className="border px-3 py-2 text-left">Serial number</th>
                       <th className="border px-3 py-2 text-left">Came from</th>
                       <th className="border px-3 py-2 text-left">Lot issued</th>
@@ -104,6 +109,20 @@ export default function ProductLotsModal({ product, onClose }) {
                           <Link className="text-blue-700 underline" to={`/lot-tracker?lot=${encodeURIComponent(l.lot_number)}`}>
                             {l.lot_number}
                           </Link>
+                        </td>
+                        <td className="border px-3 py-2">
+                          {l.status === 'In Stock' ? 'In stock' : l.status === 'Assigned' ? 'Assigned — no longer in stock' : `${l.status} — no longer in stock`}
+                        </td>
+                        <td className="border px-3 py-2">
+                          {l.assigned_to ? (
+                            <>
+                              <Link className="text-blue-700 underline" to={`/delivery_operations/workorder/${l.assigned_to.workorder_id}`}>
+                                Workorder #{l.assigned_to.workorder_id}
+                              </Link>
+                              {l.assigned_to.invoice_id ? ` · ${l.assigned_to.invoice_id}` : ''}
+                              {l.assigned_to.customer_name ? ` · ${l.assigned_to.customer_name}` : ''}
+                            </>
+                          ) : 'Not assigned'}
                         </td>
                         <td className="border px-3 py-2">{l.serial_number || 'Not recorded'}</td>
                         <td className="border px-3 py-2">{l.collection_name || '—'}</td>
@@ -123,8 +142,8 @@ export default function ProductLotsModal({ product, onClose }) {
           )}
           {stockDiffers && (
             <p className="mt-3 text-sm text-gray-700">
-              Stock on hand is {stock}, which does not match the number of lots listed here. Stock
-              that came in before lot numbers were introduced, or outside a collection, has no lot.
+              Stock on hand is {stock}, which does not match the {inStock} in-stock {inStock === 1 ? 'lot' : 'lots'} listed
+              here. Stock that came in before lot numbers were introduced, or outside a collection, has no lot.
             </p>
           )}
         </div>
