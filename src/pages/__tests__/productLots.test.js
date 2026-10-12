@@ -129,6 +129,45 @@ describe('Products page — View Lots', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
+  test('Tab stays inside the dialog, and focus returns to the button that opened it', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage();
+    const button = within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' });
+    button.focus();
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog');
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    expect(close).toHaveFocus();
+    const firstLot = await within(dialog).findByRole('link', { name: 'L00007' });
+    fireEvent.keyDown(window, { key: 'Tab' }); // from the last control → wraps to the first
+    expect(firstLot).toHaveFocus();
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true }); // and back
+    expect(close).toHaveFocus();
+    fireEvent.click(close);
+    await waitFor(() => expect(button).toHaveFocus());
+  });
+
+  test('unit cost is shown only when the server sends it (superadmin)', async () => {
+    login(['superadmin']);
+    installFetch([200, { ...LOTS, lots: [{ ...LOTS.lots[0], unit_cost: 450 }, { ...LOTS.lots[1], unit_cost: null }] }]);
+    renderPage();
+    fireEvent.click(within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('columnheader', { name: 'Unit cost' })).toBeInTheDocument();
+    expect(within(dialog).getByText('$450.00')).toBeInTheDocument();
+  });
+
+  test('no unit cost column when the server sends none (admin)', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage();
+    fireEvent.click(within(await rowFor('LF-95T')).getByRole('button', { name: 'View Lots for LF-95T' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('link', { name: 'L00007' });
+    expect(within(dialog).queryByRole('columnheader', { name: 'Unit cost' })).not.toBeInTheDocument();
+  });
+
   test('staff and technicians get Edit only — no View Lots, and no lots request', async () => {
     login(['staff']);
     const mock = installFetch();

@@ -12,6 +12,7 @@ import { formatWhen } from '../utils/lotTracker';
 export default function ProductLotsModal({ product, onClose }) {
   const [state, setState] = useState({ loading: true, error: null, lots: [], limit: null });
   const closeRef = useRef(null);
+  const panelRef = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -34,7 +35,18 @@ export default function ProductLotsModal({ product, onClose }) {
   useEffect(() => {
     const opener = document.activeElement;
     closeRef.current?.focus();
-    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { onCloseRef.current?.(); return; }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      // aria-modal promises the page behind is inert, so Tab stays inside the dialog.
+      const items = panelRef.current.querySelectorAll('a[href], button:not([disabled])');
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const inside = panelRef.current.contains(document.activeElement);
+      if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
@@ -56,6 +68,7 @@ export default function ProductLotsModal({ product, onClose }) {
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -110,8 +123,8 @@ export default function ProductLotsModal({ product, onClose }) {
           )}
           {stockDiffers && (
             <p className="mt-3 text-sm text-gray-700">
-              Stock on hand is {stock}, which does not match the number of lots. Lot numbers only
-              exist for stock that came in through a collection since lot numbers were introduced.
+              Stock on hand is {stock}, which does not match the number of lots listed here. Stock
+              that came in before lot numbers were introduced, or outside a collection, has no lot.
             </p>
           )}
         </div>
