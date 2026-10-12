@@ -4,6 +4,9 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import CreateProductModal from '../../components/CreateProductModal';
+import ProductLotsModal from '../../components/ProductLotsModal';
+import { getRoles, hasAnyRole } from '../../utils/auth';
+import { LOT_TRACKER_ROLES } from '../../utils/lotTracker';
 
 export default function ProductsPage() {
   const storedUser = useMemo(() => {
@@ -16,6 +19,9 @@ export default function ProductsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [searchParams] = useSearchParams();
   const [showModal, setShowModal] = useState(false);
+  // "View Lots" (in-stock lot numbers per product) — same roles as the Lot Tracker; the server decides.
+  const canViewLots = hasAnyRole(getRoles(), LOT_TRACKER_ROLES);
+  const [lotsProduct, setLotsProduct] = useState(null);
   const PRODUCTS_PER_PAGE = 20;
 
   const inStockParam = searchParams.get('inStock');
@@ -140,6 +146,9 @@ export default function ProductsPage() {
           onCreated={fetchProducts}
         />
       )}
+      {lotsProduct && (
+        <ProductLotsModal product={lotsProduct} onClose={() => setLotsProduct(null)} />
+      )}
 
       {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
       <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
@@ -201,8 +210,18 @@ export default function ProductsPage() {
                     {p.avg_cost == null ? '—' : `$${Number(p.avg_cost).toFixed(2)}`}
                   </td>
                 )}
-                <td className="border px-4 py-2 text-blue-600 underline text-center align-middle">
-                  <Link to={`/products/${encodeURIComponent(p.sku)}/edit`}>Edit</Link>
+                <td className="border px-4 py-2 text-center align-middle whitespace-nowrap">
+                  <Link className="text-blue-600 underline" to={`/products/${encodeURIComponent(p.sku)}/edit`}>Edit</Link>
+                  {canViewLots && (
+                    <button
+                      type="button"
+                      onClick={() => setLotsProduct(p)}
+                      aria-label={`View Lots for ${p.sku}`}
+                      className="ml-3 text-blue-600 underline"
+                    >
+                      View Lots
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

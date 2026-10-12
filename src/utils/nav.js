@@ -16,6 +16,7 @@
 // Imported with the .js extension on purpose: node (which runs the smoke) resolves ESM
 // specifiers literally and cannot find './auth'. Webpack and jest both accept the extension.
 import { hasAnyRole } from './auth.js';
+import { LOT_TRACKER_ROLES } from './lotTracker.js';
 
 // Every key this builder can emit, in render order. Exported so a test can assert the builder
 // never invents a key nobody styled or routed.
@@ -29,6 +30,7 @@ export const NAV_KEYS = [
   'customers',
   'waitlist',
   'delivery',
+  'lot-tracker',
   'peloton',
   'integrations',
   'register',
@@ -59,6 +61,8 @@ export function buildNavItems({ user, roles } = {}) {
   const canUseLeads = canUseInbox;
   const canUseLogistics = hasAnyRole(effectiveRoles, ['logistics', 'superadmin']);
   const canUseIntegrations = hasAnyRole(effectiveRoles, ['superadmin']);
+  // G11: the Lot Tracker shows customer + workshop detail for a scanned lot — admin + superadmin.
+  const canUseLotTracker = hasAnyRole(effectiveRoles, LOT_TRACKER_ROLES);
   const isSuperadmin = user?.access === 'superadmin';
   const isTechnician = user?.access === 'technician';
 
@@ -86,6 +90,8 @@ export function buildNavItems({ user, roles } = {}) {
     label: 'Delivery Operations',
     to: user?.id === 'WK' ? '/workshop' : '/delivery_operations',
   });
+
+  if (canUseLotTracker) items.push({ key: 'lot-tracker', label: 'Lot Tracker', to: '/lot-tracker' });
 
   if (isSuperadmin) items.push({ key: 'peloton', label: 'Peloton', to: '/peloton', dot: true });
   if (canUseIntegrations) items.push({ key: 'integrations', label: 'Integrations', to: '/integrations' });

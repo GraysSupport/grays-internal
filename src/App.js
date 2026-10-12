@@ -40,6 +40,7 @@ import CollectionDetailPage from './pages/delivery_operations/collections/[id]';
 import PelotonPage from './pages/peloton';
 import WorkshopPage from './pages/workshop';
 import ScanPage from './pages/scan';
+import LotTrackerPage from './pages/lot-tracker';
 
 function App() {
   const navigate = useNavigate();
@@ -109,6 +110,7 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/scan" element={<ScanPage />} />
+        <Route path="/lot-tracker" element={<LotTrackerPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />

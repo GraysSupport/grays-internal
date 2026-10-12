@@ -108,6 +108,16 @@ console.log('\nshape + robustness (it renders during the pre-auth loading window
   check('logout is an action, not a link', all.find((i) => i.key === 'logout').to === undefined);
   check('keys are unique', new Set(all.map((i) => i.key)).size === all.length);
   check('NAV_KEYS lists every key the builder can emit', all.every((i) => NAV_KEYS.includes(i.key)));
+
+  // G11: the Lot Tracker is an admin + superadmin tool (mirrors the gate in lib/lotJourney.js).
+  const keysFor = (roles) => buildNavItems({ user: { id: 'XX', access: roles[0] }, roles }).map((i) => i.key);
+  check('admin sees Lot Tracker', keysFor(['admin']).includes('lot-tracker'));
+  check('superadmin sees Lot Tracker', keysFor(['superadmin']).includes('lot-tracker'));
+  for (const role of ['logistics', 'sales', 'staff', 'technician', 'workshop']) {
+    check(`${role} does NOT see Lot Tracker`, !keysFor([role]).includes('lot-tracker'));
+  }
+  check('a multi-role user with admin sees it', keysFor(['logistics', 'admin']).includes('lot-tracker'));
+  check('Lot Tracker links to /lot-tracker', buildNavItems({ user: { id: 'XX', access: 'admin' }, roles: ['admin'] }).find((i) => i.key === 'lot-tracker')?.to === '/lot-tracker');
 }
 
 console.log(`\n✅ nav smoke: ${passed} checks passed`);
