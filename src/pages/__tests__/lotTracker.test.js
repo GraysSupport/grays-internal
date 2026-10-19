@@ -254,6 +254,38 @@ describe('the journey', () => {
   });
 });
 
+describe('G16 technician checklist (read-only)', () => {
+  const CHECKLIST = {
+    checks: { boots_ok: { v: 'yes', note: '' }, heart_rate: { v: 'na', note: 'no grips' }, audio: { v: 'yes', note: '', jack: 'yes', bt: 'yes', spk: 'na' }, rem_ads_dereg: { v: 'yes', note: 'MyTrainer' } },
+    test_tag_no: '555', base_serial: 'DEC83B18000051', console_serial: 'AZB06195052', comments: 'All good',
+    ok_to_ship: true, approved_by: 'ED', approved_by_name: 'Eden', approved_at: '2026-08-19T00:30:00.000Z',
+    updated_by: 'ED', updated_by_name: 'Eden', updated_at: '2026-08-19T00:30:00.000Z', version: 2,
+  };
+
+  test('shows the saved checklist, serials and sign-off', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, checklist: CHECKLIST }] });
+    renderPage('/lot-tracker?lot=L00001');
+    const section = await screen.findByRole('region', { name: 'Screen & electronics checklist' });
+    expect(within(section).getByText(/OK to ship · signed off by Eden/i)).toBeInTheDocument();
+    expect(within(section).getByText('DEC83B18000051')).toBeInTheDocument();
+    expect(within(section).getByText('AZB06195052')).toBeInTheDocument();
+    expect(within(section).getByText('555')).toBeInTheDocument();
+    expect(within(section).getByText(/no grips/)).toBeInTheDocument();
+    expect(within(section).getByText(/SPK N\/A/)).toBeInTheDocument();
+    expect(within(section).queryByRole('button')).not.toBeInTheDocument(); // read-only
+    expect(within(section).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  test('no checklist saved → says so', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, checklist: null }] });
+    renderPage('/lot-tracker?lot=L00001');
+    const section = await screen.findByRole('region', { name: 'Screen & electronics checklist' });
+    expect(within(section).getByText(/no checklist has been saved/i)).toBeInTheDocument();
+  });
+});
+
 describe('search', () => {
   const RESULTS = { limit: 25, results: [
     { lot_number: 'L00007', status: 'In Stock', product_sku: '2609', serial_number: null, product_name: 'Life Fitness 95T Treadmill', invoice_id: null },

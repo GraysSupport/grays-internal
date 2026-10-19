@@ -46,7 +46,15 @@ const DELIVERIES = [
   { delivery_id: 700, delivery_date: '2026-08-21', delivery_status: 'Delivery Completed', delivery_type: 'Delivery', delivery_suburb: 'Altona North', delivery_state: 'VIC', date_created: new Date('2026-08-18T05:00:00Z'), carrier: 'Cobbs Transport' },
 ];
 
-function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, search = [], productLots = [] } = {}) {
+// G16: the technician checklist for the lot (null = none saved; missingChecklist = prod before 0009).
+const CHECKLIST_ROW = {
+  lot_id: 1, checks: { boots_ok: { v: 'yes', note: '' }, audio: { v: 'yes', note: '', jack: 'yes', bt: 'yes', spk: 'na' } },
+  test_tag_no: '555', base_serial: 'DEC83B18000051', console_serial: 'AZB06195052', comments: 'MyTrainer removed',
+  ok_to_ship: true, approved_by: 'ED', approved_by_name: 'Eden', approved_at: new Date('2026-08-19T00:30:00Z'),
+  updated_by: 'ED', updated_by_name: 'Eden', updated_at: new Date('2026-08-19T00:30:00Z'), version: 2,
+};
+
+function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, search = [], productLots = [], checklist = null, missingChecklist = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -56,6 +64,10 @@ function makeClient({ lot = LOT_ROW, logs = LOGS, deliveries = DELIVERIES, searc
       if (/FROM product_lots pl .* WHERE pl\.lot_number = \$1$/i.test(sql)) return { rows: lot && params[0] === lot.lot_number ? [lot] : [] };
       if (/FROM workorder_logs l/i.test(sql)) return { rows: logs };
       if (/FROM delivery d/i.test(sql)) return { rows: deliveries };
+      if (/FROM lot_checklists c/i.test(sql)) {
+        if (missingChecklist) throw Object.assign(new Error('relation "lot_checklists" does not exist'), { code: '42P01' });
+        return { rows: checklist && params[0] === lot?.lot_id ? [checklist] : [] };
+      }
       if (/WHERE pl\.lot_number ILIKE \$1/i.test(sql)) return { rows: search };
       if (/WHERE UPPER\(pl\.product_sku\) = \$1/i.test(sql)) return { rows: productLots };
       throw new Error(`unexpected SQL in smoke: ${sql.slice(0, 120)}`);
@@ -126,13 +138,29 @@ console.log('\nthe journey Nick asked for:');
   check('every step names who did it', by['Collected (extraction)'] === 'Nelson Removals' && by['Lot number issued'] === 'Nick Enrique Wijaya' && by['Went into the workshop'] === 'Eden' && by['Delivery booked'] === 'Shaun Cronin' && by['Delivery completed'] === 'Shaun Cronin');
   check('date-only steps are marked so the page does not invent a time', j.timeline.filter((e) => e.date_only).map((e) => e.title).join(',') === 'Collected (extraction)');
 
-  check('exactly THREE statements, all SELECTs', client.calls.length === 3 && !client.calls.some(isWrite) && client.calls.every((c) => /^\s*SELECT/i.test(c.text)));
+  check('exactly FOUR statements (lot, logs, deliveries, checklist), all SELECTs', client.calls.length === 4 && !client.calls.some(isWrite) && client.calls.every((c) => /^\s*SELECT/i.test(c.text)));
   check('the lot number is upper-cased and passed as a parameter', client.calls[0].params[0] === 'L00001');
   check('note text and payment/flag events are not pulled into the journey', !/notes_log/.test(client.calls[1].text) && !/PAYMENT_UPDATED|NOTE_ADDED|WORKORDER_FLAG_CHANGED/.test(client.calls[1].text));
 }
 {
   const res = await run(makeClient(), { query: { resource: 'journey', lot_number: '  l00001 ' } });
   check('a scanned/typed code is trimmed + upper-cased', res.statusCode === 200);
+}
+
+console.log('\nG16 technician checklist (read-only here):');
+{
+  const res = await run(makeClient({ checklist: CHECKLIST_ROW }));
+  const c = res.body.checklist;
+  check('journey carries the checklist', c && c.ok_to_ship === true && c.test_tag_no === '555' && c.checks.audio.spk === 'na');
+  check('…with base + console serials and comments', c.base_serial === 'DEC83B18000051' && c.console_serial === 'AZB06195052' && c.comments === 'MyTrainer removed');
+  check('…with who signed off + when, and who saved last', c.approved_by_name === 'Eden' && c.approved_at === '2026-08-19T00:30:00.000Z' && c.updated_by_name === 'Eden');
+  const none = await run(makeClient());
+  check('no checklist saved → checklist: null', none.statusCode === 200 && none.body.checklist === null);
+  const missing = await run(makeClient({ missingChecklist: true }));
+  check('table not migrated (42P01) → checklist: null, journey still 200', missing.statusCode === 200 && missing.body.checklist === null && missing.body.lot.lot_number === 'L00001');
+  const inStock = { ...LOT_ROW, status: 'In Stock', workorder_items_id: null, workorder_id: null };
+  const stock = await run(makeClient({ lot: inStock, checklist: CHECKLIST_ROW }));
+  check('an unassigned lot still shows its checklist (it belongs to the lot)', stock.body.checklist?.version === 2);
 }
 
 console.log('\ncost is superadmin-only:');
@@ -150,7 +178,7 @@ console.log('\nlots that have not got that far yet:');
   const client = makeClient({ lot: inStock });
   const res = await run(client);
   check('In Stock lot: origin shown, no assignment / workshop / delivery', res.statusCode === 200 && res.body.origin && res.body.assignment === null && res.body.workshop === null && res.body.deliveries.length === 0);
-  check('…and only ONE statement ran', client.calls.length === 1);
+  check('…and only TWO statements ran (the lot + its checklist)', client.calls.length === 2);
   check('…timeline = collected, lot issued', res.body.timeline.map((e) => e.title).join(',') === 'Collected (extraction),Lot number issued');
 }
 {
