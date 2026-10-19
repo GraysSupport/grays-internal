@@ -356,6 +356,7 @@ console.log('\nrouting:');
   const routeAt = lotsSrc.indexOf("resource === 'tech-checklist'");
   check('lots.js routes resource=tech-checklist to handleTechChecklist', routeAt > 0 && /handleTechChecklist\(req, res, client\)/.test(lotsSrc));
   check('…before the PUBLIC lot_number lookup', routeAt < lotsSrc.indexOf("if (method === 'GET')"));
+  check('the page route exists', /path="\/tech-checklist" element=\{<TechChecklistPage \/>\}/.test(readFileSync(fileURLToPath(new URL('../src/App.js', import.meta.url)), 'utf8')));
   check('no new serverless function', !/tech-?checklist/i.test(readFileSync(fileURLToPath(new URL('../api/[...path].js', import.meta.url)), 'utf8')));
 }
 
