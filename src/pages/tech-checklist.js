@@ -99,14 +99,56 @@ function formFrom(view) {
   };
 }
 
+// Unsaved work is kept per lot in this browser while it is being edited. The login token lasts
+// 1h but the WK workshop kiosk is never logged out, so a Save can meet an expired sign-in: the
+// page has to send the user back to log in, and this is what brings their ticks back afterwards.
+// It also survives a stray re-scan of the same sticker. Cleared on a successful save or discard.
+// endExpiredSession() removes only token/user/sessionExpiry, so the draft outlives it.
+const DRAFT_PREFIX = 'grays.techChecklist.draft.';
+function readDraft(lot) {
+  try { return JSON.parse(localStorage.getItem(DRAFT_PREFIX + lot) || 'null'); } catch { return null; }
+}
+function writeDraft(lot, draft) {
+  try { localStorage.setItem(DRAFT_PREFIX + lot, JSON.stringify(draft)); } catch { /* storage full / blocked */ }
+}
+function clearDraft(lot) {
+  try { localStorage.removeItem(DRAFT_PREFIX + lot); } catch { /* blocked */ }
+}
+const serialsOf = (prefill) => ({ base_serial: prefill?.base_serial || '', console_serial: prefill?.console_serial || '' });
+
 function Checklist({ view, onSaved, request }) {
-  const [form, setForm] = useState(() => formFrom(view));
+  const lot = view.lot.lot_number;
+  const [initial] = useState(() => {
+    const d = readDraft(lot);
+    return d?.form
+      ? { form: d.form, shown: serialsOf(d.shown), restoredAt: d.savedAt || null }
+      : { form: formFrom(view), shown: serialsOf(view.prefill), restoredAt: null };
+  });
+  const [form, setForm] = useState(initial.form);
+  const [restoredAt, setRestoredAt] = useState(initial.restoredAt);
+  // The serials this page SHOWED — sent with the save so the server only writes serials the
+  // technician actually changed (never an old one back over a correction made elsewhere).
+  const shownRef = useRef(initial.shown);
+  const touched = useRef(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null); // { kind: 'ok' | 'error' | 'conflict', text, current? }
   const missing = unansweredItems(form.checks);
   const c = view.checklist;
 
-  const setLine = (key, patch) => setForm((f) => ({ ...f, checks: { ...f.checks, [key]: { ...f.checks[key], ...patch } } }));
+  useEffect(() => {
+    if (touched.current) writeDraft(lot, { form, shown: shownRef.current, savedAt: new Date().toISOString() });
+  }, [form, lot]);
+
+  const edit = (fn) => { touched.current = true; setForm(fn); };
+  const reset = (v) => {
+    clearDraft(lot);
+    touched.current = false;
+    shownRef.current = serialsOf(v.prefill);
+    setForm(formFrom(v));
+    setRestoredAt(null);
+  };
+
+  const setLine = (key, patch) => edit((f) => ({ ...f, checks: { ...f.checks, [key]: { ...f.checks[key], ...patch } } }));
   // Changing an answer back to unanswered can't happen with radios, but a sign-off must never
   // survive a checklist that is no longer complete.
   const okToShip = form.ok_to_ship && missing.length === 0;
@@ -127,6 +169,7 @@ function Checklist({ view, onSaved, request }) {
           comments: form.comments,
           ok_to_ship: okToShip,
           base_version: baseVersion,
+          serials_shown: shownRef.current,
         }),
       });
       if (!out) return;
@@ -137,7 +180,7 @@ function Checklist({ view, onSaved, request }) {
       }
       if (!res.ok) { setMessage({ kind: 'error', text: data?.error || 'Save failed' }); return; }
       onSaved(data);
-      setForm(formFrom(data));
+      reset(data);
       setMessage({ kind: 'ok', text: `Saved ${formatWhen(data.checklist?.updated_at)}` });
     } catch {
       setMessage({ kind: 'error', text: 'Network error — nothing was saved. Check your connection and try again.' });
@@ -147,7 +190,15 @@ function Checklist({ view, onSaved, request }) {
   };
 
   return (
-    <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); save(form.version); }}>
+    // Only the Save button saves: Enter in a text box (a keyboard-wedge scanner ends every scan
+    // with Enter) must not submit a half-filled checklist.
+    <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+      {restoredAt && (
+        <div role="note" className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800">
+          Restored your unsaved changes from {formatWhen(restoredAt)} — they are not saved yet.
+          <button type="button" onClick={() => reset(view)} className="ml-2 underline">Discard unsaved changes</button>
+        </div>
+      )}
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-base font-semibold">Screen &amp; electronics checklist</h2>
         {c?.updated_at && (
@@ -186,7 +237,7 @@ function Checklist({ view, onSaved, request }) {
                     <input
                       value={form.test_tag_no}
                       maxLength={30}
-                      onChange={(e) => setForm((f) => ({ ...f, test_tag_no: e.target.value }))}
+                      onChange={(e) => edit((f) => ({ ...f, test_tag_no: e.target.value }))}
                       className="w-32 rounded-lg border p-2 font-mono"
                     />
                   </label>
@@ -202,17 +253,23 @@ function Checklist({ view, onSaved, request }) {
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm">
             <span className="text-gray-700">Base S/N</span>
-            <input value={form.base_serial} maxLength={60} onChange={(e) => setForm((f) => ({ ...f, base_serial: e.target.value }))} className="mt-1 w-full rounded-lg border p-3 font-mono uppercase" autoCapitalize="characters" />
+            <input value={form.base_serial} maxLength={60} onChange={(e) => edit((f) => ({ ...f, base_serial: e.target.value }))} className="mt-1 w-full rounded-lg border p-3 font-mono uppercase" autoCapitalize="characters" />
           </label>
           <label className="text-sm">
             <span className="text-gray-700">Console S/N</span>
-            <input value={form.console_serial} maxLength={60} onChange={(e) => setForm((f) => ({ ...f, console_serial: e.target.value }))} className="mt-1 w-full rounded-lg border p-3 font-mono uppercase" autoCapitalize="characters" />
+            <input value={form.console_serial} maxLength={60} onChange={(e) => edit((f) => ({ ...f, console_serial: e.target.value }))} className="mt-1 w-full rounded-lg border p-3 font-mono uppercase" autoCapitalize="characters" />
           </label>
         </div>
-        <p className="mt-2 text-xs text-gray-600">Saved to the workorder as “base &amp; CONSOLE console”. Leaving both blank keeps what is already recorded.</p>
+        {view.order?.lots_on_item > 1 ? (
+          <p className="mt-2 text-xs text-gray-700">
+            There are {view.order.lots_on_item} machines on this workorder item, so the serial is saved to this lot only (the workorder’s shared serial note is left as it is).
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-gray-600">Saved to the workorder as “base &amp; CONSOLE console”. Leaving both blank keeps what is already recorded.</p>
+        )}
         <label className="mt-3 block text-sm">
           <span className="text-gray-700">Comments</span>
-          <textarea value={form.comments} maxLength={2000} rows={3} onChange={(e) => setForm((f) => ({ ...f, comments: e.target.value }))} className="mt-1 w-full rounded-lg border p-2" />
+          <textarea value={form.comments} maxLength={2000} rows={3} onChange={(e) => edit((f) => ({ ...f, comments: e.target.value }))} className="mt-1 w-full rounded-lg border p-2" />
         </label>
       </section>
 
@@ -223,7 +280,7 @@ function Checklist({ view, onSaved, request }) {
             className="h-6 w-6"
             checked={okToShip}
             disabled={missing.length > 0}
-            onChange={(e) => setForm((f) => ({ ...f, ok_to_ship: e.target.checked }))}
+            onChange={(e) => edit((f) => ({ ...f, ok_to_ship: e.target.checked }))}
           />
           Screen OK to ship
         </label>
@@ -244,14 +301,14 @@ function Checklist({ view, onSaved, request }) {
             <button type="button" disabled={saving} onClick={() => save(message.current.checklist?.version || 0)} className="rounded-lg border border-amber-700 bg-white px-3 py-2 font-medium">
               Overwrite with mine
             </button>
-            <button type="button" disabled={saving} onClick={() => { onSaved(message.current); setForm(formFrom(message.current)); setMessage(null); }} className="rounded-lg border bg-white px-3 py-2">
+            <button type="button" disabled={saving} onClick={() => { onSaved(message.current); reset(message.current); setMessage(null); }} className="rounded-lg border bg-white px-3 py-2">
               Discard mine and load theirs
             </button>
           </div>
         </div>
       )}
 
-      <button type="submit" disabled={saving} className="w-full rounded-lg py-4 text-lg font-semibold text-white hover:opacity-90 disabled:opacity-60" style={{ backgroundColor: BRAND_RED }}>
+      <button type="button" onClick={() => save(form.version)} disabled={saving} className="w-full rounded-lg py-4 text-lg font-semibold text-white hover:opacity-90 disabled:opacity-60" style={{ backgroundColor: BRAND_RED }}>
         {saving ? 'Saving…' : 'Save checklist'}
       </button>
     </form>
@@ -299,6 +356,12 @@ export default function TechChecklistPage() {
       if (mine === latestRef.current) setLoading(false);
     }
   }, [request]);
+
+  // A save answers for ITS lot. If the technician has scanned another sticker since, that late
+  // answer must not put the old lot back on screen.
+  const acceptSaved = useCallback((data) => {
+    setView((v) => (v?.lot?.lot_number && v.lot.lot_number === data?.lot?.lot_number ? data : v));
+  }, []);
 
   const submit = useCallback((raw) => {
     const lot = String(raw || '').trim().toUpperCase();
@@ -374,7 +437,7 @@ export default function TechChecklistPage() {
           <div className="mt-6 space-y-4">
             <OrderCard view={view} me={me} />
             {view.available ? (
-              <Checklist key={`${view.lot.lot_number}`} view={view} onSaved={setView} request={request} />
+              <Checklist key={`${view.lot.lot_number}`} view={view} onSaved={acceptSaved} request={request} />
             ) : (
               <p className="rounded-xl border bg-white p-4 text-sm text-gray-700">
                 The checklist is not available yet — it is switched on when the database is updated. The order details above are correct.

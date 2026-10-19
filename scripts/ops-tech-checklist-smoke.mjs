@@ -37,20 +37,27 @@ const LOT_ASSIGNED = {
   workorder_items_id: 2001, workorder_id: 19422, invoice_id: 'INV-19422', workorder_status: 'Work Ordered',
   estimated_completion: '2026-10-24', item_status: 'In Workshop',
   delivery_suburb: 'Altona North', delivery_state: 'VIC', technician_id: 'ED', item_sn: 'DEC83B18000051 & CONSOLE AZB06195052',
+  item_lot_count: 1,
 };
+// Review finding 1: a qty-2 item carries one lot per machine — 13 such items on prod (up to 9).
+const LOT_MULTI_A = {
+  ...LOT_ASSIGNED, lot_id: 51, lot_number: 'L00051', serial_number: 'FCQB0015126-181', workorder_items_id: 3001,
+  item_sn: 'FCQB0015126-181 & FCQB0015157-181', item_lot_count: 2,
+};
+const LOT_MULTI_B = { ...LOT_MULTI_A, lot_id: 52, lot_number: 'L00052', serial_number: null };
 const LOT_STOCK = {
   lot_id: 7, lot_number: 'L00007', status: 'In Stock', serial_number: 'OLD-SN', product_sku: 'LF-95T',
   product_name: 'Life Fitness 95T Treadmill', product_brand: 'Life Fitness',
   workorder_items_id: null, workorder_id: null, invoice_id: null, workorder_status: null,
   estimated_completion: null, item_status: null, delivery_suburb: null, delivery_state: null,
-  technician_id: null, item_sn: null,
+  technician_id: null, item_sn: null, item_lot_count: 0,
 };
 
 const allYes = () => Object.fromEntries(CHECK_ITEMS.map((i) => [i.key, { v: 'yes', note: '' }]));
 
 // In-memory product_lots + workorder_items + lot_checklists + workorder_logs.
 // `missing: true` = prod before migration 0009 (lot_checklists does not exist).
-function makeClient({ missing = false, lots = [LOT_ASSIGNED, LOT_STOCK], checklist = null } = {}) {
+function makeClient({ missing = false, lots = [LOT_ASSIGNED, LOT_STOCK, LOT_MULTI_A, LOT_MULTI_B], checklist = null, upsertRace = false } = {}) {
   const state = {
     lots: Object.fromEntries(lots.map((l) => [l.lot_number, { ...l }])),
     checklists: checklist ? { [checklist.lot_id]: { ...checklist } } : {},
@@ -92,6 +99,8 @@ function makeClient({ missing = false, lots = [LOT_ASSIGNED, LOT_STOCK], checkli
           approved_at: ok ? (approvedAt || new Date('2026-10-19T03:00:00Z')) : null,
           updated_by: userId, updated_at: new Date('2026-10-19T03:00:00Z'),
         };
+        // upsertRace: another save landed between the version pre-check and this statement.
+        if (upsertRace) return { rows: [] };
         const cur = state.checklists[lotId];
         if (!cur) { state.checklists[lotId] = { ...row, version: 1 }; return { rows: [{ version: 1 }] }; }
         if (cur.version !== baseVersion) return { rows: [] };
@@ -103,9 +112,10 @@ function makeClient({ missing = false, lots = [LOT_ASSIGNED, LOT_STOCK], checkli
         return { rows: [], rowCount: l ? 1 : 0 };
       }
       if (/^UPDATE workorder_items SET item_sn = \$1/i.test(sql)) {
-        const l = Object.values(state.lots).find((x) => x.workorder_items_id === params[1]);
-        if (l) l.item_sn = params[0];
-        return { rows: [], rowCount: l ? 1 : 0 };
+        // The item is shared by every lot on it — update them all, like the real column would.
+        const ls = Object.values(state.lots).filter((x) => x.workorder_items_id === params[1]);
+        for (const l of ls) l.item_sn = params[0];
+        return { rows: [], rowCount: ls.length ? 1 : 0 };
       }
       if (/^INSERT INTO workorder_logs/i.test(sql)) {
         state.logs.push(params);
@@ -158,6 +168,9 @@ console.log('\nserials:');
   check('two unlabelled serials stay together in base (no guessing)', s3.base_serial === 'FCQB0015126-181 & FCQB0015157-181' && s3.console_serial === '');
   check('single serial → base only', splitSerial('PMH113229').base_serial === 'PMH113229' && splitSerial('PMH113229').console_serial === '');
   check('nothing → both blank', splitSerial(null).base_serial === '' && splitSerial('  ').console_serial === '');
+  check('a base serial that starts with CONSOLE stays the base (first part is always base)', splitSerial('CONSOLE123ABC').base_serial === 'CONSOLE123ABC' && splitSerial('CONSOLE123ABC & X9').base_serial === 'CONSOLE123ABC & X9');
+  check('our own console-only form "CONSOLE C2" reads back as console', splitSerial('CONSOLE C2').console_serial === 'C2' && splitSerial('CONSOLE C2').base_serial === '');
+  check('lower-case "console" label is recognised', splitSerial('a1 & console c2').console_serial === 'c2');
   check('combine base + console', combineSerial('A1', 'C2') === 'A1 & CONSOLE C2');
   check('combine base only', combineSerial('A1', '') === 'A1');
   check('combine console only', combineSerial('', 'C2') === 'CONSOLE C2');
@@ -200,8 +213,11 @@ console.log('\nreading a lot:');
   check('order: workorder, invoice, target completion, item status', b.order.workorder_id === 19422 && b.order.invoice_id === 'INV-19422' && b.order.estimated_completion === '2026-10-24' && b.order.item_status === 'In Workshop');
   check('order: delivering to suburb + state', b.order.delivery_suburb === 'Altona North' && b.order.delivery_state === 'VIC');
   check('order: assigned technician id + name', b.order.technician_id === 'ED' && b.order.technician_name === 'Eden');
-  check('no customer data anywhere in the payload', !/customer/i.test(JSON.stringify(b)));
-  check('no cost in the payload', !/unit_cost/.test(JSON.stringify(b)));
+  // Asserted on the SQL actually issued — the fake returns fixed rows, so the payload alone
+  // could never show a leak (review finding 7).
+  check('the lot query selects no customer, phone, cost or price columns', !/customer|phone|cost|price|salesperson/i.test(c.calls[0].text));
+  check('…and the payload carries none', !/customer|unit_cost|phone/i.test(JSON.stringify(b)));
+  check('order says how many machines (lots) are on this item', b.order.lots_on_item === 1);
   check('available, no checklist yet → null', b.available === true && b.checklist === null);
   check('serials pre-filled from the workorder item', b.prefill.base_serial === 'DEC83B18000051' && b.prefill.console_serial === 'AZB06195052');
   check('reads only — every statement is a SELECT', c.calls.length === 2 && !c.calls.some(isWrite));
@@ -222,7 +238,7 @@ console.log('\nreading a lot:');
   check('existing checklist returned with version', b.checklist.version === 3 && b.checklist.test_tag_no === '555');
   check('…with approver + last editor names', b.checklist.approved_by_name === 'Eden' && b.checklist.updated_by_name === 'Brodie');
   check('…audio sub-ticks kept', b.checklist.checks.audio.spk === 'na' && b.checklist.checks.audio.jack === 'yes');
-  check('…prefill = the checklist serials', b.prefill.base_serial === 'B1' && b.prefill.console_serial === 'C1');
+  check('…prefill = what is recorded NOW (item serial), not the checklist copy', b.prefill.base_serial === 'DEC83B18000051' && b.prefill.console_serial === 'AZB06195052');
 }
 {
   const res = await run(makeClient(), { query: { resource: 'tech-checklist', lot_number: 'L99999' } });
@@ -263,7 +279,7 @@ console.log('\nsaving:');
 {
   const c = makeClient();
   await run(c, put({ checks: allYes(), base_serial: '', console_serial: '' }));
-  check('blank serials never erase what is there', c.state.lots.L00042.item_sn === 'DEC83B18000051 & CONSOLE AZB06195052' && !c.calls.some((q) => /serial_number = \$1|item_sn = \$1/.test(q.text)));
+  check('blank serials never erase what is there (shown values were not blank)', c.state.lots.L00042.item_sn === 'DEC83B18000051 & CONSOLE AZB06195052' && !c.calls.some((q) => /serial_number = \$1|item_sn = \$1/.test(q.text)));
 }
 {
   const c = makeClient();
@@ -278,6 +294,42 @@ console.log('\nsaving:');
   check('…rolled back, nothing written', c.state.tx.join() === 'BEGIN,ROLLBACK' && c.state.checklists[42].updated_by === 'BR' && c.state.logs.length === 0);
   const ok = await run(c, put({ checks: allYes(), base_version: 2 }));
   check('saving on the version shown succeeds (overwrite)', ok.statusCode === 200 && ok.body.checklist.version === 3);
+}
+
+console.log('\nserials only change when the technician changes them (review 1, 3, 4):');
+{
+  const c = makeClient();
+  const res = await run(c, put({ checks: allYes(), base_serial: 'DEC83B18000051', console_serial: 'AZB06195052', serials_shown: { base_serial: 'DEC83B18000051', console_serial: 'AZB06195052' } }));
+  check('unchanged serials → no serial UPDATE at all', res.statusCode === 200 && !c.calls.some((q) => /UPDATE (product_lots|workorder_items)/.test(q.text)));
+  check('…the checklist still records them', c.state.checklists[42].base_serial === 'DEC83B18000051');
+}
+{
+  // Someone corrected item_sn on the workorder page after the technician opened the checklist.
+  const c = makeClient();
+  c.state.lots.L00042.item_sn = 'FIXED-ON-WO-PAGE';
+  await run(c, put({ checks: allYes(), base_serial: 'DEC83B18000051', console_serial: 'AZB06195052', serials_shown: { base_serial: 'DEC83B18000051', console_serial: 'AZB06195052' } }));
+  check('a save that did not touch the serials never writes the old one back', c.state.lots.L00042.item_sn === 'FIXED-ON-WO-PAGE');
+}
+{
+  const c = makeClient();
+  await run(c, put({ checks: allYes(), base_serial: 'newbase', console_serial: 'newcon', serials_shown: { base_serial: 'DEC83B18000051', console_serial: 'AZB06195052' } }));
+  check('changed serials are written, upper-cased', c.state.lots.L00042.item_sn === 'NEWBASE & CONSOLE NEWCON' && c.state.checklists[42].base_serial === 'NEWBASE');
+}
+{
+  const c = makeClient();
+  const res = await run(c, { query: { resource: 'tech-checklist', lot_number: 'L00052' } });
+  check('multi-machine item: prefill comes from the lot, never the shared item text', res.body.prefill.base_serial === '' && res.body.order.lots_on_item === 2);
+  const resA = await run(c, { query: { resource: 'tech-checklist', lot_number: 'L00051' } });
+  check('…the lot’s own serial is used when it has one', resA.body.prefill.base_serial === 'FCQB0015126-181');
+  await run(c, put({ lot_number: 'L00052', checks: allYes(), base_serial: 'FCQB0015157-181', serials_shown: { base_serial: '', console_serial: '' } }));
+  check('…saving writes that lot’s serial only', c.state.lots.L00052.serial_number === 'FCQB0015157-181');
+  check('…and leaves the shared item serial (both machines) untouched', c.state.lots.L00051.item_sn === 'FCQB0015126-181 & FCQB0015157-181' && !c.calls.some((q) => /UPDATE workorder_items/.test(q.text)));
+  check('…and the other machine’s lot keeps its serial', c.state.lots.L00051.serial_number === 'FCQB0015126-181');
+}
+{
+  const c = makeClient({ upsertRace: true });
+  const res = await run(c, put({ checks: allYes(), ok_to_ship: true, base_serial: 'Z1', serials_shown: { base_serial: '', console_serial: '' } }));
+  check('a save that loses the race at the upsert → 409, rolled back, nothing else written', res.statusCode === 409 && c.state.tx.join() === 'BEGIN,ROLLBACK' && c.state.logs.length === 0 && !c.calls.some((q) => /UPDATE (product_lots|workorder_items)/.test(q.text)));
 }
 
 console.log('\nsign-off ("Screen OK to ship"):');
@@ -306,6 +358,7 @@ console.log('\nsign-off ("Screen OK to ship"):');
 
   const off = await run(c, put({ checks, ok_to_ship: false, base_version: 2 }));
   check('un-ticking clears the approver', off.statusCode === 200 && c.state.checklists[42].ok_to_ship === false && c.state.checklists[42].approved_by === null);
+  check('…and logs that the sign-off was withdrawn', c.state.logs.length === 2 && /withdrawn/i.test(c.state.logs[1][3]));
 }
 {
   const c = makeClient();

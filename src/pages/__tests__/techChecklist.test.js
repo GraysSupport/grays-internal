@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import TechChecklistPage from '../tech-checklist';
 import { CHECK_ITEMS, canUseTechChecklist, unansweredItems, emptyChecks } from '../../utils/techChecklist';
@@ -194,6 +194,92 @@ describe('TechChecklistPage', () => {
     expect(await screen.findByText(/checklist is not available yet/i)).toBeInTheDocument();
     expect(screen.getByText('INV-19422')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save checklist' })).not.toBeInTheDocument();
+  });
+
+  test('Save sends the serials that were shown, so unchanged serials are never rewritten', async () => {
+    login();
+    const f = installFetch();
+    renderPage('/tech-checklist?lot=L00042');
+    await screen.findByLabelText('Base S/N');
+    fireEvent.change(screen.getByLabelText('Base S/N'), { target: { value: 'NEW1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save checklist' }));
+    await waitFor(() => expect(putBodies(f)).toHaveLength(1));
+    expect(putBodies(f)[0].serials_shown).toEqual({ base_serial: 'DEC83B18000051', console_serial: 'AZB06195052' });
+  });
+
+  test('a multi-machine item says the serial is saved to this lot only', async () => {
+    login();
+    installFetch({ get: [200, { ...VIEW, order: { ...VIEW.order, lots_on_item: 2 } }] });
+    renderPage('/tech-checklist?lot=L00042');
+    expect(await screen.findByText(/2 machines on this workorder item/i)).toBeInTheDocument();
+  });
+
+  test('unsaved work survives an expired sign-in (the WK kiosk) and is restored after logging back in', async () => {
+    login({ id: 'WK', roles: ['admin'] });
+    installFetch({ put: [401, { error: 'Authentication required' }] });
+    const first = renderPage('/tech-checklist?lot=L00042');
+    await screen.findByLabelText('Base S/N');
+    fireEvent.click(within(screen.getByRole('group', { name: 'Boots OK' })).getByLabelText('Yes'));
+    fireEvent.change(screen.getByLabelText('Base S/N'), { target: { value: 'KEEPME' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save checklist' }));
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+    expect(localStorage.getItem('token')).toBeNull();
+    first.unmount();
+
+    login({ id: 'WK', roles: ['admin'] });
+    installFetch();
+    renderPage('/tech-checklist?lot=L00042');
+    expect(await screen.findByLabelText('Base S/N')).toHaveValue('KEEPME');
+    expect(within(screen.getByRole('group', { name: 'Boots OK' })).getByLabelText('Yes')).toBeChecked();
+    expect(screen.getByText(/restored your unsaved changes/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved changes' }));
+    expect(screen.getByLabelText('Base S/N')).toHaveValue('DEC83B18000051');
+  });
+
+  test('a successful save clears the draft', async () => {
+    login();
+    installFetch({ put: [200, { ...VIEW, checklist: { ...VIEW.checklist, checks: allYes(), version: 1, updated_at: '2026-10-19T03:00:00.000Z', updated_by: 'ED', updated_by_name: 'Eden' } }] });
+    const r = renderPage('/tech-checklist?lot=L00042');
+    await screen.findByLabelText('Base S/N');
+    fireEvent.change(screen.getByLabelText('Base S/N'), { target: { value: 'X1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save checklist' }));
+    await screen.findByRole('status');
+    r.unmount();
+    installFetch();
+    renderPage('/tech-checklist?lot=L00042');
+    await screen.findByLabelText('Base S/N');
+    expect(screen.queryByText(/restored your unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  test('a late save answer for a lot no longer on screen does not bring it back', async () => {
+    login();
+    let releaseSave;
+    const VIEW_B = { ...VIEW, lot: { ...VIEW.lot, lot_id: 43, lot_number: 'L00043', product_name: 'Second Machine' } };
+    global.fetch = jest.fn((url, opts = {}) => {
+      if (opts.method === 'PUT') return new Promise((resolve) => { releaseSave = () => resolve({ ok: true, status: 200, json: async () => VIEW }); });
+      const body = String(url).includes('L00043') ? VIEW_B : VIEW;
+      return Promise.resolve({ ok: true, status: 200, json: async () => body });
+    });
+    renderPage('/tech-checklist?lot=L00042');
+    await screen.findByText('Life Fitness 95X Elliptical');
+    fireEvent.click(screen.getByRole('button', { name: 'Save checklist' }));
+    scan('L00043');
+    expect(await screen.findByText('Second Machine')).toBeInTheDocument();
+    await act(async () => { releaseSave(); await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.getByText('Second Machine')).toBeInTheDocument();
+    expect(screen.queryByText('Life Fitness 95X Elliptical')).not.toBeInTheDocument();
+  });
+
+  test('Enter in a comment box (e.g. a scanner) does not save the checklist', async () => {
+    login();
+    const f = installFetch();
+    renderPage('/tech-checklist?lot=L00042');
+    const note = await screen.findByLabelText('Boots OK comment');
+    // A browser turns Enter in a text box into a form submit (implicit submission); jsdom does
+    // not, so the submit is fired directly. Only the Save button may save.
+    fireEvent.submit(note.closest('form'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putBodies(f)).toHaveLength(0);
   });
 
   test('unknown lot → not found', async () => {

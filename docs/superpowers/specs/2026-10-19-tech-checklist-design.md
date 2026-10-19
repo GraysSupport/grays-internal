@@ -97,6 +97,26 @@ SELECT, 42P01 → null) and the page shows a read-only "Screen & electronics che
 - Nav smoke: item shown for technician / WK / superadmin, hidden for admin/staff/sales.
 - Lot Tracker smoke updated for the extra SELECT.
 
+## Rules added by code review (19 Oct 2026)
+
+- **Multi-machine items.** A workorder item can carry several lots (13 prod items, up to 9),
+  but `item_sn` is one text field for the item. So `item_sn` is read for prefill and written
+  back **only when the lot is the item's only lot**; otherwise the serial goes to the lot only
+  and the page says so. Prefill = item serial for a single-lot item, else the lot's own serial.
+- **Serials only change when the technician changes them.** The page sends `serials_shown`;
+  the server writes serials back only when the submitted pair differs from it (so ticking boxes
+  never rewrites, or reverts, a serial corrected on the workorder page). Stored upper-case.
+  A first serial starting with "CONSOLE…" stays the base; only a later "& CONSOLE…" part (or our
+  own "CONSOLE X" console-only form) is the console.
+- **Drafts.** Unsaved edits are kept per lot in the browser (`grays.techChecklist.draft.<lot>`)
+  and restored with a notice — the WK kiosk is never logged out but its 1h token expires, so a
+  Save can bounce to the login page. Cleared on save / discard.
+- A late save answer for a lot no longer on screen is ignored; Enter in a text box never saves
+  (only the Save button does); withdrawing a sign-off also logs a `NOTE_ADDED` line.
+- Kept as designed: a later edit by someone else keeps the original approver (the log records
+  both); the "assigned to someone else" banner shows for technician logins only; a checklist
+  stays with the lot (the machine) if it is reassigned.
+
 ## Out of scope
 
 Printing a tag, photos, making serials mandatory, changing item status, a checklist history
