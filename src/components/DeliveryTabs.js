@@ -2,10 +2,13 @@ import { Link, useLocation } from 'react-router-dom';
 import { getRoles, hasAnyRole } from '../utils/auth';
 // G8: who may plan a temporary delivery run — shared with the page; the server is the real authority.
 import { TEMP_RUN_ROLES } from '../utils/tempRun';
+import { currentUserIsWorkshop } from '../utils/workshopAccess';
 
 export default function DeliveryTabs({ className = '' }) {
   const { pathname } = useLocation();
-  const canPlanRun = hasAnyRole(getRoles(), TEMP_RUN_ROLES);
+  // G17: workshop logins (technician / workshop / WK) don't plan runs or see the booking + money tabs.
+  const isWorkshop = currentUserIsWorkshop();
+  const canPlanRun = hasAnyRole(getRoles(), TEMP_RUN_ROLES) && !isWorkshop;
 
   // Normalize trailing slash (so "/delivery_operations/" matches "/delivery_operations")
   const path = pathname.replace(/\/+$/, '') || '/';
@@ -50,21 +53,25 @@ export default function DeliveryTabs({ className = '' }) {
             Current Operations
           </Link>
 
-          <Link
-            to="/delivery_operations/to-be-booked"
-            className={tabCls(isActive.toBeBooked)}
-            aria-current={isActive.toBeBooked ? 'page' : undefined}
-          >
-            To Be Booked
-          </Link>
+          {!isWorkshop && (
+            <Link
+              to="/delivery_operations/to-be-booked"
+              className={tabCls(isActive.toBeBooked)}
+              aria-current={isActive.toBeBooked ? 'page' : undefined}
+            >
+              To Be Booked
+            </Link>
+          )}
 
-          <Link
-            to="/delivery_operations/schedule"
-            className={tabCls(isActive.schedule)}
-            aria-current={isActive.schedule ? 'page' : undefined}
-          >
-            Delivery Schedule
-          </Link>
+          {!isWorkshop && (
+            <Link
+              to="/delivery_operations/schedule"
+              className={tabCls(isActive.schedule)}
+              aria-current={isActive.schedule ? 'page' : undefined}
+            >
+              Delivery Schedule
+            </Link>
+          )}
 
           <Link
             to="/delivery_operations/current-collections"
@@ -102,13 +109,15 @@ export default function DeliveryTabs({ className = '' }) {
             Operations Completed
           </Link>
 
-          <Link
-            to="/delivery_operations/completed-deliveries"
-            className={tabCls(isActive.completedDeliveries)}
-            aria-current={isActive.completedDeliveries ? 'page' : undefined}
-          >
-            Deliveries Completed
-          </Link>
+          {!isWorkshop && (
+            <Link
+              to="/delivery_operations/completed-deliveries"
+              className={tabCls(isActive.completedDeliveries)}
+              aria-current={isActive.completedDeliveries ? 'page' : undefined}
+            >
+              Deliveries Completed
+            </Link>
+          )}
 
           <Link
             to="/delivery_operations/completed-collections"

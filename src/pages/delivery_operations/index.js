@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -48,6 +49,8 @@ export default function ActiveWorkordersPage() {
   // ✅ user + GS popup
   const [user, setUser] = useState(null);
   const isGS = user?.id === 'GS';
+  // G17: workshop logins (technician / workshop / WK) get no balances and can't create workorders.
+  const isWorkshop = useMemo(() => currentUserIsWorkshop(), []);
   const [showEcomPopup, setShowEcomPopup] = useState(false);
 
   const navigate = useNavigate();
@@ -77,7 +80,7 @@ export default function ActiveWorkordersPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/workorder?technicians=1');
+        const res = await fetch('/api/workorder?technicians=1', { headers: identityHeaders() });
         const data = await res.json();
         if (res.ok) setTechnicians(data);
       } catch (e) {
@@ -96,7 +99,7 @@ export default function ActiveWorkordersPage() {
       toast.loading('Loading work orders...', { id: 'wo-load' });
 
       try {
-        const res = await fetch('/api/workorder?status=Work%20Ordered');
+        const res = await fetch('/api/workorder?status=Work%20Ordered', { headers: identityHeaders() });
         const data = await res.json();
 
         if (!res.ok) throw new Error(data?.error || 'Failed to load work orders');
@@ -223,7 +226,7 @@ export default function ActiveWorkordersPage() {
       { key: 'notes', header: 'Notes', get: (w) => w.notes || '—' }
     ];
 
-    const cols = filtersActive ? compactCols : fullCols;
+    const cols = (filtersActive ? compactCols : fullCols).filter((c) => !(isWorkshop && c.key === 'payment'));
     const title = `Active Work Orders${filtersActive ? ' (Filtered)' : ''}`;
 
     const rowsHtml = (filtered || [])
@@ -323,12 +326,14 @@ export default function ActiveWorkordersPage() {
                 placeholder="Search"
                 className="w-full lg:w-64 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
               />
-              <Link
-                to="/create_workorder"
-                className="ml-auto inline-flex items-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black/90"
-              >
-                + Create New Work Order
-              </Link>
+              {!isWorkshop && (
+                <Link
+                  to="/create_workorder"
+                  className="ml-auto inline-flex items-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black/90"
+                >
+                  + Create New Work Order
+                </Link>
+              )}
 
               <button
                 onClick={handlePrint}
@@ -370,15 +375,17 @@ export default function ActiveWorkordersPage() {
                 </select>
 
                 {/* Payment */}
-                <select
-                  value={filters.payment}
-                  onChange={(e) => setFilters(f => ({ ...f, payment: e.target.value }))}
-                  className="rounded-lg border px-3 py-2"
-                >
-                  <option value="">All Payments</option>
-                  <option value="Paid">Paid</option>
-                  <option value="Outstanding">Outstanding</option>
-                </select>
+                {!isWorkshop && (
+                  <select
+                    value={filters.payment}
+                    onChange={(e) => setFilters(f => ({ ...f, payment: e.target.value }))}
+                    className="rounded-lg border px-3 py-2"
+                  >
+                    <option value="">All Payments</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Outstanding">Outstanding</option>
+                  </select>
+                )}
 
                 {/* Technicians */}
                 <div className="border rounded-lg p-2">
@@ -422,7 +429,7 @@ export default function ActiveWorkordersPage() {
                       <th className="px-3 py-2 w-20">State</th>
                       <th className="px-3 py-2">Items</th>
                       <th className="px-3 py-2 w-20">Sales</th>
-                      <th className="px-3 py-2 w-28">Payment</th>
+                      {!isWorkshop && <th className="px-3 py-2 w-28">Payment</th>}
                       <th className="px-3 py-2 w-28">Technicians</th>
                       <th className="px-3 py-2 w-28">Target</th>
                       <th className="px-3 py-2 w-40">Notes</th>
@@ -430,10 +437,10 @@ export default function ActiveWorkordersPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {loading && (
-                      <tr><td colSpan={11} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                      <tr><td colSpan={isWorkshop ? 10 : 11} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
                     )}
                     {!loading && filtered.length === 0 && (
-                      <tr><td colSpan={11} className="px-3 py-6 text-center text-sm">No active work orders.</td></tr>
+                      <tr><td colSpan={isWorkshop ? 10 : 11} className="px-3 py-6 text-center text-sm">No active work orders.</td></tr>
                     )}
                     {!loading && filtered.map((w, idx) => {
                       const itemsStr = formatItemsFromItems(w.items);
@@ -469,7 +476,7 @@ export default function ActiveWorkordersPage() {
                           <td className="px-3 py-2 text-sm w-20">{w.delivery_state ?? '—'}</td>
                           <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words">{itemsStr}</td>
                           <td className="px-3 py-2 text-sm w-20">{w.salesperson ?? '—'}</td>
-                          <td className="px-3 py-2 text-sm w-28">
+                          {!isWorkshop && <td className="px-3 py-2 text-sm w-28">
                             {hasDue ? (
                               <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">
                                 ${Number(w.outstanding_balance).toFixed(2)}
@@ -479,7 +486,7 @@ export default function ActiveWorkordersPage() {
                                 Paid
                               </span>
                             )}
-                          </td>
+                          </td>}
                           <td className="px-3 py-2 text-sm w-28">
                             {(w.technicians && w.technicians.length) ? (
                               <div className="flex flex-wrap gap-1">

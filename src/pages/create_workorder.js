@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import BackButton from '../components/backbutton';
 import HomeButton from '../components/homebutton';
 import CreateCustomerModal from '../components/CreateCustomerModal';
+import { blockWorkshop } from '../components/WorkshopBlocked';
 
 const DELIVERY_STATES = ['VIC', 'NSW', 'ACT', 'TAS', 'QLD', 'WA', 'SA', 'NT'];
 const LEAD_OPTIONS = ['1 Week', '2 Weeks', '3 Weeks', '4 Weeks', '5 Weeks'];
@@ -19,7 +20,7 @@ function parseWeeks(label) {
 }
 const ensureArray = (x) => (Array.isArray(x) ? x : (x && typeof x === 'object' ? [x] : []));
 
-export default function CreateWorkorderPage() {
+function CreateWorkorderPage() {
   const navigate = useNavigate();
   const [showCustomerModal, setShowCustomerModal] = useState(false);
 
@@ -719,3 +720,6 @@ export default function CreateWorkorderPage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(CreateWorkorderPage, 'Create Work Order');

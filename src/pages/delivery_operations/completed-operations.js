@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
 
 const PAGE_SIZE = 20;
 
@@ -33,6 +34,8 @@ export default function CompletedOperationsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
+  // G17: workshop logins (technician / workshop / WK) get no balances.
+  const isWorkshop = useMemo(() => currentUserIsWorkshop(), []);
 
   useEffect(() => {
     const stored = localStorage.getItem('user');
@@ -44,7 +47,7 @@ export default function CompletedOperationsPage() {
     const load = async () => {
       toast.loading('Loading completed operations...', { id: 'ops-load' });
       try {
-        const res = await fetch('/api/workorder?status=Completed');
+        const res = await fetch('/api/workorder?status=Completed', { headers: identityHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || 'Failed to load');
         if (mounted) setRows(data || []);
@@ -130,7 +133,7 @@ export default function CompletedOperationsPage() {
                     <th className="px-4 py-3 w-20">State</th>
                     <th className="px-4 py-3">Items</th>
                     <th className="px-4 py-3 w-20">Sales</th>
-                    <th className="px-4 py-3 w-28">Payment</th>
+                    {!isWorkshop && <th className="px-4 py-3 w-28">Payment</th>}
                     <th className="px-4 py-3 w-28">Target</th>
                     <th className="px-4 py-3 w-40">Notes</th>
                   </tr>
@@ -138,12 +141,12 @@ export default function CompletedOperationsPage() {
                 <tbody className="divide-y divide-gray-100">
                   {loading && (
                     <tr>
-                      <td colSpan={10} className="px-4 py-6 text-center text-sm">Loading…</td>
+                      <td colSpan={isWorkshop ? 9 : 10} className="px-4 py-6 text-center text-sm">Loading…</td>
                     </tr>
                   )}
                   {!loading && pageRows.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="px-4 py-6 text-center text-sm">No completed work orders.</td>
+                      <td colSpan={isWorkshop ? 9 : 10} className="px-4 py-6 text-center text-sm">No completed work orders.</td>
                     </tr>
                   )}
                   {pageRows.map((w) => {
@@ -162,7 +165,7 @@ export default function CompletedOperationsPage() {
                         <td className="px-4 py-3 text-sm w-20">{w.delivery_state ?? '—'}</td>
                         <td className="px-4 py-3 text-sm whitespace-normal break-words">{itemsStr}</td>
                         <td className="px-4 py-3 text-sm w-20">{w.salesperson ?? '—'}</td>
-                        <td className="px-4 py-3 text-sm w-28">
+                        {!isWorkshop && <td className="px-4 py-3 text-sm w-28">
                           {hasDue ? (
                             <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">
                               ${Number(w.outstanding_balance).toFixed(2)}
@@ -172,7 +175,7 @@ export default function CompletedOperationsPage() {
                               Paid
                             </span>
                           )}
-                        </td>
+                        </td>}
                         <td className="px-4 py-3 text-sm w-28">{formatDate(w.estimated_completion)}</td>
                         <td className="px-4 py-3 text-sm whitespace-normal break-words w-40">{w.notes || '—'}</td>
                       </tr>

@@ -4,6 +4,7 @@ import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { LOT_TRACKER_ROLES, looksLikeLotNumber, formatWhen } from '../utils/lotTracker';
+import { currentUserIsWorkshop } from '../utils/workshopAccess';
 
 // G11 (Nick, 1 Oct 2026) — Lot Tracker.
 //
@@ -158,7 +159,8 @@ function Journey({ journey }) {
 export default function LotTrackerPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const allowed = useMemo(() => hasAnyRole(getRoles(), LOT_TRACKER_ROLES), []);
+  // G17: the WK workshop kiosk is an admin login, but workshop logins don't get the tracker.
+  const allowed = useMemo(() => hasAnyRole(getRoles(), LOT_TRACKER_ROLES) && !currentUserIsWorkshop(), []);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [camera, setCamera] = useState(false);

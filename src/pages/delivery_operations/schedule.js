@@ -7,6 +7,7 @@ import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import {
   RUN_ORDER_ROLES, compareStops, sameRun, moveStop, neighbourInRun, runOrderPayload, stopsInRun,
 } from '../../utils/runOrder';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 
@@ -123,7 +124,7 @@ function CompactMoneyInput({ value, onChange, onBlur, placeholder = '0.00', widt
   );
 }
 
-export default function DeliverySchedulePage() {
+function DeliverySchedulePage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
 
@@ -1233,3 +1234,6 @@ export default function DeliverySchedulePage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(DeliverySchedulePage, 'Delivery Schedule');

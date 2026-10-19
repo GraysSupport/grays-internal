@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 const PAGE_SIZE = 50;
@@ -134,7 +135,7 @@ function MoneyCell({ row, field, savingIds, saveDelivery }) {
   );
 }
 
-export default function CompletedDeliveriesPage() {
+function CompletedDeliveriesPage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
 
@@ -598,3 +599,6 @@ export default function CompletedDeliveriesPage() {
     </div>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(CompletedDeliveriesPage, 'Deliveries Completed');

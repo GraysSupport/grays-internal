@@ -5,6 +5,7 @@ import DeliveryTabs from '../../components/DeliveryTabs';
 import StopOrderList from '../../components/StopOrderList';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import { endExpiredSession } from '../../utils/session';
+import { currentUserIsWorkshop } from '../../utils/workshopAccess';
 import {
   emptyPlan, toStop, addRun, updateRun, removeRun, addStop, removeStop, moveStop,
   plannedKeys, buildCsv, buildRunSheetHtml, loadPlan, savePlan, clearPlan, refreshStops,
@@ -96,7 +97,8 @@ function RunStop({ stop: s, ready, live, nowDelivery }) {
 
 export default function TempDeliveryRunPage() {
   const navigate = useNavigate();
-  const allowed = useMemo(() => hasAnyRole(getRoles(), TEMP_RUN_ROLES), []);
+  // G17: the WK workshop kiosk is an admin login, but workshop logins don't plan runs.
+  const allowed = useMemo(() => hasAnyRole(getRoles(), TEMP_RUN_ROLES) && !currentUserIsWorkshop(), []);
 
   const [plan, setPlan] = useState(loadPlan);
   const [targetRunId, setTargetRunId] = useState(null);

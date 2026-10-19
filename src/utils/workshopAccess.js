@@ -2,7 +2,7 @@
 // money. Pure and JSX-free (nav.js imports it; the smokes load it in node). Mirrors
 // lib/workshopAccess.js — the server is the real authority; this only decides what to SHOW.
 
-import { getRoles, getStoredUser, hasAnyRole } from './auth.js';
+import { authHeaders, getRoles, getStoredUser, hasAnyRole } from './auth.js';
 
 export const WORKSHOP_ROLES = ['technician', 'workshop'];
 export const FULL_ACCESS_ROLES = ['superadmin', 'admin', 'logistics', 'sales', 'staff'];
@@ -19,4 +19,14 @@ export function isWorkshopRestricted(user, roles) {
 /** The logged-in user, from storage. */
 export function currentUserIsWorkshop() {
   return isWorkshopRestricted(getStoredUser(), getRoles());
+}
+
+/**
+ * Headers that tell the server who is asking: the login token AND the user id. The workorder /
+ * delivery endpoints redact money + customer contact for workshop logins, and they can only do
+ * that for a caller who identifies itself — the id keeps working after the 1h token expires.
+ */
+export function identityHeaders(extra = {}) {
+  const id = getStoredUser()?.id;
+  return authHeaders({ ...(id ? { 'X-User-Id': id } : {}), ...extra });
 }

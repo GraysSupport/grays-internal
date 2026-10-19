@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
+import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
 /**
  * G3: per-unit lot slots for a workorder item.
@@ -352,7 +353,10 @@ export default function WorkorderDetailPage() {
   const [user, setUser] = useState(null);
   const isSuperadmin = user?.access === 'superadmin';
   const isGS = user?.id === 'GS';
-  const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
+  // G17 (Nick, 19 Oct 2026): technicians, the workshop role and the WK kiosk see the job, not the
+  // money, and may only change item status (never Canceled) and serials. The server enforces the
+  // same rules (lib/workshopAccess.js); this decides what to show.
+  const isWorkshop = useMemo(() => currentUserIsWorkshop(), []) || user?.email === 'workshop@graysfitness.com.au';
 
   const userId = useMemo(() => {
     try {
@@ -366,14 +370,14 @@ export default function WorkorderDetailPage() {
   // G5: reload the workorder + items (after a scan-in mutates lots/status server-side)
   const reloadWO = useCallback(async () => {
     try {
-      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: { 'X-User-Id': userId || '' } });
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: identityHeaders() });
       const data = await r.json();
       if (r.ok) {
         setWo(data);
         setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
       }
     } catch { /* ignore */ }
-  }, [id, userId]);
+  }, [id]);
 
   // G5: scan a lot sticker to assign it to the matching item + set In Workshop.
   const handleScanIn = useCallback(async (raw) => {
@@ -426,7 +430,7 @@ export default function WorkorderDetailPage() {
       // set the item In Workshop
       await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-User-Id': userId || '' },
+        headers: identityHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ items: [{ workorder_items_id: target.workorder_items_id, status: 'In Workshop' }] }),
       });
 
@@ -536,7 +540,7 @@ export default function WorkorderDetailPage() {
       setLoading(true);
       try {
         const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, {
-          headers: { 'X-User-Id': userId || '' }
+          headers: identityHeaders(),
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data?.error || 'Failed to load workorder');
@@ -675,7 +679,14 @@ export default function WorkorderDetailPage() {
     setSaving(true);
     const toastId = toast.loading('Saving changes...');
     try {
-      const payload = {
+      // Workshop logins send ONLY what they may change; the server refuses anything else.
+      const payload = isWorkshop ? {
+        items: items.map((it) => ({
+          workorder_items_id: it.workorder_items_id,
+          status: it.status,
+          item_sn: it.item_sn ?? null,
+        })),
+      } : {
         status: woStatus || wo.status,
         notes,
         delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
@@ -723,10 +734,7 @@ export default function WorkorderDetailPage() {
 
       const r = await fetch(`/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': userId || '',
-        },
+        headers: identityHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
 
@@ -801,6 +809,7 @@ export default function WorkorderDetailPage() {
           </h1>
 
           <div className="flex items-center gap-2">
+            {isWorkshop ? (important && <span className="rounded-md border border-amber-300 px-3 py-1 text-sm text-amber-700">★ Important</span>) : (
             <button
               onClick={() => setImportant((v) => !v)}
               className={`rounded-md border px-3 py-1 text-sm hover:bg-gray-50 ${important ? 'text-amber-700 border-amber-300' : ''}`}
@@ -808,6 +817,7 @@ export default function WorkorderDetailPage() {
             >
               {important ? '★ Important' : '☆ Mark important'}
             </button>
+            )}
 
             {isGS && (
               <button
@@ -873,12 +883,12 @@ export default function WorkorderDetailPage() {
           </div>
 
           <div
-            className="rounded-lg border bg-white p-3 cursor-pointer"
-            onClick={() => setEditSalesperson(true)}
-            title="Click to change salesperson"
+            className={`rounded-lg border bg-white p-3 ${!isWorkshop ? 'cursor-pointer' : ''}`}
+            onClick={!isWorkshop ? () => setEditSalesperson(true) : undefined}
+            title={!isWorkshop ? 'Click to change salesperson' : undefined}
           >
             <div className="text-xs text-gray-500">Salesperson:</div>
-            {!editSalesperson ? (
+            {!editSalesperson || isWorkshop ? (
               <div className="font-semibold">{salesperson || wo.salesperson}</div>
             ) : (
               <select
@@ -938,12 +948,14 @@ export default function WorkorderDetailPage() {
                   {scanning ? '● Scanning…' : '⧉ Scan item in'}
                 </button>
               )}
-              <button
-                onClick={handleAddPendingRow}
-                className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
-              >
-                + Add Product
-              </button>
+              {!isWorkshop && (
+                <button
+                  onClick={handleAddPendingRow}
+                  className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+                >
+                  + Add Product
+                </button>
+              )}
             </div>
           </div>
           {scanning && (
@@ -992,7 +1004,7 @@ export default function WorkorderDetailPage() {
                     const isRemoved = toDelete.includes(it.workorder_items_id);
 
                     return (
-                      <>
+                      <Fragment key={it.workorder_items_id}>
                         <tr
                           className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${isRemoved ? 'opacity-60 line-through' : ''} cursor-pointer`}
                           onClick={() => setExpandedId(isExpanded ? null : it.workorder_items_id)}
@@ -1004,6 +1016,9 @@ export default function WorkorderDetailPage() {
                           <td className="px-4 py-3 text-sm">{it.condition}</td>
 
                           <td className="px-4 py-3 text-sm" onClick={stop}>
+                            {isWorkshop ? (
+                              <span>{techs.find((t) => t.id === it.technician_id)?.name || it.technician_id}</span>
+                            ) : (
                             <select
                               className="border rounded px-2 py-1 w-full"
                               value={it.technician_id || ''}
@@ -1014,6 +1029,7 @@ export default function WorkorderDetailPage() {
                                 <option key={t.id} value={t.id}>{t.id} — {t.name}</option>
                               ))}
                             </select>
+                            )}
                           </td>
 
                           <td className="px-4 py-3 text-sm" onClick={stop}>
@@ -1022,10 +1038,9 @@ export default function WorkorderDetailPage() {
                               value={it.status}
                               onChange={(e) => setItemField(it.workorder_items_id, 'status', e.target.value)}
                             >
-                              <option>Not in Workshop</option>
-                              <option>In Workshop</option>
-                              <option>Completed</option>
-                              <option>Canceled</option>
+                              {(isWorkshop ? WORKSHOP_ITEM_STATUSES : [...WORKSHOP_ITEM_STATUSES, 'Canceled']).map((s) => (
+                                <option key={s}>{s}</option>
+                              ))}
                             </select>
                           </td>
 
@@ -1044,6 +1059,7 @@ export default function WorkorderDetailPage() {
                           )}
 
                           <td className="px-4 py-3 text-sm" onClick={stop}>
+                            {!isWorkshop && (
                             <button
                               type="button"
                               className={`rounded border px-2 py-1 text-xs hover:bg-gray-50 ${isRemoved ? 'bg-red-50 border-red-200 text-red-700' : ''}`}
@@ -1052,6 +1068,7 @@ export default function WorkorderDetailPage() {
                             >
                               {isRemoved ? 'Undo' : 'Remove'}
                             </button>
+                            )}
                           </td>
                         </tr>
 
@@ -1082,7 +1099,7 @@ export default function WorkorderDetailPage() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
 
@@ -1258,9 +1275,10 @@ export default function WorkorderDetailPage() {
           <div className="rounded-xl border bg-white p-3">
             <div className="font-semibold mb-2">Notes</div>
             <textarea
-              className="w-full border rounded p-2 h-28"
+              className={`w-full border rounded p-2 h-28 ${isWorkshop ? 'bg-gray-50' : ''}`}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
+              readOnly={isWorkshop}
               placeholder="Notes"
             />
 
@@ -1337,7 +1355,7 @@ export default function WorkorderDetailPage() {
               </>
             )}
 
-            {String(woStatus) === 'Completed' && (
+            {String(woStatus) === 'Completed' && !isWorkshop && (
               <div className="mt-4 border rounded p-3 bg-amber-50">
                 <div className="text-sm font-medium mb-2">Workorder Status</div>
                 <div className="flex items-center gap-2">

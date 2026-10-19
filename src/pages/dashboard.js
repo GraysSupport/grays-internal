@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getRoles } from '../utils/auth';
+import { currentUserIsWorkshop, identityHeaders } from '../utils/workshopAccess';
 import { buildNavItems } from '../utils/nav';
 import { MobileNavButton, MobileNavDrawer, NavList } from '../components/PortalNav';
 
@@ -132,8 +133,8 @@ export default function Dashboard() {
       const load = Promise.all([
         fetch('/api/products', { method: 'GET' }),
         fetch('/api/waitlist', { method: 'GET' }),
-        fetch('/api/workorder', { method: 'GET' }),      // all WOs (we’ll compute active subset)
-        fetch('/api/delivery', { method: 'GET' }),
+        fetch('/api/workorder', { method: 'GET', headers: identityHeaders() }),      // all WOs (we’ll compute active subset)
+        fetch('/api/delivery', { method: 'GET', headers: identityHeaders() }),
         fetch('/api/collections', { method: 'GET' }),    // all collections
       ])
         .then(async ([productsRes, waitlistRes, woRes, delRes, colRes]) => {
@@ -295,7 +296,8 @@ export default function Dashboard() {
         </header>
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">
-          {user?.access !== 'technician' && (
+          {/* G17: no analytics for workshop logins (technician / workshop / the WK kiosk). */}
+          {user?.access !== 'technician' && !currentUserIsWorkshop() && (
             <>
               <div className="bg-white p-6 rounded shadow-md">
                 <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
