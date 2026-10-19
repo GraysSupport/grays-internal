@@ -11,6 +11,7 @@ import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 // Parse a fetch Response as JSON, but fail with a readable message if the server returned
 // HTML (e.g. a platform 404/500 page) instead of JSON — so the page never crashes with a
@@ -44,7 +45,7 @@ function fmtTime(ts) {
   }
 }
 
-export default function CustomerDetailPage() {
+function CustomerDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -271,3 +272,6 @@ export default function CustomerDetailPage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(CustomerDetailPage, 'Customer');

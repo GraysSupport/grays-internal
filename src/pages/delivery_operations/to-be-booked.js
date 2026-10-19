@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import DeliveryBoardNotes from '../../components/DeliveryBoardNotes';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 // ⛔ TEMPORARY LOCKDOWN (Nick, 20 Jul 2026): only these roles are offered the
 // delivery-booked customer SMS. Must stay in step with BOOKING_SMS_ROLES in lib/rbac.js —
@@ -230,7 +231,7 @@ function CompactMoneyInput({ value, onChange, onBlur, placeholder = '0.00', widt
   );
 }
 
-export default function ToBeBookedDeliveriesPage() {
+function ToBeBookedDeliveriesPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -988,3 +989,6 @@ export default function ToBeBookedDeliveriesPage() {
     </div>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(ToBeBookedDeliveriesPage, 'To Be Booked');

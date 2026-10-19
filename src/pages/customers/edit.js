@@ -4,8 +4,9 @@ import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import { parseMaybeJson } from '../../utils/http';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
-export default function EditCustomerPage() {
+function EditCustomerPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [form, setForm] = useState(null);
@@ -108,3 +109,6 @@ export default function EditCustomerPage() {
     </div>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(EditCustomerPage, 'Edit customer');

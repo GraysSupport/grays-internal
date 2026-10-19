@@ -5,8 +5,9 @@ import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
 import CreateProductModal from '../../components/CreateProductModal';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
-export default function CreateWaitlistPage() {
+function CreateWaitlistPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     customer_id: '',
@@ -261,3 +262,6 @@ export default function CreateWaitlistPage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): waitlist rows carry customer email + phone — not for workshop logins.
+export default blockWorkshop(CreateWaitlistPage, 'Add to waitlist');

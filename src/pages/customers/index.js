@@ -4,8 +4,9 @@ import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import CreateCustomerModal from '../../components/CreateCustomerModal';
 import { useNavigate, Link } from 'react-router-dom';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
-export default function CustomersPage() {
+function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
@@ -180,3 +181,6 @@ export default function CustomersPage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
+export default blockWorkshop(CustomersPage, 'Customers');

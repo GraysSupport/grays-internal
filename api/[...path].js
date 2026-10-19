@@ -17,6 +17,7 @@ import logisticsHandler from '../lib/handlers/logistics.js';
 import integrationsHandler from '../lib/handlers/integrations.js';
 import lotsHandler from '../lib/handlers/lots.js';
 import { buildJourney } from '../lib/customerJourney.js';
+import { refuseWorkshop } from '../lib/workshopAccess.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -128,6 +129,15 @@ export default async function handler(req, res) {
 // `rest` = path segments after "customers" (e.g. ['26'] or ['26','journey'] for F6).
 async function handleCustomers(req, res, rest = []) {
   const [subId, subResource] = Array.isArray(rest) ? rest : [rest];
+
+  // G17 (Nick, 19 Oct 2026): technicians, the workshop role and the WK kiosk don't see customer
+  // details — every method, the journey included. Checked before anything else.
+  const gateClient = await getClientWithTimezone();
+  try {
+    if (await refuseWorkshop(req, res, gateClient, 'Customer details are not available to workshop logins')) return;
+  } finally {
+    gateClient.release();
+  }
 
   // F6 — Customer-360 unified journey. Reachable as BOTH the REST path
   // (GET /api/customers/:id/journey) and the query form the rest of the app uses
@@ -275,6 +285,8 @@ async function handleBrands(req, res) {
 async function handleWaitlist(req, res, subId) {
   const client = await getClientWithTimezone();
   try {
+    // G17: waitlist rows carry the customer's email + phone — not for workshop logins.
+    if (await refuseWorkshop(req, res, client, 'The waitlist is not available to workshop logins')) return;
     const { method, query, body } = req;
     const id = subId ?? query.id;
 

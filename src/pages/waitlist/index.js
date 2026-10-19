@@ -4,8 +4,9 @@ import toast from 'react-hot-toast';
 import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import { parseMaybeJson } from '../../utils/http';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
-export default function WaitlistPage() {
+function WaitlistPage() {
   const [waitlist, setWaitlist] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchParams] = useSearchParams();
@@ -245,3 +246,6 @@ export default function WaitlistPage() {
     </>
   );
 }
+
+// G17 (Nick, 19 Oct 2026): waitlist rows carry customer email + phone — not for workshop logins.
+export default blockWorkshop(WaitlistPage, 'Waitlist');

@@ -119,6 +119,18 @@ console.log('\nshape + robustness (it renders during the pre-auth loading window
   check('a multi-role user with admin sees it', keysFor(['logistics', 'admin']).includes('lot-tracker'));
   check('Lot Tracker links to /lot-tracker', buildNavItems({ user: { id: 'XX', access: 'admin' }, roles: ['admin'] }).find((i) => i.key === 'lot-tracker')?.to === '/lot-tracker');
 
+  // G17: workshop logins — technician, workshop role, and the WK kiosk (an ADMIN login on prod,
+  // restricted by id) — get no Products / Customers / Waitlist / Lot Tracker.
+  const wkProd = buildNavItems({ user: { id: 'WK', access: 'admin', email: 'workshop@graysfitness.com.au' }, roles: ['admin'] }).map((i) => i.key);
+  for (const k of ['products', 'customers', 'waitlist', 'lot-tracker']) {
+    check(`WK (admin login) does NOT see ${k}`, !wkProd.includes(k));
+  }
+  check('WK still goes to the workshop view', buildNavItems({ user: { id: 'WK', access: 'admin' }, roles: ['admin'] }).find((i) => i.key === 'delivery')?.to === '/workshop');
+  const workshopRole = keysFor(['workshop']);
+  for (const k of ['products', 'customers', 'waitlist']) {
+    check(`workshop role does NOT see ${k}`, !workshopRole.includes(k));
+  }
+  check('a technician who is also logistics keeps Products/Customers', keysFor(['technician', 'logistics']).includes('customers'));
   // G16: the technician checklist — technician / workshop / superadmin, plus the WK account
   // (an admin login on prod) by id. Mirrors the gate in lib/techChecklist.js.
   for (const role of ['technician', 'workshop', 'superadmin']) {

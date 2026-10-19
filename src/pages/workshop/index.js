@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
+// G17: identify the kiosk so the server leaves balances + customer contact out of the list.
+import { identityHeaders } from '../../utils/workshopAccess';
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -92,7 +94,7 @@ export default function WorkshopPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/workorder?technicians=1');
+        const res = await fetch('/api/workorder?technicians=1', { headers: identityHeaders() });
         const data = await res.json();
         if (res.ok) setTechnicians(data);
       } catch (e) {
@@ -111,7 +113,7 @@ export default function WorkshopPage() {
     }
 
     try {
-      const res = await fetch('/api/workorder?status=Work%20Ordered');
+      const res = await fetch('/api/workorder?status=Work%20Ordered', { headers: identityHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Failed to load work orders');
 

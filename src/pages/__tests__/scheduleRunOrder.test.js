@@ -117,7 +117,8 @@ describe('schedule page', () => {
   });
 
   test('a saved order is shown', async () => {
-    login(['technician']);
+    // A read-only viewer (G17: technicians no longer open the schedule at all — see below).
+    login(['staff']);
     installFetch({ order: { 3: 1, 1: 2, 2: 3 } });
     const { container } = await renderSchedule();
     await waitFor(() => expect(orderOf(container)).toBe('Dan,Cara,Alice,Bob,Eve'));
@@ -237,7 +238,19 @@ describe('schedule page', () => {
     await waitFor(() => expect(orderOf(container)).toBe('Dan,Alice,Bob,Cara,Eve'));
   });
 
-  test.each([['technician'], ['staff'], ['sales']])('%s gets no reorder controls and rows are not draggable', async (role) => {
+  test('G17: a technician gets the "not available" screen instead of the schedule', () => {
+    login(['technician']);
+    const fetchMock = installFetch();
+    render(
+      <MemoryRouter initialEntries={['/delivery_operations/schedule']}>
+        <DeliverySchedulePage />
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/not available to workshop logins/i)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test.each([['staff'], ['sales']])('%s gets no reorder controls and rows are not draggable', async (role) => {
     login([role]);
     installFetch();
     const { container } = await renderSchedule();

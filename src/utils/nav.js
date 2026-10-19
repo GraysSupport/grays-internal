@@ -17,6 +17,7 @@
 // specifiers literally and cannot find './auth'. Webpack and jest both accept the extension.
 import { hasAnyRole } from './auth.js';
 import { LOT_TRACKER_ROLES } from './lotTracker.js';
+import { isWorkshopRestricted } from './workshopAccess.js';
 import { canUseTechChecklist } from './techChecklist.js';
 
 // Every key this builder can emit, in render order. Exported so a test can assert the builder
@@ -69,7 +70,9 @@ export function buildNavItems({ user, roles } = {}) {
   // plus the shared WK workshop account (an admin login) by id.
   const canUseChecklist = canUseTechChecklist(user, effectiveRoles);
   const isSuperadmin = user?.access === 'superadmin';
-  const isTechnician = user?.access === 'technician';
+  // G17: workshop logins — technician / workshop role / the WK kiosk (an admin login, by id) —
+  // get the same restricted menu: no customer, product, waitlist or lot-tracker pages.
+  const isWorkshopLogin = isWorkshopRestricted(user, effectiveRoles);
 
   const items = [
     { key: 'dashboard', label: 'Dashboard', to: '/dashboard' },
@@ -82,7 +85,7 @@ export function buildNavItems({ user, roles } = {}) {
     items.push({ key: 'logistics', label: 'Awaiting Workorder', to: '/logistics/awaiting-workorder' });
   }
 
-  if (!isTechnician) {
+  if (!isWorkshopLogin) {
     items.push({ key: 'products', label: 'Products', to: '/products' });
     items.push({ key: 'customers', label: 'Customers', to: '/customers' });
     items.push({ key: 'waitlist', label: 'Waitlist', to: '/waitlist' });
@@ -97,7 +100,7 @@ export function buildNavItems({ user, roles } = {}) {
   });
 
   if (canUseChecklist) items.push({ key: 'tech-checklist', label: 'Tech Checklist', to: '/tech-checklist' });
-  if (canUseLotTracker) items.push({ key: 'lot-tracker', label: 'Lot Tracker', to: '/lot-tracker' });
+  if (canUseLotTracker && !isWorkshopLogin) items.push({ key: 'lot-tracker', label: 'Lot Tracker', to: '/lot-tracker' });
 
   if (isSuperadmin) items.push({ key: 'peloton', label: 'Peloton', to: '/peloton', dot: true });
   if (canUseIntegrations) items.push({ key: 'integrations', label: 'Integrations', to: '/integrations' });
