@@ -549,13 +549,14 @@ console.log('\nno form control in src/pages or src/components sits in a crushed 
   );
 
   // PINNED, not a floor. A floor cannot fail when the scanner stops finding grids — which is the
-  // one failure that would make the scan below silently vacuous. Adding a base multi-column grid
+  // one failure that would make the scan below silently vacuous (15 since G16: the read-only order
+  // card in tech-checklist.js, no controls). Adding a base multi-column grid
   // is fine: bump this number in the same commit, having checked the new grid against the rule.
   const gridPages = files.filter((f) => tagsIn(readFileSync(f, 'utf8')).some((t) => !t.closing && baseGridCols(classNameOf(t.raw))));
   check(
     `found the files with a base multi-column grid (${gridPages.length})`,
-    gridPages.length === 14,
-    `expected 14, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
+    gridPages.length === 15,
+    `expected 15, found ${gridPages.length}: ${gridPages.map((f) => relative(ROOT, f)).join(', ')}`,
   );
 
   // A smeared tag is how this scan goes quietly blind: one mis-parsed prop expression and a

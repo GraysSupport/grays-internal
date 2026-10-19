@@ -118,6 +118,19 @@ console.log('\nshape + robustness (it renders during the pre-auth loading window
   }
   check('a multi-role user with admin sees it', keysFor(['logistics', 'admin']).includes('lot-tracker'));
   check('Lot Tracker links to /lot-tracker', buildNavItems({ user: { id: 'XX', access: 'admin' }, roles: ['admin'] }).find((i) => i.key === 'lot-tracker')?.to === '/lot-tracker');
+
+  // G16: the technician checklist — technician / workshop / superadmin, plus the WK account
+  // (an admin login on prod) by id. Mirrors the gate in lib/techChecklist.js.
+  for (const role of ['technician', 'workshop', 'superadmin']) {
+    check(`${role} sees Tech Checklist`, keysFor([role]).includes('tech-checklist'));
+  }
+  for (const role of ['admin', 'logistics', 'sales', 'staff']) {
+    check(`${role} does NOT see Tech Checklist`, !keysFor([role]).includes('tech-checklist'));
+  }
+  const wk = buildNavItems({ user: { id: 'WK', access: 'admin' }, roles: ['admin'] }).map((i) => i.key);
+  check('the WK workshop account (admin) sees Tech Checklist', wk.includes('tech-checklist'));
+  check('Tech Checklist links to /tech-checklist', buildNavItems({ user: technician, roles: ['technician'] }).find((i) => i.key === 'tech-checklist')?.to === '/tech-checklist');
+  check('NAV_KEYS includes tech-checklist', NAV_KEYS.includes('tech-checklist'));
 }
 
 console.log(`\n✅ nav smoke: ${passed} checks passed`);
