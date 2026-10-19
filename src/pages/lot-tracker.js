@@ -5,6 +5,7 @@ import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { LOT_TRACKER_ROLES, looksLikeLotNumber, formatWhen } from '../utils/lotTracker';
 import { currentUserIsWorkshop } from '../utils/workshopAccess';
+import { AUDIO_SUBS, CHECK_ITEMS } from '../utils/techChecklist';
 
 // G11 (Nick, 1 Oct 2026) — Lot Tracker.
 //
@@ -42,6 +43,52 @@ function Section({ title, empty, children }) {
       {children
         ? <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">{children}</dl>
         : <p className="mt-2 text-sm text-gray-600">{empty}</p>}
+    </section>
+  );
+}
+
+const ANSWER_TEXT = { yes: 'Yes', na: 'N/A' };
+
+// G16 — the technician's screen & electronics checklist for this lot, read-only. Technicians
+// fill it in on /tech-checklist.
+function ChecklistSection({ checklist }) {
+  return (
+    <section aria-label="Screen & electronics checklist" className="rounded-xl border bg-white p-4">
+      <h2 className="text-base font-semibold">Screen &amp; electronics checklist</h2>
+      {!checklist ? (
+        <p className="mt-2 text-sm text-gray-600">No checklist has been saved for this lot.</p>
+      ) : (
+        <>
+          <p className={`mt-2 text-sm font-medium ${checklist.ok_to_ship ? 'text-green-800' : 'text-gray-700'}`}>
+            {checklist.ok_to_ship
+              ? `OK to ship · signed off by ${checklist.approved_by_name || checklist.approved_by} · ${formatWhen(checklist.approved_at)}`
+              : 'Not signed off yet'}
+          </p>
+          <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Base S/N">{checklist.base_serial && <span className="font-mono">{checklist.base_serial}</span>}</Field>
+            <Field label="Console S/N">{checklist.console_serial && <span className="font-mono">{checklist.console_serial}</span>}</Field>
+            <Field label="Test & Tag No.">{checklist.test_tag_no}</Field>
+          </dl>
+          <ul className="mt-3 divide-y text-sm">
+            {CHECK_ITEMS.map((item) => {
+              const line = checklist.checks?.[item.key] || {};
+              const subs = item.key === 'audio'
+                ? AUDIO_SUBS.filter((s) => line[s.key]).map((s) => `${s.label} ${ANSWER_TEXT[line[s.key]]}`).join(' · ')
+                : '';
+              return (
+                <li key={item.key} className="flex flex-wrap gap-x-3 py-1.5">
+                  <span className="w-40 shrink-0 text-gray-700">{item.label}</span>
+                  <span className="font-medium">{ANSWER_TEXT[line.v] || '—'}</span>
+                  {subs && <span className="text-gray-700">{subs}</span>}
+                  {line.note && <span className="text-gray-700">— {line.note}</span>}
+                </li>
+              );
+            })}
+          </ul>
+          {checklist.comments && <p className="mt-3 whitespace-pre-wrap text-sm text-gray-800">{checklist.comments}</p>}
+          <p className="mt-3 text-xs text-gray-600">Last saved {formatWhen(checklist.updated_at)} by {checklist.updated_by_name || checklist.updated_by}</p>
+        </>
+      )}
     </section>
   );
 }
@@ -109,6 +156,8 @@ function Journey({ journey }) {
           </>
         )}
       </Section>
+
+      <ChecklistSection checklist={journey.checklist || null} />
 
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-base font-semibold">Delivery</h2>

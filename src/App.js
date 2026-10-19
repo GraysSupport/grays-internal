@@ -41,6 +41,7 @@ import PelotonPage from './pages/peloton';
 import WorkshopPage from './pages/workshop';
 import ScanPage from './pages/scan';
 import LotTrackerPage from './pages/lot-tracker';
+import TechChecklistPage from './pages/tech-checklist';
 
 function App() {
   const navigate = useNavigate();
@@ -111,6 +112,7 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/scan" element={<ScanPage />} />
         <Route path="/lot-tracker" element={<LotTrackerPage />} />
+        <Route path="/tech-checklist" element={<TechChecklistPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />

@@ -131,6 +131,18 @@ console.log('\nshape + robustness (it renders during the pre-auth loading window
     check(`workshop role does NOT see ${k}`, !workshopRole.includes(k));
   }
   check('a technician who is also logistics keeps Products/Customers', keysFor(['technician', 'logistics']).includes('customers'));
+  // G16: the technician checklist — technician / workshop / superadmin, plus the WK account
+  // (an admin login on prod) by id. Mirrors the gate in lib/techChecklist.js.
+  for (const role of ['technician', 'workshop', 'superadmin']) {
+    check(`${role} sees Tech Checklist`, keysFor([role]).includes('tech-checklist'));
+  }
+  for (const role of ['admin', 'logistics', 'sales', 'staff']) {
+    check(`${role} does NOT see Tech Checklist`, !keysFor([role]).includes('tech-checklist'));
+  }
+  const wk = buildNavItems({ user: { id: 'WK', access: 'admin' }, roles: ['admin'] }).map((i) => i.key);
+  check('the WK workshop account (admin) sees Tech Checklist', wk.includes('tech-checklist'));
+  check('Tech Checklist links to /tech-checklist', buildNavItems({ user: technician, roles: ['technician'] }).find((i) => i.key === 'tech-checklist')?.to === '/tech-checklist');
+  check('NAV_KEYS includes tech-checklist', NAV_KEYS.includes('tech-checklist'));
 }
 
 console.log(`\n✅ nav smoke: ${passed} checks passed`);
