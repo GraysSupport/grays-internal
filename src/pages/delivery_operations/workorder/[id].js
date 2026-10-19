@@ -1036,6 +1036,8 @@ export default function WorkorderDetailPage() {
                             <select
                               className="border rounded px-2 py-1 w-full"
                               value={it.status}
+                              disabled={isWorkshop && String(woStatus) === 'Completed'}
+                              title={isWorkshop && String(woStatus) === 'Completed' ? 'This workorder is completed — an admin reopens it if more work is needed' : undefined}
                               onChange={(e) => setItemField(it.workorder_items_id, 'status', e.target.value)}
                             >
                               {(isWorkshop ? WORKSHOP_ITEM_STATUSES : [...WORKSHOP_ITEM_STATUSES, 'Canceled']).map((s) => (

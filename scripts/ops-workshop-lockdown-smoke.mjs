@@ -69,7 +69,7 @@ const LOGS = [
 ];
 
 // One fake that answers the handler's queries by pattern and records every statement.
-function fakeClient({ wo = WO, items = ITEMS, list = [WO], deliveries = null } = {}) {
+function fakeClient({ wo = WO, items = ITEMS, list = [WO], deliveries = null, itemStatus = { 2001: 'In Workshop' } } = {}) {
   const log = [];
   const client = {
     log, released: false,
@@ -85,6 +85,12 @@ function fakeClient({ wo = WO, items = ITEMS, list = [WO], deliveries = null } =
         const u = USERS[params[0]];
         return { rows: u ? [{ access: u.access }] : [], rowCount: u ? 1 : 0 };
       }
+      // G17 review: the pre-transaction check of the items a workshop login is changing.
+      if (/SELECT workorder_items_id, status FROM workorder_items WHERE workorder_id = \$1 AND workorder_items_id = ANY/i.test(text)) {
+        const rows = params[1].filter((x) => x in itemStatus).map((x) => ({ workorder_items_id: x, status: itemStatus[x] }));
+        return { rows, rowCount: rows.length };
+      }
+      if (/^SELECT status FROM workorder WHERE workorder_id = \$1$/i.test(text)) return { rows: wo ? [{ status: wo.status }] : [], rowCount: wo ? 1 : 0 };
       if (/WITH base AS/i.test(text)) return { rows: wo ? [{ ...wo }] : [], rowCount: wo ? 1 : 0 };
       if (/FROM workorder_items wi LEFT JOIN product p ON p\.sku = wi\.product_id WHERE wi\.workorder_id = \$1/i.test(text)) {
         return { rows: items.map((i) => ({ ...i })), rowCount: items.length };
@@ -242,6 +248,35 @@ for (const [name, body] of [
   const { res } = await wo(reqAs({ id: 'GA', roles: ['admin'], method: 'PUT', query: { id: '41' }, body: { salesperson: 'GS', notes: 'x' } }));
   check('admin can still change salesperson + notes (unchanged)', res.statusCode === 200);
 }
+console.log('\nreview fixes (19 Oct 2026):');
+{
+  // Finding 2: a cancelled item may not be brought back (that re-adds a product + takes stock).
+  const r = await wo(reqAs({ id: 'ED', roles: ['technician'], method: 'PUT', query: { id: '41' }, body: { items: [{ workorder_items_id: 2001, status: 'Not in Workshop' }] } }), { itemStatus: { 2001: 'Canceled' } });
+  check('reviving a Canceled item → 403, before any write or transaction', r.res.statusCode === 403 && writes(r.client).length === 0 && !r.client.log.some((q) => q.sql === 'BEGIN'), JSON.stringify(r.res.payload));
+  const r2 = await wo(reqAs({ id: 'ED', roles: ['technician'], method: 'PUT', query: { id: '41' }, body: { items: [{ workorder_items_id: 9999, status: 'Completed' }] } }));
+  check('an item that is not on this workorder → 403', r2.res.statusCode === 403 && writes(r2.client).length === 0);
+  // Finding 3: changing items on a COMPLETED workorder re-triggers delivery creation.
+  const r3 = await wo(reqAs({ id: 'WK', roles: ['admin'], method: 'PUT', query: { id: '41' }, body: { items: [{ workorder_items_id: 2001, status: 'In Workshop' }] } }), { wo: { ...WO, status: 'Completed' } });
+  check('item changes on a Completed workorder → 403 for workshop logins (no duplicate delivery)', r3.res.statusCode === 403 && writes(r3.client).length === 0 && /completed/i.test(r3.res.payload.error));
+  const adminOnDone = await wo(reqAs({ id: 'GA', roles: ['admin'], method: 'PUT', query: { id: '41' }, body: { items: [{ workorder_items_id: 2001, status: 'In Workshop' }] } }), { wo: { ...WO, status: 'Completed' } });
+  check('…admins are unaffected', adminOnDone.res.statusCode === 200);
+  // Log attribution: a technician's token decides who the change is logged as.
+  const r4 = await wo(reqAs({ id: 'ED', roles: ['technician'], header: false, method: 'PUT', query: { id: '41' }, body: { user_id: 'GA', items: [{ workorder_items_id: 2001, status: 'Completed' }] } }));
+  const logged = r4.client.log.filter((q) => /INSERT INTO workorder_logs/i.test(q.sql)).map((q) => q.params[3]);
+  check('changes by a technician token are logged as that technician, not a claimed id', r4.res.statusCode === 200 && logged.length > 0 && logged.every((u) => u === 'ED'), JSON.stringify(logged));
+  // Minor: the ?payment= filter would reveal who has paid.
+  const r5 = await wo(reqAs({ id: 'ED', roles: ['technician'], query: { status: 'Work Ordered', payment: 'due' } }));
+  check('?payment= filter is ignored for workshop logins', !r5.client.log.some((q) => /outstanding_balance\s*[>=]/.test(q.sql)));
+  const r6 = await wo(reqAs({ id: 'GA', roles: ['admin'], query: { status: 'Work Ordered', payment: 'due' } }));
+  check('…and still works for admins', r6.client.log.some((q) => /outstanding_balance > 0/.test(q.sql)));
+  // Minor: delivery notes are written by logistics and can hold contact / access details.
+  check('delivery notes are redacted', !('notes' in access.redactDelivery({ notes: 'Call 0400…', delivery_id: 1 })));
+  // Finding 1: the waitlist carries customer email + phone.
+  const src = read('../api/[...path].js');
+  const wl = src.slice(src.indexOf('async function handleWaitlist'));
+  check('handleWaitlist refuses workshop logins before anything else', /refuseWorkshop\(/.test(wl) && wl.indexOf('refuseWorkshop(') < wl.indexOf("if (method === 'GET')"));
+}
+
 check('workshopPutViolations: allowed body → none', workshopPutViolations({ user_id: 'ED', items: [{ workorder_items_id: 1, status: 'In Workshop', item_sn: 'A' }] }).length === 0);
 check('workshopPutViolations: empty body → none', workshopPutViolations({}).length === 0 && workshopPutViolations(null).length === 0);
 check('workshopPutViolations: items not an array → refused', workshopPutViolations({ items: 'x' }).length > 0);

@@ -130,6 +130,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchData = async () => {
+      // G17: workshop logins get no analytics, so fetch none of their data (the waitlist alone
+      // carries every waitlisted customer's email + phone, and the server now refuses it).
+      if (currentUserIsWorkshop()) return;
       const load = Promise.all([
         fetch('/api/products', { method: 'GET' }),
         fetch('/api/waitlist', { method: 'GET' }),
@@ -297,7 +300,7 @@ export default function Dashboard() {
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">
           {/* G17: no analytics for workshop logins (technician / workshop / the WK kiosk). */}
-          {user?.access !== 'technician' && !currentUserIsWorkshop() && (
+          {!currentUserIsWorkshop() && (
             <>
               <div className="bg-white p-6 rounded shadow-md">
                 <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>

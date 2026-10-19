@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import WorkorderDetailPage from '../delivery_operations/workorder/[id]';
 import ActiveWorkordersPage from '../delivery_operations/index';
 import CustomersPage from '../customers/index';
+import WaitlistPage from '../waitlist/index';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import { isWorkshopRestricted } from '../../utils/workshopAccess';
 
@@ -31,7 +32,9 @@ function login({ id, access, roles, email }) {
   localStorage.setItem('user', JSON.stringify({ id, name: id, access, roles, email: email || `${id}@graysfitness.com.au` }));
 }
 const TECH = { id: 'ED', access: 'technician', roles: ['technician'] };
-const WK = { id: 'WK', access: 'admin', roles: ['admin'], email: 'workshop@graysfitness.com.au' };
+// No kiosk email here on purpose: the id alone must restrict WK (review finding — the old page
+// rule matched the email, so a test with the email would pass without the new id rule).
+const WK = { id: 'WK', access: 'admin', roles: ['admin'], email: 'wk-other@graysfitness.com.au' };
 const ADMIN = { id: 'GA', access: 'admin', roles: ['admin'] };
 
 function installFetch(wo) {
@@ -192,6 +195,23 @@ describe('lists, tabs and customers', () => {
     expect(screen.queryByText('Delivery Schedule')).not.toBeInTheDocument();
     expect(screen.queryByText('Deliveries Completed')).not.toBeInTheDocument();
     expect(screen.getByText('Operations Completed')).toBeInTheDocument();
+  });
+
+  test('waitlist page (customer email + phone): not available, and nothing is fetched', () => {
+    login(WK);
+    const f = installFetch(WO_WORKSHOP);
+    renderAt('/waitlist', <WaitlistPage />, '/waitlist');
+    expect(screen.getByText(/not available to workshop logins/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to the workshop view/i })).toHaveAttribute('href', '/workshop');
+    expect(calls(f, /\/api\/waitlist/)).toHaveLength(0);
+  });
+
+  test('a completed workorder: workshop logins cannot change item status', async () => {
+    login(TECH);
+    installFetch({ ...WO_WORKSHOP, status: 'Completed', items: [{ ...WO_WORKSHOP.items[0], status: 'Completed' }] });
+    openWorkorder();
+    await screen.findByText(/Invoice #19422/);
+    expect(screen.getByDisplayValue('Completed')).toBeDisabled();
   });
 
   test('customers page: not available, and nothing is fetched', () => {

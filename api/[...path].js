@@ -285,6 +285,8 @@ async function handleBrands(req, res) {
 async function handleWaitlist(req, res, subId) {
   const client = await getClientWithTimezone();
   try {
+    // G17: waitlist rows carry the customer's email + phone — not for workshop logins.
+    if (await refuseWorkshop(req, res, client, 'The waitlist is not available to workshop logins')) return;
     const { method, query, body } = req;
     const id = subId ?? query.id;
 
