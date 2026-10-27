@@ -18,6 +18,7 @@
 import { hasAnyRole } from './auth.js';
 import { LOT_TRACKER_ROLES } from './lotTracker.js';
 import { isWorkshopRestricted } from './workshopAccess.js';
+import { isPodiumEnabled } from './featureFlags.js';
 import { canUseTechChecklist } from './techChecklist.js';
 
 // Every key this builder can emit, in render order. Exported so a test can assert the builder
@@ -60,10 +61,13 @@ export function buildNavItems({ user, roles } = {}) {
 
   // F3/F5: the Inbox and lead funnel are sales tools. F7b: the Awaiting-Workorder queue is a
   // logistics tool. F10: the Integrations log is superadmin-only observability.
-  const canUseInbox = hasAnyRole(effectiveRoles, ['sales', 'superadmin']);
+  // 28 Oct 2026: all four are Podium features — hidden for everyone until
+  // REACT_APP_FEATURE_PODIUM=true (src/utils/featureFlags.js).
+  const podiumOn = isPodiumEnabled();
+  const canUseInbox = podiumOn && hasAnyRole(effectiveRoles, ['sales', 'superadmin']);
   const canUseLeads = canUseInbox;
-  const canUseLogistics = hasAnyRole(effectiveRoles, ['logistics', 'superadmin']);
-  const canUseIntegrations = hasAnyRole(effectiveRoles, ['superadmin']);
+  const canUseLogistics = podiumOn && hasAnyRole(effectiveRoles, ['logistics', 'superadmin']);
+  const canUseIntegrations = podiumOn && hasAnyRole(effectiveRoles, ['superadmin']);
   // G11: the Lot Tracker shows customer + workshop detail for a scanned lot — admin + superadmin.
   const canUseLotTracker = hasAnyRole(effectiveRoles, LOT_TRACKER_ROLES);
   // G16: the technician screen & electronics checklist — technician / workshop / superadmin,

@@ -18,6 +18,7 @@ import integrationsHandler from '../lib/handlers/integrations.js';
 import lotsHandler from '../lib/handlers/lots.js';
 import { buildJourney } from '../lib/customerJourney.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
+import { isPodiumEnabled, podiumDisabled } from '../lib/featureFlags.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -94,17 +95,25 @@ export default async function handler(req, res) {
       // Lead funnel (F5). Pass the segments AFTER "leads" so /api/leads/:id/stage
       // reaches the handler as ['<id>','stage'] (this catch-all otherwise only
       // destructures [root, sub]). Handler is JWT-gated to sales/superadmin.
+      // 28 Oct 2026: the lead funnel, its Awaiting-Workorder queue and the Integrations log
+      // are Podium features — hidden until FEATURE_PODIUM=true (lib/featureFlags.js).
       case 'leads':
       case 'lead':
+        if (!isPodiumEnabled()) return podiumDisabled(res);
         return leadsHandler(req, res, parts.slice(1));
       // Logistics work queues (F7b). Pass the segments AFTER "logistics"; the handler
       // also accepts ?resource= (the query form the front-end uses — safe under Vercel's
       // multi-segment routing). JWT-gated to logistics/superadmin.
       case 'logistics':
+        // run-candidates (G8 temporary delivery run) is NOT Podium and stays available.
+        if (!isPodiumEnabled() && (parts[1] || req.query?.resource || '').toString() === 'awaiting-workorder') {
+          return podiumDisabled(res);
+        }
         return logisticsHandler(req, res, parts.slice(1));
       // Integration observability (F10) — the superadmin read of integration_sync_log.
       // Same query-form convention as `logistics`. JWT-gated to superadmin.
       case 'integrations':
+        if (!isPodiumEnabled()) return podiumDisabled(res);
         return integrationsHandler(req, res, parts.slice(1));
       case 'delivery':
         return deliveryHandler(req, res);

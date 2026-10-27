@@ -200,14 +200,33 @@ describe('F19 — mobile navigation drawer', () => {
     // A sales rep is `access: 'staff'` with `sales` only in the signed role set (F0b). If the
     // roles wiring broke, they would silently lose Inbox and Lead Funnel on both renderings —
     // and every other fixture here is entitled via `access`, so nothing else would notice.
-    renderDashboard({ id: 'AM', name: 'Amelia', access: 'staff', roles: ['staff', 'sales'] });
+    // 28 Oct 2026: Inbox + Lead Funnel only exist while Podium is switched on.
+    process.env.REACT_APP_FEATURE_PODIUM = 'true';
+    try {
+      renderDashboard({ id: 'AM', name: 'Amelia', access: 'staff', roles: ['staff', 'sales'] });
+      await waitFor(() => expect(menuButton()).toBeInTheDocument());
+      await user.click(menuButton());
+
+      const drawer = screen.getByTestId('mobile-nav');
+      expect(within(drawer).getByRole('link', { name: 'Inbox' })).toBeInTheDocument();
+      expect(within(drawer).getByRole('link', { name: 'Lead Funnel' })).toBeInTheDocument();
+      expect(within(drawer).queryByRole('link', { name: 'Awaiting Workorder' })).not.toBeInTheDocument();
+    } finally {
+      delete process.env.REACT_APP_FEATURE_PODIUM;
+    }
+  });
+
+  test('with Podium switched off (the default) nobody sees a Podium link', async () => {
+    delete process.env.REACT_APP_FEATURE_PODIUM; // a developer's .env.local must not flip this test
+    renderDashboard({ id: 'GS', name: 'Gray', access: 'superadmin', roles: ['superadmin', 'sales', 'logistics'] });
     await waitFor(() => expect(menuButton()).toBeInTheDocument());
     await user.click(menuButton());
 
     const drawer = screen.getByTestId('mobile-nav');
-    expect(within(drawer).getByRole('link', { name: 'Inbox' })).toBeInTheDocument();
-    expect(within(drawer).getByRole('link', { name: 'Lead Funnel' })).toBeInTheDocument();
-    expect(within(drawer).queryByRole('link', { name: 'Awaiting Workorder' })).not.toBeInTheDocument();
+    for (const name of ['Inbox', 'Lead Funnel', 'Awaiting Workorder', 'Integrations']) {
+      expect(within(drawer).queryByRole('link', { name })).not.toBeInTheDocument();
+    }
+    expect(within(drawer).getByRole('link', { name: 'Delivery Operations' })).toBeInTheDocument();
   });
 
   test('the × button closes the drawer', async () => {
