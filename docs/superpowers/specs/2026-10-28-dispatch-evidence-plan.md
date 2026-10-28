@@ -1,6 +1,6 @@
 # G18 — Dispatch evidence (photos + videos per workorder item → SharePoint)
 
-**Status:** PLAN, waiting on the owner's answers and Microsoft 365 access. Nothing has been built.
+**Status:** APPROVED by the owner 28 Oct 2026 — next development item. Waiting on Microsoft 365 access (Phase 0). Nothing has been built.
 **Written:** 28 Oct 2026.
 
 ## What it does
@@ -66,7 +66,7 @@ OneDrive/SharePoint files.
 | `lib/dispatchEvidence.js` | `/api/evidence?resource=folder|upload-session|complete|list`, routed through the existing `api/[...path].js` catch-all (**no new Vercel function**, Hobby 12-function cap). Token-gated, role-checked, workshop lockdown (G17) respected. |
 | Migration `0010_dispatch_evidence` | `dispatch_evidence_folders` (workorder → SharePoint folder ID/link) + `dispatch_evidence_files` (item, file ID, name, type, size, link, uploaded_by/at). Additive + `_down`, **Neon dev only**; code tolerates the tables being absent on prod (42P01) until you migrate at merge. |
 | `src/components/DispatchEvidencePanel.js` | Item picker, `accept="image/*,video/*"` with camera capture, multiple files, per-file progress + retry, thumbnails list. Used on workorder detail, To-Be-Booked and Schedule. |
-| Limits | Photos + videos only (jpg/png/heic/mp4/mov), default cap **500 MB per file** (configurable), filenames cleaned + timestamped, `conflictBehavior=rename` so nothing is ever overwritten. |
+| Limits | Photos + videos only (jpg/png/heic/mp4/mov), cap **300 MB per file**, filenames cleaned + timestamped, `conflictBehavior=rename` so nothing is ever overwritten. |
 | Tests | Smoke for the handler against the mock (role gates, folder naming incl. `/` and duplicates, size/type rejects, "complete" refuses a file outside the WO folder), Jest for the panel (progress, failure, retry). |
 
 ### Phases
@@ -120,19 +120,13 @@ Cost: nothing extra. Graph is included with Microsoft 365, and files count again
 SharePoint storage (1 TB + 10 GB per licence). Video is the big consumer: about 100–350 MB per
 minute from a phone. Recording at 1080p rather than 4K keeps that down.
 
-## Decisions I need from you
+## Decisions (answered by the owner, 28 Oct 2026)
 
-1. **Where is the drive?** (step 1 above). This decides the permission.
-2. **One folder per workorder, or a sub-folder per item inside it?** *Recommended: sub-folder per
-   item* (`<SKU> <product> (<lot>)`), because multi-item workorders stay readable. You asked for
-   "a folder using the invoice number", which both options keep.
-3. **Who can upload?** *Recommended:* logistics, admin, superadmin, technician/workshop and the WK
-   kiosk (evidence is usually taken in the warehouse at dispatch), with delete limited to
-   superadmin. Drivers don't log in to the portal, so they can't upload unless you want a
-   driver login later.
-4. **Is it required?** *Recommended: optional for now*, with a "No evidence yet" badge on
-   To-Be-Booked so gaps are visible. Making it mandatory before "Booked" can come later.
-5. **Max video size.** *Recommended: 500 MB per file.*
+1. **Drive:** SharePoint site `https://graysfitness.sharepoint.com/sites/shared.group` (its Documents library).
+2. **Layout:** a sub-folder per item inside each workorder folder.
+3. **Upload:** logistics, admin, superadmin, technician/workshop and the WK kiosk only. **Delete: superadmin only.**
+4. **Optional.** No "No evidence yet" badge.
+5. **Max file size: 300 MB per file.**
 
 ## Risks / notes
 
