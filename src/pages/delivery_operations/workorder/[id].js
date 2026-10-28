@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
+import DispatchEvidencePanel from '../../../components/DispatchEvidencePanel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
 /**
@@ -376,6 +377,15 @@ export default function WorkorderDetailPage() {
         setWo(data);
         setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
       }
+    } catch { /* ignore */ }
+  }, [id]);
+
+  // G18: an evidence upload/delete adds a NOTE_ADDED line — refresh just the Activity Log.
+  const reloadActivity = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: identityHeaders() });
+      const data = await r.json();
+      if (r.ok) setActivity(data.activity || []);
     } catch { /* ignore */ }
   }, [id]);
 
@@ -1249,6 +1259,9 @@ export default function WorkorderDetailPage() {
             {pendingDeletes ? <span>• {pendingDeletes} item(s) marked for remove</span> : null}
           </div>
         ) : null}
+
+        {/* G18: photos/videos per item → SharePoint (hidden until Microsoft is connected). */}
+        <DispatchEvidencePanel workorderId={id} onChanged={reloadActivity} />
 
         {/* Activity Log + Notes/Charges */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">

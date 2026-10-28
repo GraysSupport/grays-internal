@@ -458,4 +458,14 @@ check('one folder per workorder / per item (unique index)', /CREATE UNIQUE INDEX
 check('rollback 0010 exists', /DROP TABLE IF EXISTS dispatch_evidence_files/.test(src('db/migrations/0010_dispatch_evidence_down.sql')));
 check('.env.example documents the Microsoft variables', ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_EVIDENCE_SITE_URL', 'MS_EVIDENCE_FOLDER'].every((k) => src('.env.example').includes(k)));
 
+// Phase 2: the screens mirror the server's rules — pinned equal so they can never drift.
+const clientRules = await import('../src/utils/dispatchEvidence.js');
+for (const k of ['EVIDENCE_UPLOAD_ROLES', 'EVIDENCE_DELETE_ROLES', 'MAX_FILE_BYTES', 'ALLOWED_EXTENSIONS', 'NO_EVIDENCE_SKUS', 'WORKSHOP_ACCOUNT_ID']) {
+  check(`client mirror: ${k} equals the server's`, JSON.stringify(clientRules[k]) === JSON.stringify(ev[k]), `${JSON.stringify(clientRules[k])} vs ${JSON.stringify(ev[k])}`);
+}
+check('the panel is on the workorder page', /<DispatchEvidencePanel workorderId=\{id\} onChanged=\{reloadActivity\} \/>/.test(src('src/pages/delivery_operations/workorder/[id].js')));
+check('the Evidence button is on To-Be-Booked', (src('src/pages/delivery_operations/to-be-booked.js').match(/<DispatchEvidenceButton /g) || []).length === 1);
+check('the Evidence button is on both Schedule layouts', (src('src/pages/delivery_operations/schedule.js').match(/<DispatchEvidenceButton /g) || []).length === 2);
+check('browser uploads never send the portal token to SharePoint', !/Authorization/.test(src('src/utils/dispatchEvidence.js').split('export async function uploadInChunks')[1].split('\n}\n')[0].replace(/\/\/.*|\*.*NO Authorization.*/g, '')));
+
 console.log(`\nops-dispatch-evidence-smoke: ${passed} checks passed`);
