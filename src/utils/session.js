@@ -15,6 +15,15 @@
 //
 // No access-log POST on the way out: unlike App.js's authenticated logout, the token is already
 // dead here, so that write would itself 401. The redirect is the honest signal.
+// G18: App.js logs out after 30 minutes with no mouse/key/click. A long phone video upload
+// produces none of those, so an upload in progress counts as activity. Only extends a session
+// that exists (never creates one for a logged-out browser).
+export function keepSessionAlive(ms = 30 * 60 * 1000) {
+  try {
+    if (localStorage.getItem('sessionExpiry') != null) localStorage.setItem('sessionExpiry', String(Date.now() + ms));
+  } catch { /* storage blocked */ }
+}
+
 export function endExpiredSession(navigate) {
   localStorage.removeItem('token');
   localStorage.removeItem('user');

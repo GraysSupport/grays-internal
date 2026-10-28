@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
-import DispatchEvidencePanel from '../../../components/DispatchEvidencePanel';
+import DispatchEvidencePanel, { EvidenceFolderLink } from '../../../components/DispatchEvidencePanel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
 /**
@@ -311,6 +311,8 @@ export default function WorkorderDetailPage() {
 
   // important flag
   const [important, setImportant] = useState(false);
+  // G18: what the dispatch-evidence panel loaded — drives the header's evidence-folder button.
+  const [evidence, setEvidence] = useState(null);
 
   // products for dropdown
   const [products, setProducts] = useState([]);
@@ -819,6 +821,8 @@ export default function WorkorderDetailPage() {
           </h1>
 
           <div className="flex items-center gap-2">
+            {/* G18 (owner, 28 Oct 2026): once dispatched, open the uploaded evidence. */}
+            <EvidenceFolderLink info={evidence} />
             {isWorkshop ? (important && <span className="rounded-md border border-amber-300 px-3 py-1 text-sm text-amber-700">★ Important</span>) : (
             <button
               onClick={() => setImportant((v) => !v)}
@@ -1261,7 +1265,7 @@ export default function WorkorderDetailPage() {
         ) : null}
 
         {/* G18: photos/videos per item → SharePoint (hidden until Microsoft is connected). */}
-        <DispatchEvidencePanel workorderId={id} onChanged={reloadActivity} />
+        <DispatchEvidencePanel workorderId={id} onChanged={reloadActivity} onLoaded={setEvidence} />
 
         {/* Activity Log + Notes/Charges */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">

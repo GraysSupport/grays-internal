@@ -15,6 +15,12 @@ jest.mock('../../components/CameraBarcodeScanner', () => function FakeCamera({ o
   );
 });
 
+// G18: the dispatch-evidence panel has its own tests (components/__tests__/dispatchEvidence.test.js)
+// and its own fetches; here it only has to be given the right workorder item, read-only.
+jest.mock('../../components/DispatchEvidencePanel', () => function FakeEvidence({ workorderId, itemId, readOnly }) {
+  return <div data-testid="dispatch-evidence">{`evidence ${workorderId}/${itemId}${readOnly ? ' read-only' : ''}`}</div>;
+});
+
 const JOURNEY = {
   lot: { lot_number: 'L00001', status: 'Assigned', serial_number: 'SN-12345', created_at: '2026-07-10T02:00:00.000Z', created_by: 'GS', created_by_name: 'Nick Enrique Wijaya' },
   product: { sku: '2609', name: 'Life Fitness 95T Treadmill', brand: 'Life Fitness' },
@@ -197,6 +203,21 @@ describe('the journey', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.getByRole('heading', { name: 'L00002' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'L00001' })).toBeNull();
+  });
+
+  test('shows the dispatch evidence for this machine\'s workorder item, read-only (G18)', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage('/lot-tracker?lot=L00001');
+    expect(await screen.findByTestId('dispatch-evidence')).toHaveTextContent('evidence 883/2001 read-only');
+  });
+
+  test('no evidence block for a lot that is not on a workorder', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, assignment: null, workshop: null, deliveries: [], delivered: null }] });
+    renderPage('/lot-tracker?lot=L00001');
+    await screen.findByRole('heading', { name: 'L00001' });
+    expect(screen.queryByTestId('dispatch-evidence')).toBeNull();
   });
 
   test('the phone camera scan opens the same journey', async () => {

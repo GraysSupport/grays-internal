@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
+import DispatchEvidencePanel from '../components/DispatchEvidencePanel';
 import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { LOT_TRACKER_ROLES, looksLikeLotNumber, formatWhen } from '../utils/lotTracker';
@@ -182,6 +183,17 @@ function Journey({ journey }) {
           </dl>
         )}
       </section>
+
+      {/* G18 (owner, 28 Oct 2026): the dispatch evidence uploaded for THIS machine's workorder item.
+          Read-only; hidden when there is none (no "no evidence yet" badge — owner decision 4). */}
+      {journey.assignment && (
+        <DispatchEvidencePanel
+          key={lot.lot_number}
+          workorderId={journey.assignment.workorder_id}
+          itemId={journey.assignment.workorder_items_id}
+          readOnly
+        />
+      )}
 
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-base font-semibold">Journey</h2>

@@ -149,6 +149,9 @@ const ROOT_ROUTES = [
   const g = createGraph({ env: ENV, fetch: f });
   const e = await rejects(() => g.getItem('gone'));
   check('a missing item surfaces as GraphError status 404', e instanceof GraphError && e.status === 404);
+  const gc = fakeFetch([TOKEN_ROUTE, ...ROOT_ROUTES, ['GET', /\/items\/item-folder:\/2026-10-28%2014-50-00%20a%26b%20%231\.mp4\?/, { json: { id: 'c1', name: '2026-10-28 14-50-00 a&b #1.mp4' } }]]);
+  const child = await createGraph({ env: ENV, fetch: gc }).getChild('item-folder', '2026-10-28 14-50-00 a&b #1.mp4');
+  check('getChild looks a file up by name inside a folder (name encoded)', child.id === 'c1', gc.calls.at(-1).url);
   const d = await createGraph({ env: ENV, fetch: fakeFetch([TOKEN_ROUTE, ...ROOT_ROUTES, ['DELETE', /\/items\/x$/, { status: 404 }]]) }).deleteItem('x');
   check('deleting an already-deleted item is fine', d === false);
 }
@@ -176,8 +179,8 @@ const ITEMS = [
   { workorder_items_id: 2003, workorder_id: 731, product_id: 'LF-95X', product_name: 'Life Fitness 95X Elliptical', is_custom: false, custom_description: null },
 ];
 
-function makeClient({ missing = false } = {}) {
-  const state = { folders: [], files: [], logs: [], nextId: 1 };
+function makeClient({ missing = false, dispatched = false } = {}) {
+  const state = { folders: [], files: [], logs: [], nextId: 1, dispatched };
   const calls = [];
   const undefinedTable = () => Object.assign(new Error('relation "dispatch_evidence_folders" does not exist'), { code: '42P01' });
   return {
@@ -187,6 +190,11 @@ function makeClient({ missing = false } = {}) {
       const sql = text.replace(/\s+/g, ' ').trim();
       if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [] };
       if (/dispatch_evidence_/.test(sql) && missing) throw undefinedTable();
+      // "Dispatched" = a delivery on the workorder is Delivery Completed (that is when
+      // lib/handlers/delivery.js writes ORDER_DISPATCHED).
+      if (/^SELECT EXISTS/i.test(sql) && /FROM delivery d/.test(sql) && /'Delivery Completed'/.test(sql)) {
+        return { rows: [{ dispatched: Number(params[0]) === WO.workorder_id && state.dispatched }] };
+      }
 
       // The workorder + its items (LEFT JOIN so a workorder without items still answers).
       if (/^SELECT/i.test(sql) && /FROM workorder w/.test(sql) && /LEFT JOIN workorder_items wi/.test(sql)) {
@@ -260,6 +268,12 @@ function makeGraph({ items = {}, failSessionOnce = false } = {}) {
       calls.push(['getItem', id]);
       if (!store[id]) throw new GraphError('gone', { status: 404, code: 'itemNotFound' });
       return store[id];
+    },
+    async getChild(folderId, name) {
+      calls.push(['getChild', folderId, name]);
+      const hit = Object.values(store).find((i) => i.parentReference?.id === folderId && i.name === name);
+      if (!hit) throw new GraphError('gone', { status: 404, code: 'itemNotFound' });
+      return hit;
     },
     async deleteItem(id) { calls.push(['deleteItem', id]); const had = !!store[id]; delete store[id]; return had; },
     async childrenWithThumbnails(folderId) {
@@ -393,6 +407,11 @@ check('needsEvidence: OTHER (any case) needs none; real machines do',
   check('list: every evidence item, with its files, uploader and thumbnail', list.body.items.length === 2 && item.files.length === 1 && item.files[0].uploaded_by_name === 'Liam' && item.files[0].thumbnail_url === 'https://thumb/file-1', JSON.stringify(list.body));
   check('list: folder link + upload rights for a technician', list.body.folder_url && list.body.can_upload === true && list.body.can_delete === false);
   check('list: limits for the screen', list.body.max_file_bytes === MAX_FILE_BYTES && list.body.configured === true && list.body.available === true);
+  check('list: not dispatched while no delivery is completed', list.body.dispatched === false, JSON.stringify(list.body.dispatched));
+  client.state.dispatched = true;
+  const shipped = await call({ resource: 'list', query: { workorder_id: '731' }, auth: AUTH.staff, client, graph });
+  check('list: dispatched once a delivery is Delivery Completed (owner, 28 Oct 2026)', shipped.body.dispatched === true && shipped.body.folder_url, JSON.stringify(shipped.body));
+  client.state.dispatched = false;
 
   const fileId = client.state.files[0].id;
   const del = (auth) => call({ method: 'DELETE', resource: 'file', query: { id: String(fileId) }, auth, client, graph });
@@ -404,6 +423,23 @@ check('needsEvidence: OTHER (any case) needs none; real machines do',
   check('deleting again → 404', (await del(AUTH.superadmin)).statusCode === 404);
   const after = await call({ resource: 'list', query: { workorder_id: '731' }, auth: AUTH.technician, client, graph });
   check('deleted files leave the list', after.body.items.every((i) => i.files.length === 0));
+}
+
+{
+  // Phase 2 review #2: the last chunk landed but its reply was lost — the browser never saw the id,
+  // so it records the file by the name upload-session gave it.
+  const client = makeClient(); const graph = makeGraph({ items: {
+    byname: { id: 'byname', name: '2026-10-28 14-50-00 lost-reply.mp4', size: 9_000_000, file: { mimeType: 'video/mp4' }, webUrl: 'https://sp/byname', parentReference: { id: 'folder-2' } },
+  } });
+  await call({ method: 'POST', resource: 'upload-session', body: SESSION_BODY, auth: AUTH.logistics, client, graph });
+  const done = (body) => call({ method: 'POST', resource: 'complete', body: { workorder_id: 731, workorder_items_id: 2001, ...body }, auth: AUTH.logistics, client, graph });
+  const byName = await done({ file_name: '2026-10-28 14-50-00 lost-reply.mp4' });
+  check('complete by file name (lost final reply) records the file', byName.statusCode === 200 && client.state.files.some((f) => f.drive_item_id === 'byname'), `${byName.statusCode} ${JSON.stringify(byName.body)}`);
+  check('…looked up inside THIS item folder only', graph.calls.some((c) => c[0] === 'getChild' && c[1] === 'folder-2' && c[2] === '2026-10-28 14-50-00 lost-reply.mp4'));
+  check('complete by a name that never arrived → 400', (await done({ file_name: 'never-arrived.mp4' })).statusCode === 400);
+  const slash = await done({ file_name: '../other/x.jpg' });
+  check('complete by name refuses a path', slash.statusCode === 400 && !graph.calls.some((c) => c[0] === 'getChild' && /\//.test(c[2])));
+  check('complete with neither id nor name → 400', (await done({})).statusCode === 400);
 }
 
 {
@@ -420,6 +456,7 @@ check('needsEvidence: OTHER (any case) needs none; real machines do',
   const client = makeClient({ missing: true }); const graph = makeGraph();
   const l = await call({ resource: 'list', query: { workorder_id: '731' }, auth: AUTH.admin, client, graph });
   check('before migration 0010: list says available:false', l.statusCode === 200 && l.body.available === false && l.body.items.length === 2);
+  check('before migration 0010: dispatched is still reported', l.body.dispatched === false);
   const u = await call({ method: 'POST', resource: 'upload-session', body: SESSION_BODY, auth: AUTH.admin, client, graph });
   check('before migration 0010: upload → 503, nothing created in SharePoint', u.statusCode === 503 && !graph.calls.some((c) => c[0] === 'ensureFolder'), `${u.statusCode}`);
 }
@@ -463,7 +500,11 @@ const clientRules = await import('../src/utils/dispatchEvidence.js');
 for (const k of ['EVIDENCE_UPLOAD_ROLES', 'EVIDENCE_DELETE_ROLES', 'MAX_FILE_BYTES', 'ALLOWED_EXTENSIONS', 'NO_EVIDENCE_SKUS', 'WORKSHOP_ACCOUNT_ID']) {
   check(`client mirror: ${k} equals the server's`, JSON.stringify(clientRules[k]) === JSON.stringify(ev[k]), `${JSON.stringify(clientRules[k])} vs ${JSON.stringify(ev[k])}`);
 }
-check('the panel is on the workorder page', /<DispatchEvidencePanel workorderId=\{id\} onChanged=\{reloadActivity\} \/>/.test(src('src/pages/delivery_operations/workorder/[id].js')));
+const woPage = src('src/pages/delivery_operations/workorder/[id].js');
+check('the panel is on the workorder page', /<DispatchEvidencePanel workorderId=\{id\} onChanged=\{reloadActivity\} onLoaded=\{setEvidence\} \/>/.test(woPage));
+check('the workorder header has the evidence-folder button (shown once dispatched)', /<EvidenceFolderLink info=\{evidence\} \/>/.test(woPage));
+const tracker = src('src/pages/lot-tracker.js');
+check('the Lot Tracker shows this item\'s evidence, read-only', /<DispatchEvidencePanel[\s\S]{0,200}itemId=\{journey\.assignment\.workorder_items_id\}[\s\S]{0,40}readOnly/.test(tracker));
 check('the Evidence button is on To-Be-Booked', (src('src/pages/delivery_operations/to-be-booked.js').match(/<DispatchEvidenceButton /g) || []).length === 1);
 check('the Evidence button is on both Schedule layouts', (src('src/pages/delivery_operations/schedule.js').match(/<DispatchEvidenceButton /g) || []).length === 2);
 check('browser uploads never send the portal token to SharePoint', !/Authorization/.test(src('src/utils/dispatchEvidence.js').split('export async function uploadInChunks')[1].split('\n}\n')[0].replace(/\/\/.*|\*.*NO Authorization.*/g, '')));
