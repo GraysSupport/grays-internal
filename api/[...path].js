@@ -16,6 +16,7 @@ import leadsHandler from '../lib/handlers/leads.js';
 import logisticsHandler from '../lib/handlers/logistics.js';
 import integrationsHandler from '../lib/handlers/integrations.js';
 import lotsHandler from '../lib/handlers/lots.js';
+import evidenceHandler from '../lib/handlers/evidence.js';
 import { buildJourney } from '../lib/customerJourney.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
 
@@ -115,6 +116,9 @@ export default async function handler(req, res) {
       case 'lots':
       case 'lot':
         return lotsHandler(req, res);
+      // G18 dispatch evidence → SharePoint. Query-form routes (?resource=), token-gated.
+      case 'evidence':
+        return evidenceHandler(req, res);
 
       default:
         return res.status(404).json({ error: 'Not found' });
