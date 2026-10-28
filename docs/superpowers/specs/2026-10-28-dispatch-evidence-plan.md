@@ -188,6 +188,38 @@ Noted, not changed:
 - Consider hiding thumbnails from roles that can't upload, if the owner wants the G17 lockdown
   applied strictly. Today any logged-in user may view.
 
+## Phase 2 results (29 Oct 2026)
+
+Branch `feat/ops-g18-dispatch-evidence`: `81668ce` (screens), `63c8113` (review fixes + new features).
+
+- **Screens.** The workorder page has a Dispatch evidence panel above the Activity Log. To-Be-Booked
+  (1 place) and Schedule (2 places) have a "Dispatch evidence" button on the invoice cell, which
+  opens the same panel in a dialog.
+- **New features (owner, 29 Oct 2026):**
+  - The **Lot Tracker** shows that machine's evidence, read-only: its own workorder item only, with
+    no upload or delete. It's hidden when there are no files, in line with decision 4 (no badge).
+  - The **workorder header** shows "Open dispatch evidence folder" once a delivery on the
+    workorder is *Delivery Completed* and the folder exists. The list response now carries
+    `dispatched`.
+- **Review fixes:**
+  - Resume from `nextExpectedRanges` after any failure; no blind resend.
+  - Back-off of 2 → 30 s, a 2-minute chunk timeout, and `Retry-After` on 429.
+  - Waits for the connection to come back.
+  - Retry only re-records, so no duplicates.
+  - A lost final reply is recorded by its session file name: `complete` accepts `file_name`.
+  - Closing the dialog or leaving the page aborts the chunks and cancels the session.
+  - Uploads keep the 30-minute idle logout away.
+  - Unrecorded uploads are kept per user for 7 days and dropped only on 400/404.
+  - Dialog: empty states, focus trap and restore, Escape to close, 44 px targets.
+- **Checks:**
+  - Jest: 330/330.
+  - Smokes: 31/31; dispatch-evidence smoke has 117 checks.
+  - `CI=true` build is green.
+  - 5 mutants, all caught. The cancel-on-close mutant was missed at first, so a test was added.
+- **Pinned guard counts were bumped:** contrast 66 files, formgrid 16 pages. They will conflict with
+  PR #114's 64→65 contrast bump. Whichever merges second must re-run the smoke and pin the new real
+  count, which is both changes added together, not the higher of the two.
+
 ## Risks / notes
 
 - The **client secret expires** (max 24 months). When it does, uploads fail with a clear "Microsoft
