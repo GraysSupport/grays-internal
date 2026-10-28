@@ -53,6 +53,13 @@ check('item folder for a custom item uses its description',
 check('file name is Melbourne-timestamped + cleaned',
   evidenceFileName('IMG 1234?.HEIC', new Date('2026-10-28T03:32:10Z')) === '2026-10-28 14-32-10 IMG 1234-.HEIC',
   evidenceFileName('IMG 1234?.HEIC', new Date('2026-10-28T03:32:10Z')));
+{
+  // Review #1: a long name must keep its extension, or complete deletes the finished upload.
+  const long = evidenceFileName(`${'x'.repeat(150)}.mp4`, new Date('2026-10-28T03:32:10Z'));
+  check('a 150-character name keeps its extension', long.endsWith('.mp4') && isAllowedFileName(long) && long.length <= 130, long);
+  check('a bare ".jpg" becomes "photo.jpg"', evidenceFileName('.jpg', new Date('2026-10-28T03:32:10Z')) === '2026-10-28 14-32-10 photo.jpg');
+  check('a bare ".MOV" becomes "video.MOV"', evidenceFileName('.MOV', new Date('2026-10-28T03:32:10Z')) === '2026-10-28 14-32-10 video.MOV');
+}
 check('photos and videos allowed', ['a.jpg', 'b.JPEG', 'c.png', 'd.heic', 'e.heif', 'f.webp', 'g.mp4', 'h.MOV', 'i.m4v'].every(isAllowedFileName));
 check('anything else refused', !['a.pdf', 'b.exe', 'c', 'd.jpg.exe', 'e.svg'].some(isAllowedFileName));
 check('300 MB per file (owner decision 5)', MAX_FILE_BYTES === 300 * 1024 * 1024);
@@ -207,6 +214,9 @@ function makeClient({ missing = false } = {}) {
       if (/^SELECT/i.test(sql) && /FROM dispatch_evidence_files f/.test(sql) && /f\.workorder_id = \$1/.test(sql)) {
         return { rows: state.files.filter((f) => f.workorder_id === Number(params[0]) && !f.deleted_at).map((f) => ({ ...f, uploaded_by_name: USERS[f.uploaded_by] || null })) };
       }
+      if (/^SELECT id FROM dispatch_evidence_files WHERE drive_item_id = \$1$/.test(sql)) {
+        return { rows: state.files.filter((f) => f.drive_item_id === params[0]).map((f) => ({ id: f.id })) };
+      }
       if (/^SELECT/i.test(sql) && /FROM dispatch_evidence_files/.test(sql) && /WHERE id = \$1/.test(sql)) {
         return { rows: state.files.filter((f) => f.id === Number(params[0]) && !f.deleted_at) };
       }
@@ -355,6 +365,18 @@ for (const who of ['technician', 'logistics', 'admin', 'superadmin', 'wk']) {
   check('…and adds one NOTE_ADDED workorder log line', client.state.logs.length === 1 && /NOTE_ADDED/.test(client.state.logs[0].sql) && /Dispatch evidence added/.test(client.state.logs[0].params.join(' ')), JSON.stringify(client.state.logs));
   const twice = await done('file-1');
   check('completing the same file twice records it once', twice.statusCode === 200 && client.state.files.length === 1 && client.state.logs.length === 1);
+  // Review #2: a recorded file renamed in SharePoint must never be deleted by `complete`.
+  graph.store['file-1'] = { ...graph.store['file-1'], name: 'renamed.pdf' };
+  const renamed = await done('file-1');
+  check('complete never deletes an already-recorded file (delete stays superadmin-only)', renamed.statusCode === 200 && !!graph.store['file-1'], `${renamed.statusCode} ${JSON.stringify(renamed.body)}`);
+  graph.store['file-1'] = { ...graph.store['file-1'], name: '2026-10-28 14-32-10 front.jpg' };
+  // Review #3: an unknown drive item is the caller's mistake, not Microsoft's.
+  const bogus = await done('no-such-file');
+  check('complete with an unknown file → 400', bogus.statusCode === 400, `${bogus.statusCode}`);
+  // Review #5: a file whose size Graph does not report is not waved through.
+  graph.store.nosize = { id: 'nosize', name: 'n.jpg', file: { mimeType: 'image/jpeg' }, parentReference: { id: 'folder-2' } };
+  const ns = await done('nosize');
+  check('complete refuses a file with no size', ns.statusCode === 400 && client.state.files.length === 1);
 
   const list = await call({ resource: 'list', query: { workorder_id: '731' }, auth: AUTH.technician, client, graph });
   const item = list.body.items.find((i) => i.workorder_items_id === 2001);
@@ -398,6 +420,8 @@ for (const who of ['technician', 'logistics', 'admin', 'superadmin', 'wk']) {
   check('Microsoft not configured (Production before go-live): list says configured:false', l.statusCode === 200 && l.body.configured === false);
   const u = await call({ method: 'POST', resource: 'upload-session', body: SESSION_BODY, auth: AUTH.admin, client, graph, configured: false });
   check('Microsoft not configured: upload → 503', u.statusCode === 503);
+  const d = await call({ method: 'DELETE', resource: 'file', query: { id: '1' }, auth: AUTH.admin, client, graph, configured: false });
+  check('a non-superadmin delete is 403 even when not configured', d.statusCode === 403, `${d.statusCode}`);
 }
 
 {

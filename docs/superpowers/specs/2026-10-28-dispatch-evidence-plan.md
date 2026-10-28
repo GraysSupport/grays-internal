@@ -62,8 +62,8 @@ OneDrive/SharePoint files.
 
 | Piece | Detail |
 |---|---|
-| `lib/msgraph.js` | Token fetch + cache, folder ensure, upload session, item lookup, thumbnails. **Mock adapter** (`GRAPH_MOCK=true`) so Previews work before credentials exist, like `PODIUM_MOCK`. |
-| `lib/dispatchEvidence.js` | `/api/evidence?resource=folder|upload-session|complete|list`, routed through the existing `api/[...path].js` catch-all (**no new Vercel function**, Hobby 12-function cap). Token-gated, role-checked, workshop lockdown (G17) respected. |
+| `lib/msgraph.js` | Token fetch + cache, folder ensure, upload session, item lookup, thumbnails. ~~Mock adapter~~ — **dropped 28 Oct 2026** (real credentials exist on Preview; tests inject a fake Graph; an unconfigured environment shows "not set up"). |
+| `lib/dispatchEvidence.js` | `/api/evidence?resource=list|upload-session|complete|file` (folders are ensured inside upload-session), routed through the existing `api/[...path].js` catch-all (**no new Vercel function**, Hobby 12-function cap). Token-gated, role-checked, workshop lockdown (G17) respected. |
 | Migration `0010_dispatch_evidence` | `dispatch_evidence_folders` (workorder → SharePoint folder ID/link) + `dispatch_evidence_files` (item, file ID, name, type, size, link, uploaded_by/at). Additive + `_down`, **Neon dev only**; code tolerates the tables being absent on prod (42P01) until you migrate at merge. |
 | `src/components/DispatchEvidencePanel.js` | Item picker, `accept="image/*,video/*"` with camera capture, multiple files, per-file progress + retry, thumbnails list. Used on workorder detail, To-Be-Booked and Schedule. |
 | Limits | Photos + videos only (jpg/png/heic/mp4/mov), cap **300 MB per file**, filenames cleaned + timestamped, `conflictBehavior=rename` so nothing is ever overwritten. |
@@ -89,7 +89,7 @@ Administrator) to do these. About 15 minutes.
 1. **Tell me where the "shared drive" lives.** In Outlook, a shared drive is almost always the
    **Files of a Microsoft 365 group/Team**, which is a SharePoint site. Send me the URL you see when
    you open it in the browser (looks like `https://graysfitness.sharepoint.com/sites/<name>/…`),
-   and create the folder (e.g. `Dispatch Evidence`). Please also create a `Dispatch Evidence – TEST`
+   and create the folder (e.g. `Dispatch Evidence`). Please also create a `Dispatch Evidence - TEST`
    folder for Previews.
    - If it's a folder in **someone's personal OneDrive**, please move it to a SharePoint site:
      app access to a personal OneDrive needs `Files.ReadWrite.All`, which opens *every* file in
@@ -113,7 +113,7 @@ Administrator) to do these. About 15 minutes.
 6. **Vercel environment variables** (project `grays-internal`). Start with **Preview scope
    only**:
    `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_EVIDENCE_SITE_URL`, and
-   `MS_EVIDENCE_FOLDER=Dispatch Evidence – TEST`. Production values are added at go-live with
+   `MS_EVIDENCE_FOLDER=Dispatch Evidence - TEST`. Production values are added at go-live with
    the real folder name.
 
 Cost: nothing extra. Graph is included with Microsoft 365, and files count against your existing
@@ -151,6 +151,39 @@ Learned:
 - Folder names use a plain hyphen (`Dispatch Evidence - TEST`), not an en dash.
 - Resolve site/drive/folder ids at runtime (cached per warm instance) rather than hard-coding
   them. The ids above are for reference only.
+
+## Phase 1 results (28 Oct 2026)
+
+Backend built on `feat/ops-g18-dispatch-evidence`:
+- `lib/msgraph.js`, `lib/dispatchEvidence.js`, `lib/handlers/evidence.js`, plus `case 'evidence'` in
+  `api/[...path].js`.
+- Migration 0010, applied to **Neon dev only**. The real `ON CONFLICT` clauses were proved against
+  the dev index.
+- Offline smoke: 93 checks, mutation-checked.
+- Live run of the real `lib/msgraph.js` against the TEST folder (spike `step=lib`): folder create
+  and reuse, an upload session with the name `a&b #1.jpg`, getItem, thumbnails, delete,
+  delete-again and cleanup all passed.
+
+Code review: no blockers. Fixed:
+1. A long file name lost its extension, so the finished upload was deleted.
+2. `complete` could delete an already-recorded file.
+3. An unknown file id gave 502 instead of 400.
+4. A missing size was waved through.
+5. The delete 403 now comes before the not-configured 503.
+
+Noted, not changed:
+- Size and type are only enforced at `complete`.
+- Uncompleted uploads leave orphans in SharePoint.
+- No paging past 200 files per item.
+- The root folder is cached per warm instance.
+
+**Carry into Phase 2:**
+- The panel must always call `complete`, and retry it after a re-login. The 1-hour token also
+  applies to the WK kiosk. `complete` is idempotent, so retrying is safe.
+- The full-size `web_url` needs a SharePoint login, which technicians and WK may not have. Rely on
+  thumbnails on screen.
+- Consider hiding thumbnails from roles that can't upload, if the owner wants the G17 lockdown
+  applied strictly. Today any logged-in user may view.
 
 ## Risks / notes
 
