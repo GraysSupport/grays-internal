@@ -5,6 +5,7 @@ import HomeButton from '../components/homebutton';
 import toast from 'react-hot-toast';
 import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { parseMaybeJson } from '../utils/http';
+import { isPodiumEnabled } from '../utils/featureFlags';
 
 // P11: linking an individual Podium account is a `sales` action; superadmin may also
 // connect/test. This only decides whether to show the card — the server re-checks on
@@ -17,7 +18,8 @@ export default function Settings() {
   const navigate = useNavigate();
 
   // F1 increment 3 — Podium connection state.
-  const canConnectPodium = hasAnyRole(getRoles(), PODIUM_ROLES);
+  // 28 Oct 2026: the whole card is hidden until REACT_APP_FEATURE_PODIUM=true.
+  const canConnectPodium = isPodiumEnabled() && hasAnyRole(getRoles(), PODIUM_ROLES);
   const [podium, setPodium] = useState(null);      // last /api/podium/status payload
   const [podiumLoading, setPodiumLoading] = useState(canConnectPodium);
   const [connecting, setConnecting] = useState(false);

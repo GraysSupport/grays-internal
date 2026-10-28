@@ -20,6 +20,9 @@
 // lazy, so importing the handler here opens no connection while we hit pre-DB branches.
 
 process.env.PODIUM_MOCK = 'true';
+// 28 Oct 2026: the webhook ignores everything while Podium is hidden (lib/featureFlags.js);
+// this suite tests the live behaviour, so switch it on. OFF is covered by ops-podium-hide-smoke.
+process.env.FEATURE_PODIUM = 'true';
 process.env.PODIUM_API_VERSION = process.env.PODIUM_API_VERSION || '2021-04-01';
 
 const crypto = (await import('crypto')).default;

@@ -1,7 +1,7 @@
 {
   "name": "Grays Internal Portal",
   "short_name": "Grays Portal",
-  "description": "Grays Fitness internal portal — inbox, leads, workorders, logistics.",
+  "description": "Grays Fitness internal portal — workorders, deliveries, logistics.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

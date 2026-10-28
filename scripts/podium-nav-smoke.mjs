@@ -21,6 +21,10 @@
 
 import { buildNavItems, NAV_KEYS } from '../src/utils/nav.js';
 
+// 28 Oct 2026: Podium is hidden by default (src/utils/featureFlags.js). This suite checks the
+// role rules WITH Podium on; ops-podium-hide-smoke checks that OFF hides all four items.
+process.env.REACT_APP_FEATURE_PODIUM = 'true';
+
 let passed = 0;
 function check(name, cond, detail) {
   if (!cond) throw new Error(`FAIL: ${name}${detail ? ` — ${detail}` : ''}`);

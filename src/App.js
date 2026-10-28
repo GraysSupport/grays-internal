@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
 import PwaPrompts from './components/PwaPrompts';
@@ -42,9 +42,15 @@ import WorkshopPage from './pages/workshop';
 import ScanPage from './pages/scan';
 import LotTrackerPage from './pages/lot-tracker';
 import TechChecklistPage from './pages/tech-checklist';
+import { isPodiumEnabled } from './utils/featureFlags';
+
+// 28 Oct 2026: Podium screens are hidden until REACT_APP_FEATURE_PODIUM=true. While hidden,
+// old bookmarks to them land on the dashboard instead of a blank page.
+const PODIUM_PATHS = ['/inbox', '/leads', '/logistics/awaiting-workorder', '/integrations'];
 
 function App() {
   const navigate = useNavigate();
+  const podiumOn = isPodiumEnabled();
 
   useEffect(() => {
     const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
@@ -116,10 +122,17 @@ function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/inbox" element={<Inbox />} />
-        <Route path="/leads" element={<Leads />} />
-        <Route path="/logistics/awaiting-workorder" element={<AwaitingWorkorder />} />
-        <Route path="/integrations" element={<Integrations />} />
+        {podiumOn && (
+          <>
+            <Route path="/inbox" element={<Inbox />} />
+            <Route path="/leads" element={<Leads />} />
+            <Route path="/logistics/awaiting-workorder" element={<AwaitingWorkorder />} />
+            <Route path="/integrations" element={<Integrations />} />
+          </>
+        )}
+        {!podiumOn && PODIUM_PATHS.map((path) => (
+          <Route key={path} path={path} element={<Navigate to="/dashboard" replace />} />
+        ))}
 
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/:sku/edit" element={<EditProduct />} />

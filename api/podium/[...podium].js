@@ -24,6 +24,7 @@ import inboxHandler from '../../lib/podiumRoutes/inbox.js';
 import contactHandler from '../../lib/podiumRoutes/contact.js';
 import oauthStartHandler from '../../lib/podiumRoutes/oauthStart.js';
 import oauthCallbackHandler from '../../lib/podiumRoutes/oauthCallback.js';
+import { isPodiumEnabled, podiumDisabled } from '../../lib/featureFlags.js';
 
 /** Path segments after /api/podium/ (works on Vercel + the ?podium=… fallback). */
 function podiumSegs(req) {
@@ -38,6 +39,8 @@ function podiumSegs(req) {
 }
 
 export default async function handler(req, res) {
+  // 28 Oct 2026: Podium is hidden for everyone until FEATURE_PODIUM=true (lib/featureFlags.js).
+  if (!isPodiumEnabled()) return podiumDisabled(res);
   const [root, sub] = podiumSegs(req);
   switch (root) {
     case 'status':
