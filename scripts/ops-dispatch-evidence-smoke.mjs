@@ -170,7 +170,10 @@ const AUTH = {
 const WO = { workorder_id: 731, invoice_id: '19623' };
 const ITEMS = [
   { workorder_items_id: 2001, workorder_id: 731, product_id: 'TM-95T', product_name: 'Life Fitness 95T Treadmill', is_custom: false, custom_description: null },
-  { workorder_items_id: 2002, workorder_id: 731, product_id: null, product_name: null, is_custom: true, custom_description: 'Install kit' },
+  // OTHER (owner, 28 Oct 2026): "OTHER equipment doesn't require any evidence pictures". On the
+  // dev data every custom item carries SKU OTHER ("Custom / Misc Item", 120 items).
+  { workorder_items_id: 2002, workorder_id: 731, product_id: 'OTHER', product_name: 'Custom / Misc Item', is_custom: true, custom_description: 'Install kit' },
+  { workorder_items_id: 2003, workorder_id: 731, product_id: 'LF-95X', product_name: 'Life Fitness 95X Elliptical', is_custom: false, custom_description: null },
 ];
 
 function makeClient({ missing = false } = {}) {
@@ -331,10 +334,16 @@ for (const who of ['technician', 'logistics', 'admin', 'superadmin', 'wk']) {
   const again = await call({ method: 'POST', resource: 'upload-session', body: { ...SESSION_BODY, file_name: 'back.mov' }, auth: AUTH.technician, client, graph });
   check('second upload reuses both stored folders (no new folders)', again.statusCode === 200 && graph.calls.filter((c) => c[0] === 'ensureFolder').length === 2);
 
-  const other = await call({ method: 'POST', resource: 'upload-session', body: { ...SESSION_BODY, workorder_items_id: 2002 }, auth: AUTH.technician, client, graph });
+  const other = await call({ method: 'POST', resource: 'upload-session', body: { ...SESSION_BODY, workorder_items_id: 2003 }, auth: AUTH.technician, client, graph });
   const last = graph.calls.filter((c) => c[0] === 'ensureFolder').at(-1);
-  check('another item gets its own sub-folder in the same workorder folder', other.statusCode === 200 && last[1] === 'folder-1' && last[2] === 'Install kit - item 2002', JSON.stringify(last));
+  check('another item gets its own sub-folder in the same workorder folder', other.statusCode === 200 && last[1] === 'folder-1' && last[2] === 'LF-95X Life Fitness 95X Elliptical - item 2003', JSON.stringify(last));
+
+  const before = graph.calls.length;
+  const misc = await call({ method: 'POST', resource: 'upload-session', body: { ...SESSION_BODY, workorder_items_id: 2002 }, auth: AUTH.superadmin, client, graph });
+  check('an OTHER item takes no evidence → 400, nothing created in SharePoint', misc.statusCode === 400 && /OTHER/.test(misc.body.error) && graph.calls.length === before, `${misc.statusCode} ${JSON.stringify(misc.body)}`);
 }
+check('needsEvidence: OTHER (any case) needs none; real machines do',
+  !ev.needsEvidence({ product_id: 'OTHER' }) && !ev.needsEvidence({ product_id: ' other ' }) && ev.needsEvidence({ product_id: 'TM-95T' }));
 
 {
   // Someone deleted the folder in SharePoint: the stored id is stale → recreate once, then upload.
@@ -380,7 +389,8 @@ for (const who of ['technician', 'logistics', 'admin', 'superadmin', 'wk']) {
 
   const list = await call({ resource: 'list', query: { workorder_id: '731' }, auth: AUTH.technician, client, graph });
   const item = list.body.items.find((i) => i.workorder_items_id === 2001);
-  check('list: every item, with its files, uploader and thumbnail', list.body.items.length === 2 && item.files.length === 1 && item.files[0].uploaded_by_name === 'Liam' && item.files[0].thumbnail_url === 'https://thumb/file-1', JSON.stringify(list.body));
+  check('list leaves OTHER items out', !list.body.items.some((i) => i.workorder_items_id === 2002), JSON.stringify(list.body.items.map((i) => i.workorder_items_id)));
+  check('list: every evidence item, with its files, uploader and thumbnail', list.body.items.length === 2 && item.files.length === 1 && item.files[0].uploaded_by_name === 'Liam' && item.files[0].thumbnail_url === 'https://thumb/file-1', JSON.stringify(list.body));
   check('list: folder link + upload rights for a technician', list.body.folder_url && list.body.can_upload === true && list.body.can_delete === false);
   check('list: limits for the screen', list.body.max_file_bytes === MAX_FILE_BYTES && list.body.configured === true && list.body.available === true);
 

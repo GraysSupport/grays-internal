@@ -127,6 +127,9 @@ minute from a phone. Recording at 1080p rather than 4K keeps that down.
 3. **Upload:** logistics, admin, superadmin, technician/workshop and the WK kiosk only. **Delete: superadmin only.**
 4. **Optional.** No "No evidence yet" badge.
 5. **Max file size: 300 MB per file.**
+6. **OTHER items take no evidence** (owner, 28 Oct 2026: "OTHER equipment doesn't require any
+   evidence pictures"). SKU `OTHER` ("Custom / Misc Item") is left out of the evidence list, gets
+   no folder, and uploads for it are refused. On the dev data it covers all 120 custom lines.
 
 ## Phase 0 results (28 Oct 2026)
 
