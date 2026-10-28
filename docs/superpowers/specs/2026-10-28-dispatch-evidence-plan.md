@@ -216,6 +216,19 @@ Branch `feat/ops-g18-dispatch-evidence`: `81668ce` (screens), `63c8113` (review 
   - Smokes: 31/31; dispatch-evidence smoke has 117 checks.
   - `CI=true` build is green.
   - 5 mutants, all caught. The cancel-on-close mutant was missed at first, so a test was added.
+- **Final review (`6f28941`, 29 Oct 2026):**
+  - Each mount now gets its own AbortController. Before, StrictMode or a change of workorder left
+    every upload stuck on "waiting".
+  - Retry after the final chunk was sent records the file by name, so there's no second copy. If
+    SharePoint never got it, Retry sends it afresh.
+  - Recording by name needs a matching `size` and never deletes anything.
+  - Jest: 334/334. Both new mutants were caught.
+  - Known leftovers (minor, accepted):
+    - The pending entry is only saved after the upload returns, so closing during the final chunk
+      can leave a committed file that isn't recorded. It shows in the SharePoint folder but not in
+      the portal.
+    - The back-off `sleep` can't be interrupted.
+    - An offline spell over 30 minutes still logs the user out.
 - **Pinned guard counts were bumped:** contrast 66 files, formgrid 16 pages. They will conflict with
   PR #114's 64→65 contrast bump. Whichever merges second must re-run the smoke and pin the new real
   count, which is both changes added together, not the higher of the two.
