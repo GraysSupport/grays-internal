@@ -1,6 +1,6 @@
 # G18 — Dispatch evidence (photos + videos per workorder item → SharePoint)
 
-**Status:** APPROVED by the owner 28 Oct 2026 — next development item. Waiting on Microsoft 365 access (Phase 0). Nothing has been built.
+**Status:** APPROVED by the owner 28 Oct 2026 — next development item. **Phase 0 DONE 28 Oct 2026** (access set up by the owner; spike passed, see "Phase 0 results"). Next: Phase 1 backend.
 **Written:** 28 Oct 2026.
 
 ## What it does
@@ -127,6 +127,30 @@ minute from a phone. Recording at 1080p rather than 4K keeps that down.
 3. **Upload:** logistics, admin, superadmin, technician/workshop and the WK kiosk only. **Delete: superadmin only.**
 4. **Optional.** No "No evidence yet" badge.
 5. **Max file size: 300 MB per file.**
+
+## Phase 0 results (28 Oct 2026)
+
+Throwaway spike on branch `spike/g18-graph-check` (never merge), run on its Preview deploy
+`grays-internal-ll1w31akd-…vercel.app` against the TEST folder:
+
+| Check | Result |
+|---|---|
+| App login (client credentials) | ✅ token issued; roles = `["Sites.Selected"]` only |
+| Site | ✅ `graysfitness.sharepoint.com,28fdc126-59da-4779-8b52-5b98b46abf7a,f6f79a39-6135-48c5-be10-986378654a9c` ("Shared") |
+| Drive | ✅ `b!JsH9KNpZeUeLUluYtGq_ejma9_Y1YcVIvhCYY3hlSpzh-QYFrshzRqm7CAkHn6by` ("Documents", documentLibrary) |
+| TEST folder | ✅ `01T5C275EB7YAFI2OSWJD32BCCRIPELEZQ` "Dispatch Evidence - TEST" (real `Dispatch Evidence` folder also exists) |
+| Write grant | ✅ create folder (conflict=fail) + DELETE (204) |
+| Upload session | ✅ created; PUT 201; idle expiry ≈ **15 min** (Graph extends it per chunk) |
+| CORS | ✅ preflight 200, `Access-Control-Allow-Origin: *`, allows `content-range`; **real browser PUT from the Preview origin → 201** |
+
+**Decision: direct browser → SharePoint upload** (no relay). The relay fallback is dropped.
+
+Learned:
+- The Vercel `MS_EVIDENCE_FOLDER` value had a **leading tab** pasted in, so the lookup
+  failed until it was trimmed. The real code must `.trim()` every `MS_*` value.
+- Folder names use a plain hyphen (`Dispatch Evidence - TEST`), not an en dash.
+- Resolve site/drive/folder ids at runtime (cached per warm instance) rather than hard-coding
+  them. The ids above are for reference only.
 
 ## Risks / notes
 
