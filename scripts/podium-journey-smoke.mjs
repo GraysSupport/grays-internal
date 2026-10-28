@@ -5,6 +5,10 @@
 
 import { labelEvent, buildJourney, __JOURNEY_SQL } from '../lib/customerJourney.js';
 
+// 28 Oct 2026: lead steps are dropped while Podium is hidden (lib/featureFlags.js); this suite
+// tests the full journey, so switch it on. OFF is covered by ops-podium-hide-smoke.
+process.env.FEATURE_PODIUM = 'true';
+
 let pass = 0, fail = 0;
 function ok(cond, msg) {
   if (cond) { pass++; } else { fail++; console.error('  ✗', msg); }

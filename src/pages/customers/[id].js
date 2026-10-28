@@ -12,6 +12,7 @@ import BackButton from '../../components/backbutton';
 import HomeButton from '../../components/homebutton';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import { blockWorkshop } from '../../components/WorkshopBlocked';
+import { isPodiumEnabled } from '../../utils/featureFlags';
 
 // Parse a fetch Response as JSON, but fail with a readable message if the server returned
 // HTML (e.g. a platform 404/500 page) instead of JSON — so the page never crashes with a
@@ -56,7 +57,10 @@ function CustomerDetailPage() {
 
   // Conversations tab (lazy — only fetched on first open).
   const [convState, setConvState] = useState({ loaded: false, loading: false, rows: [], notLinked: false, mock: false, denied: false, error: null });
-  const canSeeConversations = hasAnyRole(getRoles(), ['sales', 'superadmin']);
+  // 28 Oct 2026: Podium is hidden until REACT_APP_FEATURE_PODIUM=true — no Conversations tab,
+  // and the lead-funnel steps are left out of the Journey.
+  const podiumOn = isPodiumEnabled();
+  const canSeeConversations = podiumOn && hasAnyRole(getRoles(), ['sales', 'superadmin']);
 
   useEffect(() => {
     if (!localStorage.getItem('user')) { navigate('/'); return; }
@@ -75,7 +79,8 @@ function CustomerDetailPage() {
         if (!j.ok) throw new Error(j.data.error || 'Failed to load journey');
         if (!alive) return;
         setCustomer(j.data.customer || c.data);
-        setEvents(Array.isArray(j.data.events) ? j.data.events : []);
+        const all = Array.isArray(j.data.events) ? j.data.events : [];
+        setEvents(podiumOn ? all : all.filter((e) => e.category !== 'lead'));
       } catch (err) {
         if (alive) toast.error(err.message);
       } finally {
@@ -83,7 +88,7 @@ function CustomerDetailPage() {
       }
     })();
     return () => { alive = false; };
-  }, [id, navigate]);
+  }, [id, navigate, podiumOn]);
 
   // Live Podium threads for this customer — search the inbox proxy by the most precise
   // identity we have (phone, else email, else name). Bodies are never stored.
@@ -162,7 +167,7 @@ function CustomerDetailPage() {
 
               {/* Tabs */}
               <div className="flex gap-1 mb-4 border-b">
-                {[['journey', 'Journey'], ['conversations', 'Conversations']].map(([key, lbl]) => (
+                {(podiumOn ? [['journey', 'Journey'], ['conversations', 'Conversations']] : [['journey', 'Journey']]).map(([key, lbl]) => (
                   <button
                     key={key}
                     onClick={() => openTab(key)}

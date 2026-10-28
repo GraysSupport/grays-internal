@@ -18,6 +18,7 @@
 
 import { getClientWithTimezone } from '../../lib/db.js';
 import { verifySignature, parseEnvelope, processEvent } from '../../lib/podiumWebhook.js';
+import { isPodiumEnabled } from '../../lib/featureFlags.js';
 
 // Disable Vercel's automatic body parsing so we can read the exact signed bytes.
 export const config = { api: { bodyParser: false } };
@@ -42,6 +43,12 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // 28 Oct 2026: Podium is hidden (FEATURE_PODIUM off). Podium may still post to this
+  // registered URL, so acknowledge with 200 (no endless retries) but do nothing at all —
+  // no lead, no sync-log row, no database connection. Events received while OFF are DROPPED;
+  // turning Podium back on does not backfill them.
+  if (!isPodiumEnabled()) return res.status(200).json({ ok: true, ignored: 'podium-disabled' });
 
   const secret = process.env.PODIUM_WEBHOOK_SECRET;
   if (!secret) {
