@@ -80,16 +80,18 @@ const nextFrom = (json) => {
  * (GET uploadUrl → nextExpectedRanges) and carries on from there, rather than re-sending a chunk
  * SharePoint may already have. If the session is gone after the final chunk was sent, the file
  * was probably committed and only its reply was lost → UploadError('maybe-committed'): the caller
- * records it by the name upload-session gave it. `resume: true` starts by asking (Retry).
+ * records it by the name upload-session gave it. `resume: true` starts by asking (Retry);
+ * `finalSent` says an earlier attempt already sent the last chunk, `onFinalSent` reports it.
  */
 export async function uploadInChunks({
   file, uploadUrl, chunkBytes, fetch: doFetch = fetch, onProgress, sleep = defaultSleep,
   waitOnline = defaultWaitOnline, signal, resume = false, timeoutMs = CHUNK_TIMEOUT_MS,
+  finalSent: sentBefore = false, onFinalSent,
 }) {
   const total = file.size;
   const aborted = () => new UploadError('aborted', 'The upload was cancelled');
   let start = 0;
-  let finalSent = false;
+  let finalSent = sentBefore;
   let failures = 0;
   let stalls = 0;
 
@@ -111,7 +113,7 @@ export async function uploadInChunks({
 
   if (resume) {
     const st = await status();
-    if (st?.gone) throw new UploadError('expired', 'The upload link expired — tap Retry to start again');
+    if (st?.gone) throw goneError();
     if (st?.next != null) start = st.next;
   }
 
@@ -119,7 +121,7 @@ export async function uploadInChunks({
     if (signal?.aborted) throw aborted();
     const from = start;
     const end = Math.min(from + chunkBytes, total) - 1;
-    if (end === total - 1) finalSent = true;
+    if (end === total - 1 && !finalSent) { finalSent = true; onFinalSent?.(); }
     let res = null;
     try {
       res = await withTimeout(signal, timeoutMs, (s) => doFetch(uploadUrl, {

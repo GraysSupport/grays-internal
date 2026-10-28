@@ -58,8 +58,9 @@ async function api(resource, { method = 'GET', body, query = {} } = {}) {
   return json;
 }
 
-const completeBody = (woId, itemId, { driveItemId, fileName }) => ({
-  workorder_id: woId, workorder_items_id: itemId, ...(driveItemId ? { drive_item_id: driveItemId } : { file_name: fileName }),
+// By name the size goes too: SharePoint renames on a clash, so the server checks it is this file.
+const completeBody = (woId, itemId, { driveItemId, fileName, size }) => ({
+  workorder_id: woId, workorder_items_id: itemId, ...(driveItemId ? { drive_item_id: driveItemId } : { file_name: fileName, size }),
 });
 
 // One "record the saved uploads" pass at a time per browser (StrictMode / two panels).
@@ -135,7 +136,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       try {
         await api('complete', {
           method: 'POST',
-          body: completeBody(Number(p.workorder_id), Number(p.workorder_items_id), { driveItemId: p.drive_item_id, fileName: p.file_name }),
+          body: completeBody(Number(p.workorder_id), Number(p.workorder_items_id), { driveItemId: p.drive_item_id, fileName: p.file_name, size: p.size }),
         });
         removePending(pendingKey(p));
         recorded += 1;
@@ -154,6 +155,9 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
 
   useEffect(() => {
     mounted.current = true;
+    // A new controller per mount: StrictMode (dev) and a change of workorder run the cleanup below
+    // and then mount again, and an aborted controller would leave every upload "waiting".
+    abort.current = new AbortController();
     const ctl = abort.current;
     const live = jobs.current; // the same array for the panel's life (jobs are pushed into it)
     (async () => {
@@ -192,13 +196,17 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
     update(job, { status: 'uploading', error: null });
     keepSessionAlive();
     try {
+      const fresh = job.session && Date.parse(job.session.expiresAt) > Date.now() + 60 * 1000;
+      // The last chunk already went and the link is (nearly) gone: record it by name — re-uploading
+      // would put a second copy in SharePoint.
+      if (!job.driveItemId && !job.maybeName && job.finalSent && !fresh && job.session?.fileName) job.maybeName = job.session.fileName;
       if (!job.driveItemId && !job.maybeName) {
         let item = null;
-        const fresh = job.session && Date.parse(job.session.expiresAt) > Date.now() + 60 * 1000;
         const progress = (p) => { keepSessionAlive(); update(job, { progress: p }); };
+        const sent = () => { job.finalSent = true; };
         if (fresh) {
           try {
-            item = await uploadInChunks({ file: job.file, uploadUrl: job.session.url, chunkBytes: job.session.chunk, onProgress: progress, signal, resume: true });
+            item = await uploadInChunks({ file: job.file, uploadUrl: job.session.url, chunkBytes: job.session.chunk, onProgress: progress, signal, resume: true, finalSent: job.finalSent, onFinalSent: sent });
           } catch (e) {
             if (e.code !== 'expired') throw e;
             job.session = null;
@@ -211,16 +219,17 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
               body: { workorder_id: woId, workorder_items_id: job.itemId, file_name: job.file.name, size: job.file.size },
             });
             job.session = { url: s.upload_url, expiresAt: s.expires_at, fileName: s.file_name, chunk: s.chunk_bytes };
-            item = await uploadInChunks({ file: job.file, uploadUrl: job.session.url, chunkBytes: job.session.chunk, onProgress: progress, signal });
+            job.finalSent = false;
+            item = await uploadInChunks({ file: job.file, uploadUrl: job.session.url, chunkBytes: job.session.chunk, onProgress: progress, signal, onFinalSent: sent });
           }
         }
         job.driveItemId = item.id;
       }
       update(job, { status: 'recording', progress: 1 });
-      const ref = { driveItemId: job.driveItemId, fileName: job.maybeName };
+      const ref = { driveItemId: job.driveItemId, fileName: job.maybeName, size: job.file.size };
       const entry = {
         workorder_id: woId, workorder_items_id: job.itemId, user_id: getStoredUser()?.id || null,
-        ...(ref.driveItemId ? { drive_item_id: ref.driveItemId } : { file_name: ref.fileName }),
+        ...(ref.driveItemId ? { drive_item_id: ref.driveItemId } : { file_name: ref.fileName, size: ref.size }),
       };
       addPending(entry);
       await api('complete', { method: 'POST', body: completeBody(woId, job.itemId, ref) });
@@ -235,7 +244,13 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
         job.maybeName = job.session.fileName;
         return process(job);
       }
-      const removedByServer = e.status === 400 && (job.driveItemId || job.maybeName);
+      if (e.status === 400 && job.maybeName && !job.driveItemId) {
+        // Looked up by name and SharePoint hasn't got it: it never arrived, so Retry sends it afresh.
+        Object.assign(job, { maybeName: null, session: null, finalSent: false });
+        update(job, { status: 'error', error: `${job.file.name} didn't reach SharePoint — tap Retry to send it again`, canRetry: true });
+        return 'error';
+      }
+      const removedByServer = e.status === 400 && job.driveItemId;
       update(job, { status: 'error', error: e.message, canRetry: !removedByServer });
       return 'error';
     }

@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import DispatchEvidencePanel, { DispatchEvidenceButton, EvidenceFolderLink } from '../DispatchEvidencePanel';
@@ -167,6 +168,13 @@ describe('uploadInChunks (Microsoft Graph upload-session protocol)', () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 
+  test('resume after the final chunk was already sent: a finished session means "maybe committed"', async () => {
+    const fetch = jest.fn(async () => res(404, {}));
+    const file = new Blob(['x'.repeat(10)]);
+    await expect(uploadInChunks({ file, uploadUrl: 'https://upload/s', chunkBytes: 1024, fetch, sleep: noSleep, resume: true, finalSent: true }))
+      .rejects.toMatchObject({ code: 'maybe-committed' });
+  });
+
   test('resume: starts from where an earlier attempt left off; an expired session says so', async () => {
     const f = jest.fn()
       .mockResolvedValueOnce(res(200, { nextExpectedRanges: ['8-'] }))
@@ -294,7 +302,58 @@ describe('DispatchEvidencePanel', () => {
     await screen.findByText(ELLIPTICAL);
     pick(ELLIPTICAL, [jpg('back.jpg')]);
     await waitFor(() => expect(callsTo(fetchMock, 'complete')).toHaveLength(1), { timeout: 3000 });
-    expect(JSON.parse(callsTo(fetchMock, 'complete')[0][1].body)).toEqual({ workorder_id: 731, workorder_items_id: 2003, file_name: SESSION.file_name });
+    expect(JSON.parse(callsTo(fetchMock, 'complete')[0][1].body)).toEqual({ workorder_id: 731, workorder_items_id: 2003, file_name: SESSION.file_name, size: 1000 });
+  });
+  test('works under React StrictMode (and a remount) — uploads are not left waiting', async () => {
+    login();
+    const fetchMock = installFetch({ complete: [200, { recorded: true }] });
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/wo']}>
+          <Routes><Route path="/wo" element={<DispatchEvidencePanel workorderId={731} />} /></Routes>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await screen.findByText(ELLIPTICAL);
+    pick(ELLIPTICAL, [jpg('back.jpg')]);
+    await waitFor(() => expect(callsTo(fetchMock, 'complete')).toHaveLength(1));
+    expect(uploadCalls(fetchMock, 'PUT')).toHaveLength(1);
+  });
+
+  test('Retry after the final chunk was sent records by name — never a second upload', async () => {
+    login();
+    let puts = 0;
+    const fetchMock = installFetch({ complete: [200, { recorded: true }] }, (url, opts) => {
+      if (opts.method === 'PUT') { puts += 1; return res(403, {}); } // final chunk sent, reply refused
+      return res(404, {}); // later: the session has finished
+    });
+    renderPanel();
+    await screen.findByText(ELLIPTICAL);
+    pick(ELLIPTICAL, [jpg('back.jpg')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry back.jpg' }));
+    await waitFor(() => expect(callsTo(fetchMock, 'complete')).toHaveLength(1));
+    expect(JSON.parse(callsTo(fetchMock, 'complete')[0][1].body)).toEqual({ workorder_id: 731, workorder_items_id: 2003, file_name: SESSION.file_name, size: 1000 });
+    expect(callsTo(fetchMock, 'upload-session')).toHaveLength(1);
+    expect(puts).toBe(1);
+  });
+
+  test('recorded by name but SharePoint never got it: Retry uploads it afresh', async () => {
+    login();
+    let completes = 0;
+    let puts = 0;
+    const fetchMock = installFetch({
+      complete: () => { completes += 1; return completes === 1 ? [400, { error: 'That file was not found in SharePoint' }] : [200, { recorded: true }]; },
+    }, (url, opts) => {
+      if (opts.method === 'PUT') { puts += 1; return puts === 1 ? Promise.reject(new TypeError('Failed to fetch')) : res(201, { id: 'drive-2', name: SESSION.file_name }); }
+      return res(404, {});
+    });
+    renderPanel();
+    await screen.findByText(ELLIPTICAL);
+    pick(ELLIPTICAL, [jpg('back.jpg')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry back.jpg' }, { timeout: 3000 }));
+    await waitFor(() => expect(callsTo(fetchMock, 'complete')).toHaveLength(2));
+    expect(callsTo(fetchMock, 'upload-session')).toHaveLength(2);
+    expect(JSON.parse(callsTo(fetchMock, 'complete')[1][1].body)).toEqual({ workorder_id: 731, workorder_items_id: 2003, drive_item_id: 'drive-2' });
   });
 
   test('login expired after the upload: the file is kept (for this user), recorded later', async () => {

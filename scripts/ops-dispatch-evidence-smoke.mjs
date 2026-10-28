@@ -433,7 +433,16 @@ check('needsEvidence: OTHER (any case) needs none; real machines do',
   } });
   await call({ method: 'POST', resource: 'upload-session', body: SESSION_BODY, auth: AUTH.logistics, client, graph });
   const done = (body) => call({ method: 'POST', resource: 'complete', body: { workorder_id: 731, workorder_items_id: 2001, ...body }, auth: AUTH.logistics, client, graph });
-  const byName = await done({ file_name: '2026-10-28 14-50-00 lost-reply.mp4' });
+  // Final review: SharePoint renames on a clash, so a name alone could match someone else's file —
+  // by name the size must match too, and nothing found by name is ever deleted (superadmin-only).
+  const noSize = await done({ file_name: '2026-10-28 14-50-00 lost-reply.mp4' });
+  check('complete by name without the size → 400', noSize.statusCode === 400 && !client.state.files.length, `${noSize.statusCode}`);
+  const otherSize = await done({ file_name: '2026-10-28 14-50-00 lost-reply.mp4', size: 1234 });
+  check('complete by name with a different size → 400 (not that file)', otherSize.statusCode === 400 && !client.state.files.length, `${otherSize.statusCode}`);
+  graph.store.odd = { id: 'odd', name: 'manual.pdf', size: 500, file: { mimeType: 'application/pdf' }, webUrl: 'https://sp/odd', parentReference: { id: 'folder-2' } };
+  const odd = await done({ file_name: 'manual.pdf', size: 500 });
+  check('complete by name never deletes a file (delete is superadmin-only)', odd.statusCode === 400 && !!graph.store.odd && !graph.calls.some((c) => c[0] === 'deleteItem' && c[1] === 'odd'), `${odd.statusCode}`);
+  const byName = await done({ file_name: '2026-10-28 14-50-00 lost-reply.mp4', size: 9_000_000 });
   check('complete by file name (lost final reply) records the file', byName.statusCode === 200 && client.state.files.some((f) => f.drive_item_id === 'byname'), `${byName.statusCode} ${JSON.stringify(byName.body)}`);
   check('…looked up inside THIS item folder only', graph.calls.some((c) => c[0] === 'getChild' && c[1] === 'folder-2' && c[2] === '2026-10-28 14-50-00 lost-reply.mp4'));
   check('complete by a name that never arrived → 400', (await done({ file_name: 'never-arrived.mp4' })).statusCode === 400);
