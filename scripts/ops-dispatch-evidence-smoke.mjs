@@ -510,8 +510,10 @@ for (const k of ['EVIDENCE_UPLOAD_ROLES', 'EVIDENCE_DELETE_ROLES', 'MAX_FILE_BYT
   check(`client mirror: ${k} equals the server's`, JSON.stringify(clientRules[k]) === JSON.stringify(ev[k]), `${JSON.stringify(clientRules[k])} vs ${JSON.stringify(ev[k])}`);
 }
 const woPage = src('src/pages/delivery_operations/workorder/[id].js');
-check('the panel is on the workorder page', /<DispatchEvidencePanel workorderId=\{id\} onChanged=\{reloadActivity\} onLoaded=\{setEvidence\} \/>/.test(woPage));
-check('the workorder header has the evidence-folder button (shown once dispatched)', /<EvidenceFolderLink info=\{evidence\} \/>/.test(woPage));
+// Owner, 29 Oct 2026: on the workorder the evidence opens in a pop-up from a header button
+// (WorkorderEvidence also shows the folder button once dispatched) — not listed on the page.
+check('the workorder header has the evidence button + pop-up', /<WorkorderEvidence workorderId=\{id\} invoiceId=\{wo\.invoice_id\} onChanged=\{reloadActivity\} \/>/.test(woPage));
+check('the evidence is no longer listed inline on the workorder page', !/<DispatchEvidencePanel\b/.test(woPage) && !/<EvidenceFolderLink\b/.test(woPage));
 const tracker = src('src/pages/lot-tracker.js');
 check('the Lot Tracker shows this item\'s evidence, read-only', /<DispatchEvidencePanel[\s\S]{0,200}itemId=\{journey\.assignment\.workorder_items_id\}[\s\S]{0,40}readOnly/.test(tracker));
 check('the Evidence button is on To-Be-Booked', (src('src/pages/delivery_operations/to-be-booked.js').match(/<DispatchEvidenceButton /g) || []).length === 1);

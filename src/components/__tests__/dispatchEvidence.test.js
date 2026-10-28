@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import DispatchEvidencePanel, { DispatchEvidenceButton, EvidenceFolderLink } from '../DispatchEvidencePanel';
+import DispatchEvidencePanel, { DispatchEvidenceButton, EvidenceFolderLink, WorkorderEvidence } from '../DispatchEvidencePanel';
 import {
   MAX_FILE_BYTES, isAllowedFileName, needsEvidence, canUploadEvidence, uploadInChunks,
   readPending, addPending, removePending, formatBytes,
@@ -204,14 +204,6 @@ describe('DispatchEvidencePanel', () => {
     const { container } = renderPanel();
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     await waitFor(() => expect(container).toBeEmptyDOMElement());
-  });
-
-  test('tells the page what it loaded (dispatched + folder) for the folder button', async () => {
-    login();
-    installFetch({ list: [200, { ...LIST, dispatched: true }] });
-    const onLoaded = jest.fn();
-    renderPanel({ onLoaded });
-    await waitFor(() => expect(onLoaded).toHaveBeenCalledWith(expect.objectContaining({ dispatched: true, folder_url: 'https://sp/wo' })));
   });
 
   test('no upload control for someone who cannot upload', async () => {
@@ -437,6 +429,63 @@ describe('EvidenceFolderLink (workorder header, once dispatched)', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     rerender(<EvidenceFolderLink info={{ ...LIST, dispatched: true }} />);
     expect(screen.getByRole('link', { name: /Open dispatch evidence folder/ })).toHaveAttribute('href', 'https://sp/wo');
+  });
+});
+
+describe('WorkorderEvidence (workorder header: a button + pop-up, owner 29 Oct 2026)', () => {
+  const renderHeader = (props = {}) => render(
+    <MemoryRouter initialEntries={['/wo']}>
+      <Routes><Route path="/wo" element={<WorkorderEvidence workorderId={731} invoiceId="19623" {...props} />} /></Routes>
+    </MemoryRouter>
+  );
+
+  test('a button with the file count — the evidence itself only in the pop-up', async () => {
+    login();
+    installFetch();
+    renderHeader();
+    const btn = await screen.findByRole('button', { name: 'Dispatch evidence for invoice 19623' });
+    expect(btn).toHaveTextContent('Dispatch evidence (1)');
+    expect(screen.queryByText(ELLIPTICAL)).not.toBeInTheDocument();
+    expect(screen.queryByText('Open dispatch evidence folder')).not.toBeInTheDocument();
+    fireEvent.click(btn);
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(ELLIPTICAL)).toBeInTheDocument();
+  });
+
+  test('once dispatched, the folder button shows beside it', async () => {
+    login();
+    installFetch({ list: [200, { ...LIST, dispatched: true }] });
+    renderHeader();
+    expect(await screen.findByText('Open dispatch evidence folder')).toHaveAttribute('href', 'https://sp/wo');
+  });
+
+  test('nothing while Microsoft is not set up, or when no item needs evidence', async () => {
+    login();
+    const fetchMock = installFetch({ list: [200, { configured: false, available: false, items: [] }] });
+    const { unmount } = renderHeader();
+    await waitFor(() => expect(callsTo(fetchMock, 'list')).toHaveLength(1));
+    await act(async () => {});
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    unmount();
+    installFetch({ list: [200, { ...LIST, items: [] }] });
+    renderHeader();
+    await act(async () => {});
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  test('an upload in the pop-up refreshes the count and the activity log', async () => {
+    login();
+    let lists = 0;
+    const withNew = { ...LIST, items: [LIST.items[0], { ...LIST.items[1], files: [{ ...FILE_11, id: 12 }] }] };
+    installFetch({ list: () => { lists += 1; return [200, lists === 1 ? LIST : withNew]; }, complete: [200, { recorded: true }] });
+    const onChanged = jest.fn();
+    renderHeader({ onChanged });
+    fireEvent.click(await screen.findByRole('button', { name: 'Dispatch evidence for invoice 19623' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(ELLIPTICAL);
+    pick(ELLIPTICAL, [jpg('back.jpg')]);
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Dispatch evidence for invoice 19623' })).toHaveTextContent('Dispatch evidence (2)'));
   });
 });
 

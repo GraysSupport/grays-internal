@@ -84,7 +84,7 @@ export function EvidenceFolderLink({ info }) {
 
 let nextKey = 1;
 
-export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyChange, onLoaded, itemId, readOnly = false, inDialog = false }) {
+export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyChange, itemId, readOnly = false, inDialog = false }) {
   const navigate = useNavigate();
   const woId = Number(workorderId);
   const [data, setData] = useState(null);
@@ -115,14 +115,13 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       if (!mounted.current) return null;
       setData(d);
       setLoadError(null);
-      onLoaded?.(d);
       return d;
     } catch (e) {
       if (e.status === 401) { expire(); return null; }
       if (mounted.current) setLoadError(e.message);
       return null;
     }
-  }, [woId, expire, onLoaded]);
+  }, [woId, expire]);
 
   // Record this user's saved uploads (any workorder) — only where they could upload in the
   // first place, so a viewer on a shared tablet never touches someone else's.
@@ -451,7 +450,42 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
  * A small "Evidence" button for a delivery row; opens the panel in a dialog. Every click and key
  * inside is stopped here: React bubbles portal events to the row, whose click opens the workorder.
  */
-export function DispatchEvidenceButton({ workorderId, invoiceId }) {
+// Workorder header (owner, 29 Oct 2026): a "Dispatch evidence (N)" button that opens the evidence
+// in a pop-up instead of listing it on the page, plus the folder button once dispatched. Hidden
+// while Microsoft isn't set up or no item needs evidence (as the inline panel was).
+export function WorkorderEvidence({ workorderId, invoiceId, onChanged }) {
+  const [info, setInfo] = useState(null);
+  const alive = useRef(true);
+  const reload = useCallback(async () => {
+    try {
+      const d = await api('list', { query: { workorder_id: String(workorderId) } });
+      if (alive.current) setInfo(d);
+    } catch { /* the pop-up says why when it is opened */ }
+  }, [workorderId]);
+  useEffect(() => {
+    alive.current = true;
+    reload();
+    return () => { alive.current = false; };
+  }, [reload]);
+
+  if (!info?.configured || !info?.available || !info.items?.length) return null;
+  const count = info.items.reduce((n, i) => n + (i.files?.length || 0), 0);
+  const changed = () => { reload(); onChanged?.(); };
+  return (
+    <>
+      <EvidenceFolderLink info={info} />
+      <DispatchEvidenceButton
+        workorderId={workorderId}
+        invoiceId={invoiceId}
+        onChanged={changed}
+        label={`Dispatch evidence (${count})`}
+        className="inline-flex min-h-[44px] items-center gap-2 rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+      />
+    </>
+  );
+}
+
+export function DispatchEvidenceButton({ workorderId, invoiceId, onChanged, label = 'Evidence', className }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const opener = useRef(null);
@@ -506,9 +540,9 @@ export function DispatchEvidenceButton({ workorderId, invoiceId }) {
         aria-label={`Dispatch evidence for invoice ${name}`}
         onClick={(e) => { stop(e); setOpen(true); }}
         onKeyDown={stop}
-        className="no-row-nav mt-1 inline-flex min-h-[44px] items-center gap-1 rounded border px-3 font-sans text-xs text-gray-700 hover:bg-gray-50"
+        className={`no-row-nav ${className || 'mt-1 inline-flex min-h-[44px] items-center gap-1 rounded border px-3 font-sans text-xs text-gray-700 hover:bg-gray-50'}`}
       >
-        <Camera size={14} aria-hidden="true" /> Evidence
+        <Camera size={14} aria-hidden="true" /> {label}
       </button>
       {open && createPortal(
         // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
@@ -524,7 +558,7 @@ export function DispatchEvidenceButton({ workorderId, invoiceId }) {
                 <X size={20} aria-hidden="true" />
               </button>
             </div>
-            <DispatchEvidencePanel workorderId={workorderId} onBusyChange={setBusy} inDialog />
+            <DispatchEvidencePanel workorderId={workorderId} onBusyChange={setBusy} onChanged={onChanged} inDialog />
           </div>
         </div>,
         document.body
