@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import TechChecklistPage from '../tech-checklist';
-import { CHECK_ITEMS, canUseTechChecklist, unansweredItems, emptyChecks } from '../../utils/techChecklist';
+import { CHECK_ITEMS, canUseTechChecklist, unansweredItems, emptyChecks, signOffLine, lastSavedLine } from '../../utils/techChecklist';
+import { formatWhen } from '../../utils/lotTracker';
 
 // G16 — technician screen & electronics checklist for a scanned lot.
 
@@ -288,5 +289,59 @@ describe('TechChecklistPage', () => {
     renderPage();
     scan('l09999');
     expect(await screen.findByRole('alert')).toHaveTextContent(/no lot found/i);
+  });
+});
+
+// G20 (owner, 29 Oct 2026) — show when a signed-off checklist was updated, and by whom.
+describe('G20 sign-off line', () => {
+  // 27 Oct 2026, 2:21 pm and 28 Oct 2026, 3:00 pm Melbourne (AEDT, UTC+11).
+  const SIGNED = '2026-10-27T03:21:00.000Z';
+  const EDITED = '2026-10-28T04:00:00.000Z';
+  const base = {
+    ok_to_ship: true, approved_by: 'GR', approved_by_name: 'Graeme', approved_at: SIGNED,
+    updated_by: 'GR', updated_by_name: 'Graeme', updated_at: SIGNED,
+  };
+
+  test('signed off and never edited since: no "Updated"', () => {
+    expect(signOffLine(base)).toBe(`OK to ship · signed off by Graeme · ${formatWhen(SIGNED)}`);
+    expect(signOffLine(base)).not.toMatch(/updated/i);
+  });
+
+  test('Graeme signs off, Nick re-saves the next day: the owner\'s example string', () => {
+    const line = signOffLine({ ...base, updated_by: 'NG', updated_by_name: 'Nick', updated_at: EDITED });
+    expect(line).toMatch(/^OK to ship · signed off by Graeme · 27 Oct 2026, 2:21\s?pm · Updated 28 Oct 2026, 3:00\s?pm by Nick$/);
+  });
+
+  test('a save within 60 s of the sign-off is the same save, not an update', () => {
+    const line = signOffLine({ ...base, updated_at: '2026-10-27T03:21:59.000Z' });
+    expect(line).not.toMatch(/updated/i);
+    const later = signOffLine({ ...base, updated_at: '2026-10-27T03:22:01.000Z' });
+    expect(later).toMatch(/Updated .* by Graeme$/); // same-person edits still show
+  });
+
+  test('saved but not signed off: "Last saved … by …"', () => {
+    const c = { ok_to_ship: false, approved_by: null, approved_at: null, updated_by: 'NG', updated_by_name: 'Nick', updated_at: EDITED };
+    expect(signOffLine(c)).toMatch(/^Last saved 28 Oct 2026, 3:00\s?pm by Nick$/);
+    expect(lastSavedLine(c)).toBe(signOffLine(c));
+  });
+
+  test('sign-off removed and re-ticked: shows the new signer, not stale text', () => {
+    const resigned = { ...base, approved_by: 'NG', approved_by_name: 'Nick', approved_at: EDITED, updated_by: 'NG', updated_by_name: 'Nick', updated_at: EDITED };
+    expect(signOffLine(resigned)).toBe(`OK to ship · signed off by Nick · ${formatWhen(EDITED)}`);
+  });
+
+  test('falls back to the user id when no name came back; nothing saved → null', () => {
+    expect(signOffLine({ ...base, approved_by_name: null, updated_by: 'NG', updated_by_name: null, updated_at: EDITED }))
+      .toMatch(/signed off by GR · .* · Updated .* by NG$/);
+    expect(signOffLine(null)).toBeNull();
+    expect(lastSavedLine(null)).toBeNull();
+  });
+
+  test('the checklist screen shows "Updated … by Nick" after a signed-off checklist is re-saved', async () => {
+    login();
+    const checklist = { checks: allYes(), test_tag_no: '', base_serial: '', console_serial: '', comments: '', ...base, updated_by: 'NG', updated_by_name: 'Nick', updated_at: EDITED, version: 3 };
+    installFetch({ get: [200, { ...VIEW, checklist }] });
+    renderPage('/tech-checklist?lot=L00042');
+    expect(await screen.findByText(/^OK to ship · signed off by Graeme · 27 Oct 2026, 2:21\s?pm · Updated 28 Oct 2026, 3:00\s?pm by Nick$/)).toBeInTheDocument();
   });
 });
