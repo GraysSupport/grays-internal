@@ -240,7 +240,8 @@ const PRODUCTS = {
   bottom_profit: [PR('A', 'Alpha', { gross_profit: 5000 })],
   brands: [{ brand: 'TEC', units: 4, revenue: 70000, lines: 4, costed_lines: 4, gross_profit: 23000 }],
   conditions: [{ condition: 'CS', units: 10, revenue: 30000, lines: 8 }],
-  by_fy: [{ fy: 2026, units: 1977, revenue: 2813375.5 }],
+  by_fy: [{ fy: 2026, units: 1977, revenue: 2813375.5, lines: 919, priced_lines: 330, is_current: false }, { fy: 2027, units: 11, revenue: 17950, lines: 11, priced_lines: 5, is_current: true }],
+  profit_ranked: 1,
   stock: { products: 258, units: 4228, units_costed: 217, value_cost: 106323.54, units_priced: 4228, value_sell: 1602880, negative: 4 },
   aged: { in_stock: 73, over90: 35, over180: 0, oldest: [{ lot_number: 'L00001', sku: 'A', name: 'Alpha', age_days: 112 }] },
   cost_missing: { total: 287, items: [{ sku: 'CR-1', name: 'Chamber', brand: 'CR', price: 55900, stock: 3 }] },
@@ -304,5 +305,26 @@ describe("Director's View — products & profit (G22b)", () => {
     expect(within(region).getByRole('table', { name: /price set but cost missing/i })).toHaveTextContent('$55,900');
     expect(within(region).getByRole('table', { name: /lots in stock over 90 days/i })).toHaveTextContent('112');
     expect(within(region).getByRole('table', { name: /sold per financial year/i })).toHaveTextContent('FY2026');
+  });
+});
+
+describe("Director's View — products & profit review fixes", () => {
+  test('the running year is marked "to date"; per-year price coverage shown', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    const fy = within(region).getByRole('table', { name: /sold per financial year/i });
+    expect(fy).toHaveTextContent('FY2027 to date');
+    expect(fy).toHaveTextContent('330 of 919');
+  });
+
+  test('stock at sell price says how many units have a price; profit rankings say who is in them', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    expect(within(region).getByText(/4,228 of 4,228 units have a price/i)).toBeInTheDocument();
+    expect(within(region).getByText(/profit rankings include only the 1 product with every line costed/i)).toBeInTheDocument();
   });
 });

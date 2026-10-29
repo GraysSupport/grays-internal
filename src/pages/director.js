@@ -282,7 +282,7 @@ export default function DirectorPage({ now }) {
                   type="button"
                   role="tab"
                   aria-selected={section === s.key}
-                  aria-controls={`dv-panel-${s.key}`}
+                  aria-controls={section === s.key ? `dv-panel-${s.key}` : undefined}
                   onClick={() => setSection(s.key)}
                   className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${section === s.key ? 'border-[#B50B1D] text-gray-900' : 'border-transparent text-gray-700 hover:text-gray-900'}`}
                 >

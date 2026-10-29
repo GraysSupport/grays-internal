@@ -14,7 +14,7 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('en-AU');
 function ProductTable({ label, rows }) {
   return (
     <div className="overflow-x-auto">
-      <table aria-label={label} className="w-full border text-sm">
+      <table className="w-full border text-sm">
         <caption className="px-2 py-1 text-left text-sm font-semibold">{label}</caption>
         <thead className="bg-gray-100">
           <tr>
@@ -80,7 +80,7 @@ export default function DirectorProducts({ period, compare }) {
       {d && (
         <div aria-busy={state.loading} className={`space-y-4 ${state.loading ? 'opacity-60' : ''}`}>
           <div className="space-y-1">
-            <Coverage>Revenue: {d.totals.priced_lines} of {d.totals.lines} lines use the price on the order; {d.totals.estimated_lines} are estimated from the product list price. Canceled items are excluded.</Coverage>
+            <Coverage>Revenue: {d.totals.priced_lines} of {d.totals.lines} lines use the price on the order; {d.totals.estimated_lines} are estimated from the product list price{d.totals.unpriced_lines ? `; ${d.totals.unpriced_lines} have no price and count as $0` : ''}. Canceled items are excluded; custom items count in the totals but are not ranked as products.</Coverage>
             <Coverage>Profit: {d.totals.costed_lines} of {d.totals.lines} lines have a cost set — gross profit and margin cover those lines only (a cost of $0 means “not set” and is never counted as $0).</Coverage>
             <Coverage>Stock: {fmtInt(d.stock.units_costed)} of {fmtInt(d.stock.units)} units in stock have a cost — “at cost” covers those only.{d.stock.negative > 0 && ` ${d.stock.negative} products with negative stock are left out.`}</Coverage>
           </div>
@@ -91,11 +91,14 @@ export default function DirectorProducts({ period, compare }) {
             <Tile label="Gross profit (costed lines)" value={formatDollars(d.totals.gross_profit)} note={`Margin ${formatPct(d.totals.margin)}`} />
             <Tile label="Products sold" value={fmtInt(d.product_count)} />
             <Tile label="Stock on hand at cost" value={formatDollars(d.stock.value_cost)} note={`${fmtInt(d.stock.units_costed)} of ${fmtInt(d.stock.units)} units costed`} />
-            <Tile label="Stock on hand at sell price" value={formatDollars(d.stock.value_sell)} note={`${fmtInt(d.stock.products)} products in stock`} />
+            <Tile label="Stock on hand at sell price" value={formatDollars(d.stock.value_sell)} note={`${fmtInt(d.stock.units_priced)} of ${fmtInt(d.stock.units)} units have a price · ${fmtInt(d.stock.products)} products in stock`} />
             <Tile label="Lots in stock > 90 days" value={fmtInt(d.aged.over90)} note={`${fmtInt(d.aged.over180)} over 180 days · ${fmtInt(d.aged.in_stock)} lots in stock`} />
           </div>
           <Coverage>Aged stock uses lot numbers, which only exist for stock received since lots began, so it does not cover every unit on hand.</Coverage>
 
+          <Coverage>
+            Profit rankings include only the {d.profit_ranked} product{d.profit_ranked === 1 ? '' : 's'} with every line costed, so a profit on part of the sales can&apos;t look like the whole.
+          </Coverage>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ProductTable label="Top 10 products by revenue" rows={d.top_revenue} />
             <ProductTable label="Top 10 products by gross profit" rows={d.top_profit} />
@@ -105,18 +108,25 @@ export default function DirectorProducts({ period, compare }) {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="overflow-x-auto">
-              <table aria-label="Top brands by revenue" className="w-full border text-sm">
+              <table className="w-full border text-sm">
                 <caption className="px-2 py-1 text-left text-sm font-semibold">Top brands by revenue</caption>
                 <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Brand</th><th className="border px-2 py-1 text-right">Revenue</th><th className="border px-2 py-1 text-right">Gross profit</th></tr></thead>
                 <tbody>
                   {d.brands.map((b) => (
-                    <tr key={b.brand}><th scope="row" className="border px-2 py-1 text-left font-normal">{b.brand}</th><td className="border px-2 py-1 text-right">{formatDollars(b.revenue)}</td><td className="border px-2 py-1 text-right">{formatDollars(b.gross_profit)}</td></tr>
+                    <tr key={b.brand}>
+                      <th scope="row" className="border px-2 py-1 text-left font-normal">{b.brand}</th>
+                      <td className="border px-2 py-1 text-right">{formatDollars(b.revenue)}</td>
+                      <td className="border px-2 py-1 text-right">
+                        {formatDollars(b.gross_profit)}
+                        {b.costed_lines > 0 && b.costed_lines < b.lines && <span className="block text-xs text-gray-700">on {b.costed_lines} of {b.lines} lines</span>}
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="overflow-x-auto">
-              <table aria-label="Sales by item condition" className="w-full border text-sm">
+              <table className="w-full border text-sm">
                 <caption className="px-2 py-1 text-left text-sm font-semibold">Sales by item condition</caption>
                 <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Condition</th><th className="border px-2 py-1 text-right">Units</th><th className="border px-2 py-1 text-right">Revenue</th></tr></thead>
                 <tbody>
@@ -128,12 +138,17 @@ export default function DirectorProducts({ period, compare }) {
               <Coverage>Condition codes are shown as stored on the workorder item.</Coverage>
             </div>
             <div className="overflow-x-auto">
-              <table aria-label="Units and revenue sold per financial year" className="w-full border text-sm">
+              <table className="w-full border text-sm">
                 <caption className="px-2 py-1 text-left text-sm font-semibold">Sold per financial year (all time)</caption>
-                <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Year</th><th className="border px-2 py-1 text-right">Units</th><th className="border px-2 py-1 text-right">Revenue</th></tr></thead>
+                <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Year</th><th className="border px-2 py-1 text-right">Units</th><th className="border px-2 py-1 text-right">Revenue</th><th className="border px-2 py-1 text-right">Order-priced lines</th></tr></thead>
                 <tbody>
                   {d.by_fy.map((f) => (
-                    <tr key={f.fy}><th scope="row" className="border px-2 py-1 text-left font-normal">FY{f.fy}</th><td className="border px-2 py-1 text-right">{fmtInt(f.units)}</td><td className="border px-2 py-1 text-right">{formatDollars(f.revenue)}</td></tr>
+                    <tr key={f.fy}>
+                      <th scope="row" className="border px-2 py-1 text-left font-normal">FY{f.fy}{f.is_current ? ' to date' : ''}</th>
+                      <td className="border px-2 py-1 text-right">{fmtInt(f.units)}</td>
+                      <td className="border px-2 py-1 text-right">{formatDollars(f.revenue)}</td>
+                      <td className="border px-2 py-1 text-right">{fmtInt(f.priced_lines)} of {fmtInt(f.lines)}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -141,8 +156,8 @@ export default function DirectorProducts({ period, compare }) {
           </div>
 
           <div className="overflow-x-auto">
-            <table aria-label="Lots in stock over 90 days" className="w-full border text-sm">
-              <caption className="px-2 py-1 text-left text-sm font-semibold">Oldest lots in stock (over 90 days)</caption>
+            <table className="w-full border text-sm">
+              <caption className="px-2 py-1 text-left text-sm font-semibold">Lots in stock over 90 days (oldest first)</caption>
               <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Lot</th><th className="border px-2 py-1 text-left">Product</th><th className="border px-2 py-1 text-right">Days in stock</th></tr></thead>
               <tbody>
                 {d.aged.oldest.map((l) => (
@@ -154,7 +169,7 @@ export default function DirectorProducts({ period, compare }) {
           </div>
 
           <div className="overflow-x-auto">
-            <table aria-label="Price set but cost missing" className="w-full border text-sm">
+            <table className="w-full border text-sm">
               <caption className="px-2 py-1 text-left text-sm font-semibold">Price set but cost missing — clean-up list</caption>
               <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Product</th><th className="border px-2 py-1 text-right">Price</th><th className="border px-2 py-1 text-right">In stock</th></tr></thead>
               <tbody>

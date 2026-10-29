@@ -59,7 +59,7 @@ function makeClient({ failOn = null } = {}) {
         return { rows: prev ? [P('A', 'Alpha', 'TEC', { revenue: '1000.00' })] : PRODUCT_ROWS };
       }
       if (/AS condition_code/i.test(sql)) return { rows: [{ condition_code: 'CS', units: '10.00', revenue: '30000.00', lines: '8' }, { condition_code: 'New', units: '2.00', revenue: '900.00', lines: '2' }] };
-      if (/AS fy\b/i.test(sql)) return { rows: [{ fy: 2026, units: '1977.00', revenue: '2813375.50' }, { fy: 2027, units: '11.00', revenue: '17950.00' }] };
+      if (/AS fy\b/i.test(sql)) return { rows: [{ fy: 2026, units: '1977.00', revenue: '2813375.50', lines: '919', priced_lines: '330', is_current: false }, { fy: 2027, units: '11.00', revenue: '17950.00', lines: '5', priced_lines: '5', is_current: true }] };
       if (/AS value_sell/i.test(sql)) return { rows: [{ products: '258', units: '4228', units_costed: '217', value_cost: '106323.54', units_priced: '4228', value_sell: '1602880.00', negative: '4' }] };
       if (/AS over90/i.test(sql)) return { rows: [{ in_stock: '73', over90: '35', over180: '0' }] };
       if (/AS age_days/i.test(sql)) return { rows: [{ lot_number: 'L00001', product_sku: 'A', name: 'Alpha', age_days: 112 }] };
@@ -221,10 +221,10 @@ console.log('G22b director — products, earnings and profit');
   check('totals: units + revenue', b.totals.units === 8 && b.totals.revenue === 75300);
   check('profit only over costed lines', b.totals.gross_profit === 23000 && b.totals.costed_lines === 4 && b.totals.lines === 7);
   check('margin = profit ÷ costed revenue', b.totals.margin === Math.round((23000 / 70000) * 10000) / 10000);
-  check('top by revenue', b.top_revenue.map((p) => p.sku).join() === 'A,B,C,OTHER');
+  check('top by revenue (custom lines are not a product)', b.top_revenue.map((p) => p.sku).join() === 'A,B,C');
   check('top by profit ranks profit, not revenue', b.top_profit.map((p) => p.sku).join() === 'B,A');
   check('a product with no cost has profit null and is left out of the profit ranking', b.top_revenue.find((p) => p.sku === 'C').gross_profit === null && !b.top_profit.some((p) => p.sku === 'C'));
-  check('custom lines are named', b.top_revenue.find((p) => p.sku === 'OTHER').name === 'Custom / misc items');
+  check('custom lines roll up under a named brand', b.brands.some((x) => x.brand === 'Custom'));
   check('brands rolled up, profit null when nothing costed', b.brands[0].brand === 'TEC' && b.brands[0].revenue === 70000 && b.brands.find((x) => x.brand === 'PRE').gross_profit === null);
   check('condition mix as stored', b.conditions[0].condition === 'CS' && b.conditions[0].revenue === 30000);
   check('units + revenue per financial year (all time)', b.by_fy.length === 2 && b.by_fy[0].fy === 2026 && b.by_fy[0].revenue === 2813375.5);
@@ -235,6 +235,19 @@ console.log('G22b director — products, earnings and profit');
   check('cache header on success', r.headers['Cache-Control'] === 'private, max-age=300');
   const cm = c.calls.find((q) => /AS missing_total/i.test(q.sql));
   check('worklist uses the period as parameters', cm.params[0] === '2025-07-01' && cm.params[1] === '2026-07-01');
+
+  // G22b review fixes
+  check('worklist: NULL stock/price sorts last', /NULLS LAST/i.test(cm.sql));
+  check('worklist: a product whose lots carry a cost is not "missing"', /NOT EXISTS[\s\S]*product_lots[\s\S]*NULLIF\(pl\.unit_cost, 0\) IS NOT NULL/i.test(cm.sql));
+  const agedQ = c.calls.filter((q) => /product_lots/i.test(q.sql) && /In Stock/.test(q.sql));
+  check('aged stock counted by whole days (> 90), the same rule as the list', agedQ.length === 2 && agedQ.every((q) => /now\(\)::date - (pl\.)?created_at::date\) > 90/i.test(q.sql)));
+  const fyQ = c.calls.find((q) => /AS fy\b/i.test(q.sql));
+  check('per-FY figures say which year is still running + how many lines are priced', /AS is_current/i.test(fyQ.sql) && /AS priced_lines/i.test(fyQ.sql));
+  check('profit rankings only include fully costed products', b.top_profit.every((p) => p.costed_lines === p.lines) && b.profit_ranked === 2);
+  check('custom (OTHER) lines are not ranked as a product, nor counted as one', !b.top_revenue.some((p) => p.sku === 'OTHER') && b.product_count === 3);
+  check('…but stay in the totals', b.totals.revenue === 75300);
+  check('unpriced lines are counted for the coverage line', b.totals.unpriced_lines !== undefined);
+  check('brands keep how many lines are costed', b.brands[0].costed_lines === 4 && b.brands[0].lines === 4);
 }
 
 console.log('G22a director — drill-down');
