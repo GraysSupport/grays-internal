@@ -48,14 +48,14 @@ const PRODUCT_ROWS = [
 const R = (id, name, over = {}) => ({
   removalist_id: id, removalist: name, jobs: '10', jobs_with_cost: '8', jobs_both: '8', carrier_cost: '4000.00', charged: '3500.00',
   both_cost: '4000.00', both_charged: '3200.00', avg_cost: '500.00', median_cost: '450.00', loss_jobs: '5', loss_amount: '900.00',
-  free_jobs: '2', free_cost: '700.00', under_target_jobs: '7', target: '4800.00', cash_jobs: '0', install_jobs: '0', install_cost: '0', ...over,
+  free_jobs: '2', free_jobs_with_cost: '2', free_cost: '700.00', under_target_jobs: '7', target: '4800.00', cash_jobs: '0', install_jobs: '0', install_cost: '0', ...over,
 });
-const REMOVALIST_ROWS = [R(1, 'Moving Soon'), R(14, 'DTL Logistics', { both_cost: '2000.00', both_charged: '2600.00', loss_jobs: '0', loss_amount: '0', target: '2400.00' }), R(null, null, { jobs: '2', jobs_both: '0', both_cost: '0', both_charged: '0', target: '0' })];
+const REMOVALIST_ROWS = [R(1, 'Moving Soon'), R(14, 'DTL Logistics', { both_cost: '2000.00', both_charged: '2600.00', loss_jobs: '0', loss_amount: '0', target: '2400.00' }), R(null, null, { jobs: '2', jobs_both: '0', both_cost: '0', both_charged: '0', target: '0', free_jobs_with_cost: '0' })];
 const STATE_ROWS = [
-  { state: 'ACT', jobs: '13', single_jobs: '9', single_avg_cost: '524.10', both_cost: '100', both_charged: '90' },
-  { state: 'TAS', jobs: '12', single_jobs: '4', single_avg_cost: '687.50', both_cost: '100', both_charged: '90' },
-  { state: 'NT', jobs: '2', single_jobs: '1', single_avg_cost: '2000.00', both_cost: '0', both_charged: '0' },
-  { state: 'VIC', jobs: '262', single_jobs: '91', single_avg_cost: '279.78', both_cost: '100', both_charged: '90' },
+  { state: 'ACT', jobs: '13', single_jobs: '9', single_avg_cost: '524.10', both_cost: '100', both_charged: '90', jobs_both: '3' },
+  { state: 'TAS', jobs: '12', single_jobs: '4', single_avg_cost: '687.50', both_cost: '100', both_charged: '90', jobs_both: '2' },
+  { state: 'NT', jobs: '2', single_jobs: '1', single_avg_cost: '2000.00', both_cost: '0', both_charged: '0', jobs_both: '0' },
+  { state: 'VIC', jobs: '262', single_jobs: '91', single_avg_cost: '279.78', both_cost: '100', both_charged: '90', jobs_both: '50' },
 ];
 const LIKE_ROWS = [
   { state: 'NSW', removalist_id: 14, removalist: 'DTL Logistics', like_jobs: '30', avg_cost: '750.00', median_cost: '700.00' },
@@ -78,7 +78,7 @@ function makeClient({ failOn = null } = {}) {
         if (/AS loss_amount/i.test(sql)) return { rows: prev ? [R(1, 'Moving Soon', { both_cost: '1000.00', both_charged: '900.00' })] : REMOVALIST_ROWS };
         if (/AS single_avg_cost/i.test(sql)) return { rows: STATE_ROWS };
         if (/AS like_jobs/i.test(sql)) return { rows: LIKE_ROWS };
-        if (/AS dj_month/i.test(sql)) return { rows: [{ dj_month: '2025-07', jobs: '10', cost: '5000.00', charged: '4000.00' }] };
+        if (/AS dj_month/i.test(sql)) return { rows: [{ dj_month: '2025-07', jobs: '10', jobs_both: '6', cost: '5000.00', charged: '4000.00' }] };
       }
       if (/AS excluded_collects/i.test(sql)) return { rows: [{ excluded_collects: '84' }] };
       // G22b — products, earnings and profit.
@@ -278,6 +278,9 @@ console.log('G22b director — products, earnings and profit');
   check('brands keep how many lines are costed', b.brands[0].costed_lines === 4 && b.brands[0].lines === 4);
 }
 
+const { shapeDeliveries } = await import('../lib/director.js');
+const shapeDeliveriesFor = (state) => shapeDeliveries({ removalists: [], states: [{ state, jobs: '5', single_jobs: '5', single_avg_cost: '600', both_cost: '0', both_charged: '0', jobs_both: '0' }], like: [], monthly: [], excluded: [] }).states[0];
+
 console.log('G22c director — deliveries & removalists');
 {
   const DQ = { resource: 'deliveries', from: FY.from, to: FY.to };
@@ -312,6 +315,18 @@ console.log('G22c director — deliveries & removalists');
   check('monthly trend', b.monthly[0].month === '2025-07' && b.monthly[0].margin === -1000);
   check('Customer Collect pickups counted for the coverage line', b.coverage.excluded_collects === 84);
   check('compare: previous totals', b.previous.mode === 'year' && b.previous.totals.price_difference === -100);
+
+  // G22c review fixes
+  const likeSql = c.calls.find((q) => /AS like_jobs/i.test(q.sql)).sql;
+  check('like-for-like leaves out jobs with no carrier set', /dj\.removalist_id IS NOT NULL/i.test(likeSql));
+  check('free deliveries: how many have a known carrier cost', /AS free_jobs_with_cost/i.test(jobs) && b.totals.free_jobs_with_cost === 4);
+  const stSql = c.calls.find((q) => /AS single_avg_cost/i.test(q.sql)).sql;
+  const moSql = c.calls.find((q) => /AS dj_month/i.test(q.sql)).sql;
+  check('states + months count comparable jobs', /AS jobs_both/i.test(stSql) && /AS jobs_both/i.test(moSql) && b.states[0].jobs_both !== undefined && b.monthly[0].jobs_both === 6);
+  check('a state with no comparable jobs → price difference null, not $0', b.states.find((s) => s.state === 'NT').price_difference === null);
+  check('metro card bases are labelled as metro, with a regional caveat', b.states.find((s) => s.state === 'ACT').regional_caveat === false
+    && shapeDeliveriesFor('SA').card_zone === 'Adelaide (metro)' && shapeDeliveriesFor('SA').regional_caveat === true);
+  check('a delivery with no state is labelled', shapeDeliveriesFor(null).state === 'No state set');
 }
 
 console.log('G22a director — drill-down');

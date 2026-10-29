@@ -330,7 +330,7 @@ describe("Director's View — products & profit review fixes", () => {
 });
 
 // G22c — deliveries & removalists.
-const DEL_ROW = (id, name, over = {}) => ({ removalist_id: id, removalist: name, jobs: 10, jobs_with_cost: 8, jobs_both: 8, carrier_cost: 4000, charged: 3500, both_cost: 4000, both_charged: 3200, avg_cost: 500, median_cost: 450, loss_jobs: 5, loss_amount: 900, free_jobs: 2, free_cost: 700, under_target_jobs: 7, target: 4800, cash_jobs: 0, install_jobs: 0, install_cost: 0, price_difference: -800, recovery: 0.8, vs_target: -1600, ...over });
+const DEL_ROW = (id, name, over = {}) => ({ removalist_id: id, removalist: name, jobs: 10, jobs_with_cost: 8, jobs_both: 8, carrier_cost: 4000, charged: 3500, both_cost: 4000, both_charged: 3200, avg_cost: 500, median_cost: 450, loss_jobs: 5, loss_amount: 900, free_jobs: 2, free_jobs_with_cost: 2, free_cost: 700, under_target_jobs: 7, target: 4800, cash_jobs: 0, install_jobs: 0, install_cost: 0, price_difference: -800, recovery: 0.8, vs_target: -1600, ...over });
 const DELIVERIES = {
   range: { from: '2026-07-01', to: '2026-10-30' },
   totals: DEL_ROW(null, 'All', { jobs: 443, jobs_both: 332, both_cost: 257213.16, both_charged: 182492.94, price_difference: -74720.22, recovery: 0.7095, loss_jobs: 264, loss_amount: 86411.23, free_jobs: 92, vs_target: -126163 }),
@@ -413,5 +413,44 @@ describe("Director's View — deliveries & removalists (G22c)", () => {
     expect(like).toHaveTextContent('NSW');
     expect(like).toHaveTextContent('DTL Logistics');
     expect(like).toHaveTextContent('$750');
+  });
+});
+
+describe("Director's View — deliveries review fixes", () => {
+  const D2 = {
+    ...DELIVERIES,
+    removalists: [DEL_ROW(1, 'Moving Soon'), DEL_ROW(7, 'Quiet Co', { jobs_both: 0, recovery: null, loss_jobs: 0, loss_amount: 0, price_difference: 0, vs_target: 0 })],
+    states: [...DELIVERIES.states, { state: 'SA', jobs: 22, jobs_both: 0, single_jobs: 12, single_avg_cost: 546.02, card_zone: 'Adelaide (metro)', card_base: 583, drift: -0.0634, flag: 'ok', regional_caveat: true, both_cost: 0, both_charged: 0, price_difference: null }],
+    monthly: [{ month: '2026-07', jobs: 10, jobs_both: 6, cost: 5000, charged: 4000, margin: -1000 }, { month: '2026-08', jobs: 2, jobs_both: 0, cost: 0, charged: 0, margin: null }],
+  };
+  const open = async () => {
+    login(['superadmin']);
+    global.fetch = jest.fn(async (url) => ({ ok: true, status: 200, json: async () => (String(url).includes('resource=deliveries') ? D2 : SALES) }));
+    renderPage();
+    return openDeliveries();
+  };
+
+  test('cost/charge columns say they are comparable jobs only', async () => {
+    const region = await open();
+    expect(within(region).getByRole('columnheader', { name: /carrier cost \(comparable\)/i })).toBeInTheDocument();
+    expect(within(region).getByRole('columnheader', { name: /charged \(comparable\)/i })).toBeInTheDocument();
+  });
+
+  test('nothing comparable → —, never $0', async () => {
+    const region = await open();
+    const quiet = within(within(region).getByRole('table', { name: /by removalist/i })).getByRole('row', { name: /Quiet Co/ });
+    expect(quiet).not.toHaveTextContent('$0');
+    const sa = within(within(region).getByRole('table', { name: /rate card/i })).getByRole('row', { name: /SA/ });
+    expect(sa).toHaveTextContent(/metro/i);
+    expect(sa).toHaveTextContent(/regional jobs/i);
+    expect(sa).not.toHaveTextContent('$0');
+    const aug = within(within(region).getByRole('table', { name: /monthly/i })).getByRole('row', { name: /Aug 2026/ });
+    expect(aug).toHaveTextContent('—');
+    expect(aug).not.toHaveTextContent('$0');
+  });
+
+  test('free deliveries say how many had a known cost', async () => {
+    const region = await open();
+    expect(within(region).getByText(/absorbed on 2 of 92 free jobs/i)).toBeInTheDocument();
   });
 });

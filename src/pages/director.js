@@ -292,12 +292,11 @@ export default function DirectorPage({ now }) {
                 </button>
               ))}
             </div>
-            {section === 'deliveries' && (
+            {section === 'deliveries' ? (
               <div role="tabpanel" id="dv-panel-deliveries" aria-labelledby="dv-tab-deliveries">
                 <DirectorDeliveries period={period} compare={compare} />
               </div>
-            )}
-            {section === 'deliveries' ? null : section === 'products' ? (
+            ) : section === 'products' ? (
               <div role="tabpanel" id="dv-panel-products" aria-labelledby="dv-tab-products">
                 <DirectorProducts period={period} compare={compare} />
               </div>

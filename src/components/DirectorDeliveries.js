@@ -60,12 +60,12 @@ export default function DirectorDeliveries({ period, compare }) {
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-            <Tile label="Net delivery margin" value={formatDollars(d.totals.price_difference)}
+            <Tile label="Price difference (charged − carrier cost)" value={formatDollars(d.totals.price_difference)}
               badge={compare && d.previous ? changeBadge(d.totals.price_difference, d.previous.totals.price_difference) : null}
               note={`Charged ${formatDollars(d.totals.both_charged)} vs carrier ${formatDollars(d.totals.both_cost)}`} />
             <Tile label="Cost recovered" value={formatPct(d.totals.recovery)} note={`${fmtInt(d.totals.jobs_both)} comparable jobs`} />
-            <Tile label="Jobs that lost money" value={fmtInt(d.totals.loss_jobs)} note={`${formatDollars(d.totals.loss_amount)} lost`} />
-            <Tile label="Free deliveries" value={fmtInt(d.totals.free_jobs)} note={`${formatDollars(d.totals.free_cost)} carrier cost absorbed`} />
+            <Tile label="Jobs that lost money" value={fmtInt(d.totals.loss_jobs)} note={`of ${fmtInt(d.totals.jobs_both)} comparable · ${formatDollars(d.totals.loss_amount)} lost`} />
+            <Tile label="Free deliveries" value={fmtInt(d.totals.free_jobs)} note={`${formatDollars(d.totals.free_cost)} carrier cost absorbed on ${fmtInt(d.totals.free_jobs_with_cost)} of ${fmtInt(d.totals.free_jobs)} free jobs (the rest have no cost entered)`} />
             <Tile label={`Charged vs target (cost + ${markup}%)`} value={formatDollars(d.totals.vs_target)} note={`${fmtInt(d.totals.under_target_jobs)} jobs under target`} />
             <Tile label="Delivery jobs" value={fmtInt(d.totals.jobs)} note={`${fmtInt(d.removalists.length)} removalists`} />
             <Tile label="Cash to removalist" value={fmtInt(d.totals.cash_jobs)} note={`Installation on ${fmtInt(d.totals.install_jobs)} jobs (${formatDollars(d.totals.install_cost)})`} />
@@ -76,7 +76,7 @@ export default function DirectorDeliveries({ period, compare }) {
               <caption className="px-2 py-1 text-left text-sm font-semibold">By removalist</caption>
               <thead className="bg-gray-100">
                 <tr>
-                  {['Removalist', 'Jobs', 'Comparable', 'Carrier cost', 'Charged', 'Price difference', 'Recovery', 'Avg cost', 'Median cost', 'Lost money', 'Free', 'Vs target'].map((h, i) => (
+                  {['Removalist', 'Jobs', 'Comparable jobs', 'Carrier cost (comparable)', 'Charged (comparable)', 'Price difference', 'Recovery', 'Avg cost (jobs with a cost)', 'Median cost (jobs with a cost)', 'Lost money', 'Free', 'Vs target'].map((h, i) => (
                     <th key={h} className={`border px-2 py-1 ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
                   ))}
                 </tr>
@@ -93,8 +93,8 @@ export default function DirectorDeliveries({ period, compare }) {
                     <td className="border px-2 py-1 text-right">{formatPct(r.recovery)}</td>
                     <td className="border px-2 py-1 text-right">{formatDollars(r.avg_cost)}</td>
                     <td className="border px-2 py-1 text-right">{formatDollars(r.median_cost)}</td>
-                    <td className="border px-2 py-1 text-right whitespace-nowrap">{fmtInt(r.loss_jobs)} ({formatDollars(r.loss_amount)})</td>
-                    <td className="border px-2 py-1 text-right whitespace-nowrap">{fmtInt(r.free_jobs)} ({formatDollars(r.free_cost)})</td>
+                    <td className="border px-2 py-1 text-right whitespace-nowrap">{r.jobs_both ? `${fmtInt(r.loss_jobs)} (${formatDollars(r.loss_amount)})` : '—'}</td>
+                    <td className="border px-2 py-1 text-right whitespace-nowrap">{fmtInt(r.free_jobs)}{r.free_jobs_with_cost ? ` (${formatDollars(r.free_cost)} on ${fmtInt(r.free_jobs_with_cost)})` : ''}</td>
                     <td className="border px-2 py-1 text-right">{r.jobs_both ? formatDollars(r.vs_target) : '—'}</td>
                   </tr>
                 ))}
@@ -123,13 +123,14 @@ export default function DirectorDeliveries({ period, compare }) {
                     <td className={`border px-2 py-1 text-right ${s.flag === 'drift' ? 'font-semibold text-red-800' : ''}`}>
                       {s.drift !== null && <span>{signedPct(s.drift)} </span>}
                       <span className="text-xs">{s.flag === 'drift' && <span aria-hidden="true">⚠ </span>}{ZONE_NOTE[s.flag]}</span>
+                      {s.regional_caveat && <span className="block text-xs font-normal text-gray-700">includes regional jobs; drift may be overstated</span>}
                     </td>
-                    <td className="border px-2 py-1 text-right">{formatDollars(s.price_difference)}</td>
+                    <td className="border px-2 py-1 text-right">{s.price_difference === null ? '—' : formatDollars(s.price_difference)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <Coverage>The rate card prices zones (e.g. Melbourne Metro / Outer / VIC Regional); deliveries only record a state, so only states that are one card zone are compared.</Coverage>
+            <Coverage>The rate card prices zones (e.g. Melbourne Metro / Outer / VIC Regional); deliveries only record a state, so a state is compared only when one card zone stands for it — ACT, Tasmania and NT, plus SA and WA against the Adelaide and Perth metro bases (regional jobs there push the average up).</Coverage>
           </div>
 
           <div className="overflow-x-auto">
@@ -139,7 +140,7 @@ export default function DirectorDeliveries({ period, compare }) {
               <tbody>
                 {d.like_for_like.flatMap((g) => g.carriers.map((c, i) => (
                   <tr key={`${g.state}-${c.removalist_id ?? 'none'}`}>
-                    <th scope="row" className="border px-2 py-1 text-left font-normal">{i === 0 ? g.state : ''}</th>
+                    {i === 0 && <th scope="rowgroup" rowSpan={g.carriers.length} className="border px-2 py-1 text-left align-top font-normal">{g.state}</th>}
                     <td className="border px-2 py-1">{c.removalist}</td>
                     <td className="border px-2 py-1 text-right">{fmtInt(c.jobs)}</td>
                     <td className="border px-2 py-1 text-right">{formatDollars(c.avg_cost)}</td>
@@ -160,10 +161,10 @@ export default function DirectorDeliveries({ period, compare }) {
                 {d.monthly.map((m) => (
                   <tr key={m.month}>
                     <th scope="row" className="border px-2 py-1 text-left font-normal">{monthLabel(m.month)}</th>
-                    <td className="border px-2 py-1 text-right">{fmtInt(m.jobs)}</td>
-                    <td className="border px-2 py-1 text-right">{formatDollars(m.cost)}</td>
-                    <td className="border px-2 py-1 text-right">{formatDollars(m.charged)}</td>
-                    <td className={`border px-2 py-1 text-right ${m.margin < 0 ? 'text-red-800' : ''}`}>{formatDollars(m.margin)}</td>
+                    <td className="border px-2 py-1 text-right">{fmtInt(m.jobs)} ({fmtInt(m.jobs_both)} comparable)</td>
+                    <td className="border px-2 py-1 text-right">{m.jobs_both ? formatDollars(m.cost) : '—'}</td>
+                    <td className="border px-2 py-1 text-right">{m.jobs_both ? formatDollars(m.charged) : '—'}</td>
+                    <td className={`border px-2 py-1 text-right ${m.margin < 0 ? 'text-red-800' : ''}`}>{m.margin === null ? '—' : formatDollars(m.margin)}</td>
                   </tr>
                 ))}
               </tbody>
