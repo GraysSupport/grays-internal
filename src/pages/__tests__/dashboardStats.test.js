@@ -43,7 +43,7 @@ const DATA = {
     { delivery_id: 2, delivery_status: 'To Be Booked', delivery_state: 'NSW' },
     { delivery_id: 3, delivery_status: 'Booked for Delivery', delivery_date: todayISO(), removalist_id: 3 },
   ],
-  collections: [],
+  collections: [{ collection_id: 1, collection_date: todayISO(), status: 'Booked' }],
 };
 
 const KEYS = ['products', 'waitlist', 'workorder', 'delivery', 'collections'];
@@ -105,6 +105,7 @@ describe.each([
     expect(cardValue('Total Products')).toBe('3');
     expect(cardValue('In Stock')).toBe('2');
     expect(cardValue('Out of Stock')).toBe('1');
+    expect(cardValue('Collections This Week')).toBe('1');
     expect(screen.getByText(/To Be Booked Deliveries:/).parentElement).toHaveTextContent('2');
   });
 
@@ -127,18 +128,48 @@ describe.each([
   test('cards do not link to pages a workshop login cannot open', async () => {
     renderAs(who);
     await waitFor(() => expect(cardValue('Active Workorders')).toBe('2'));
+    // Products and the Schedule are blocked for every workshop login (G17).
     expect(card('Total Products')).not.toHaveClass('cursor-pointer');
-    expect(card('Active Workorders')).not.toHaveClass('cursor-pointer');
+    expect(card('Deliveries Today (Booked)')).not.toHaveClass('cursor-pointer');
+    // Current Workorders + Collections are open to technicians / the workshop role, not the kiosk.
+    const opsLinked = who.id !== 'WK';
+    for (const label of ['Active Workorders', 'Collections This Week']) {
+      if (opsLinked) expect(card(label)).toHaveClass('cursor-pointer');
+      else expect(card(label)).not.toHaveClass('cursor-pointer');
+    }
+  });
+});
+
+describe('G19 — a technician who also holds an office role is an office login', () => {
+  test('technician + staff gets the full dashboard, waitlist included', async () => {
+    renderAs({ id: 'TS', name: 'Tech Staff', access: 'technician', roles: ['technician', 'staff'] });
+    await waitFor(() => expect(cardValue('Total Waitlist Entries')).toBe('1'));
+    expect(fetchedKeys()).toContain('waitlist');
+    expect(card('Total Products')).toHaveClass('cursor-pointer');
   });
 });
 
 describe('G19 — office logins are unchanged', () => {
-  test('a superadmin still gets every card, waitlist included', async () => {
+  test('a superadmin still gets every card, waitlist included, all linked', async () => {
     renderAs(SUPERADMIN);
     await waitFor(() => expect(cardValue('Active Workorders')).toBe('2'));
     expect(cardValue('Total Waitlist Entries')).toBe('1');
     expect(cardValue('Total Products')).toBe('3');
-    expect(card('Active Workorders')).toHaveClass('cursor-pointer');
+    for (const label of ['Total Products', 'Total Waitlist Entries', 'Active Workorders', 'Deliveries Today (Booked)', 'Collections This Week']) {
+      expect(card(label)).toHaveClass('cursor-pointer');
+    }
+  });
+
+  test('cards read "…" while loading, not a fake 0', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const real = mockFetch();
+    global.fetch = jest.fn(async (url) => { await gate; return real(url); });
+    renderAs(SUPERADMIN);
+    expect(await screen.findByRole('heading', { name: 'Active Workorders', level: 3 })).toBeInTheDocument();
+    expect(cardValue('Active Workorders')).toBe('…');
+    release();
+    await waitFor(() => expect(cardValue('Active Workorders')).toBe('2'));
   });
 
   test('a staff login gets the full dashboard', async () => {
@@ -152,16 +183,32 @@ describe('G19 — one failing source only hides its own numbers', () => {
   test('a failing waitlist does not blank the workorder and stock cards', async () => {
     global.fetch = mockFetch({ fail: ['waitlist'] });
     renderAs(SUPERADMIN);
-    await waitFor(() => expect(cardValue('Active Workorders')).toBe('2'));
+    await waitFor(() => expect(cardValue('Total Waitlist Entries')).toMatch(/not available/i));
+    expect(cardValue('Active Workorders')).toBe('2');
     expect(cardValue('Total Products')).toBe('3');
-    expect(cardValue('Total Waitlist Entries')).toMatch(/not available/i);
   });
 
   test('a failing workorder load says so instead of showing 0', async () => {
     global.fetch = mockFetch({ fail: ['workorder'] });
     renderAs(TECHNICIAN);
-    await waitFor(() => expect(cardValue('Total Products')).toBe('3'));
-    expect(cardValue('Active Workorders')).toMatch(/not available/i);
+    await waitFor(() => expect(cardValue('Active Workorders')).toMatch(/not available/i));
+    expect(cardValue('Total Products')).toBe('3');
     expect(cardValue('Deliveries Today (Booked)')).toBe('1');
+  });
+
+  test('a failing delivery load says so on the cards AND the chart (no fake "none")', async () => {
+    global.fetch = mockFetch({ fail: ['delivery'] });
+    renderAs(SUPERADMIN);
+    await waitFor(() => expect(cardValue('Deliveries Today (Booked)')).toMatch(/not available/i));
+    expect(screen.getByText(/deliveries could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No “To Be Booked” deliveries/)).not.toBeInTheDocument();
+    expect(cardValue('Active Workorders')).toBe('2');
+  });
+
+  test('a failing collections load only hides the collection cards', async () => {
+    global.fetch = mockFetch({ fail: ['collections'] });
+    renderAs(TECHNICIAN);
+    await waitFor(() => expect(cardValue('Collections This Week')).toMatch(/not available/i));
+    expect(cardValue('Active Workorders')).toBe('2');
   });
 });

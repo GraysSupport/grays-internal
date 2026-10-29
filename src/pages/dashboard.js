@@ -23,7 +23,7 @@ function BarChart({ data = [], onBarClick }) {
             }
             role={clickable ? 'button' : undefined}
             tabIndex={clickable ? 0 : undefined}
-            title={clickable ? `View ${d.label} “To Be Booked”` : String(d.value)}
+            title={clickable ? `View ${d.label} â€œTo Be Bookedâ€` : String(d.value)}
           >
             <div className="w-16 text-sm text-gray-600">{d.label}</div>
             <div className="flex-1 bg-gray-100 rounded">
@@ -48,7 +48,7 @@ export default function Dashboard() {
   // G17/G19: workshop logins (technician / workshop role / the WK kiosk, by id) see the job and
   // stock numbers but never the waitlist, and their cards don't link to pages they can't open.
   const isWorkshop = currentUserIsWorkshop();
-  // F19 incr 2a: the nav items — and every role gate that decides which ones appear — now live
+  // F19 incr 2a: the nav items â€” and every role gate that decides which ones appear â€” now live
   // in utils/nav.js, because the desktop sidebar and the mobile drawer both render them.
   const navItems = useMemo(() => buildNavItems({ user, roles: getRoles() }), [user]);
   const [navOpen, setNavOpen] = useState(false);
@@ -62,8 +62,9 @@ export default function Dashboard() {
   const [workorders, setWorkorders] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [collections, setCollections] = useState([]);
-  // G19: sources that failed to load — their cards say "Not available" instead of a fake 0.
+  // G19: sources that failed to load â€” their cards say "Not available" instead of a fake 0.
   const [failed, setFailed] = useState(() => new Set());
+  const [loaded, setLoaded] = useState(false);
 
   const navigate = useNavigate();
 
@@ -102,7 +103,7 @@ export default function Dashboard() {
   }, [weekBounds]);
 
   // Lifted out of the sidebar's onClick so the drawer's Logout runs the SAME code, not a copy.
-  // In an installed PWA (F19 incr 1) this is the only way to sign out — there is no URL bar.
+  // In an installed PWA (F19 incr 1) this is the only way to sign out â€” there is no URL bar.
   const handleLogout = useCallback(async () => {
     const u = JSON.parse(localStorage.getItem('user') || 'null');
     if (u) {
@@ -133,15 +134,17 @@ export default function Dashboard() {
   }, [navigate]);
 
   useEffect(() => {
+    let alive = true;
+    let toastId;
     const fetchData = async () => {
       // G19: every source loads on its own, so one refused or failing endpoint only hides its
-      // own cards. Workshop logins (G17) skip the waitlist — it carries every waitlisted
-      // customer's email + phone and the server refuses it — and their workorder / delivery
+      // own cards. Workshop logins (G17) skip the waitlist â€” it carries every waitlisted
+      // customer's email + phone and the server refuses it â€” and their workorder / delivery
       // loads identify the caller so the server redacts money + customer contact.
       const sources = [
         { key: 'products', url: '/api/products', set: setProducts },
         { key: 'waitlist', url: '/api/waitlist', set: setWaitlist, office: true },
-        { key: 'workorder', url: '/api/workorder', set: setWorkorders, identify: true }, // all WOs (we’ll compute active subset)
+        { key: 'workorder', url: '/api/workorder', set: setWorkorders, identify: true }, // all WOs (weâ€™ll compute active subset)
         { key: 'delivery', url: '/api/delivery', set: setDeliveries, identify: true },
         { key: 'collections', url: '/api/collections', set: setCollections },
       ].filter((s) => !(s.office && currentUserIsWorkshop()));
@@ -150,18 +153,25 @@ export default function Dashboard() {
         const res = await fetch(s.url, { method: 'GET', ...(s.identify ? { headers: identityHeaders() } : {}) });
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(data?.error || `${s.key} HTTP ${res.status}`);
-        s.set(ensureArray(data));
+        if (alive) s.set(ensureArray(data));
       };
 
-      const toastId = toast.loading('Fetching dashboard data...');
+      toastId = toast.loading('Fetching dashboard data...');
       const results = await Promise.allSettled(sources.map(loadOne));
+      if (!alive) return;
       const down = sources.filter((_, i) => results[i].status === 'rejected').map((s) => s.key);
       setFailed(new Set(down));
+      setLoaded(true);
       if (down.length) toast.error('Some dashboard numbers could not be loaded.', { id: toastId });
       else toast.success('Data loaded successfully!', { id: toastId });
     };
 
     fetchData();
+    // Leaving the page mid-load: drop the results and don't leave the toast spinning elsewhere.
+    return () => {
+      alive = false;
+      if (toastId) toast.dismiss(toastId);
+    };
   }, []);
 
   if (loading) {
@@ -253,10 +263,16 @@ export default function Dashboard() {
     return d && d.getFullYear() === currentYear;
   }).length;
 
-  // G19: a count from a source that failed to load reads "Not available", never a fake 0.
-  const shown = (source, value) => (failed.has(source) ? 'Not available' : value);
-  // Workshop logins have no Products / Waitlist / ops pages to land on (G17), so no links.
-  const link = (fn) => (isWorkshop ? null : fn);
+  // G19: a count reads "â€¦" while loading and "Not available" if its source failed â€” never a
+  // fake 0.
+  const NOT_AVAILABLE = 'Not available';
+  const shown = (source, value) => (!loaded ? 'â€¦' : failed.has(source) ? NOT_AVAILABLE : value);
+  // Links: workshop logins can't open Products, the Waitlist, the Schedule or To-Be-Booked
+  // (G17 blockWorkshop); they CAN open Current Workorders and Collections â€” except the WK
+  // kiosk, whose ops entry is /workshop.
+  const isKiosk = String(user?.id || '').toUpperCase() === 'WK' || user?.email === 'workshop@graysfitness.com.au';
+  const officeLink = (fn) => (isWorkshop ? null : fn);
+  const opsLink = (fn) => (isKiosk ? null : fn);
 
   const analyticsCard = (label, value, extraClasses = '', onClick = null) => (
     <div
@@ -264,7 +280,13 @@ export default function Dashboard() {
       className={`bg-gray-50 p-4 rounded shadow transition ${onClick ? 'cursor-pointer hover:shadow-md' : ''} ${extraClasses}`}
     >
       <h3 className="font-medium">{label}</h3>
-      <p className="text-2xl font-bold">{value}</p>
+      {value === NOT_AVAILABLE ? (
+        <p className="text-base font-medium text-gray-600">
+          {NOT_AVAILABLE}<span className="sr-only"> â€” this number could not be loaded</span>
+        </p>
+      ) : (
+        <p className="text-2xl font-bold">{value}</p>
+      )}
     </div>
   );
 
@@ -276,7 +298,7 @@ export default function Dashboard() {
         <NavList testId="sidebar-nav" items={navItems} onLogout={handleLogout} className="mt-4 px-4" />
       </aside>
 
-      {/* Mobile drawer — the only navigation below md. Mounted only while open so useDialog
+      {/* Mobile drawer â€” the only navigation below md. Mounted only while open so useDialog
           captures the opener and can restore focus to it (F26 convention). */}
       {navOpen && (
         <MobileNavDrawer items={navItems} onLogout={handleLogout} onClose={closeNav} />
@@ -291,13 +313,13 @@ export default function Dashboard() {
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">
           {/* G19: stock numbers for everyone; the waitlist cards (customer contact) are never
-              shown to workshop logins (technician / workshop / the WK kiosk — G17). */}
+              shown to workshop logins (technician / workshop / the WK kiosk â€” G17). */}
           <div className="bg-white p-6 rounded shadow-md">
             <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {analyticsCard('Total Products', shown('products', totalProducts), '', link(() => navigate('/products')))}
-              {analyticsCard('In Stock', shown('products', inStockCount), 'text-green-700', link(() => navigate('/products?inStock=true')))}
-              {analyticsCard('Out of Stock', shown('products', outOfStockCount), 'text-red-700', link(() => navigate('/products?inStock=false')))}
+              {analyticsCard('Total Products', shown('products', totalProducts), '', officeLink(() => navigate('/products')))}
+              {analyticsCard('In Stock', shown('products', inStockCount), 'text-green-700', officeLink(() => navigate('/products?inStock=true')))}
+              {analyticsCard('Out of Stock', shown('products', outOfStockCount), 'text-red-700', officeLink(() => navigate('/products?inStock=false')))}
               {!isWorkshop && (
                 <>
                   {analyticsCard('Total Waitlist Entries', shown('waitlist', totalWaitlist), '', () => navigate('/waitlist'))}
@@ -317,14 +339,14 @@ export default function Dashboard() {
 
             {/* KPI grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-              {analyticsCard('Active Workorders', shown('workorder', activeWOs.length), '', link(() => navigate('/delivery_operations')))}
-              {analyticsCard('Past Target (Active WOs)', shown('workorder', pastTargetWOs.length), 'text-red-700', link(() => navigate('/delivery_operations/?filter=past-target')))}
-              {analyticsCard('Important Workorders', shown('workorder', importantWOs.length), 'text-purple-700', link(() => navigate('/delivery_operations/?filter=important')))}
-              {analyticsCard('Deliveries Today (Booked)', shown('delivery', deliveriesToday.length), '', link(() => navigate('/delivery_operations/schedule?when=today')))}
-              {analyticsCard('Deliveries This Week (Booked)', shown('delivery', deliveriesThisWeek.length), '', link(() => navigate('/delivery_operations/schedule?when=this-week')))}
-              {analyticsCard('Customer Collect (Booked)', shown('delivery', customerCollectCount), '', link(() => navigate('/delivery_operations/schedule?filter=customer-collect')))}
-              {analyticsCard('Collections This Week', shown('collections', collectionsThisWeek.length), '', link(() => navigate('/delivery_operations/current-collections?when=this-week')))}
-              {analyticsCard('Collections Next Week', shown('collections', collectionsNextWeek.length), '', link(() => navigate('/delivery_operations/current-collections?when=next-week')))}
+              {analyticsCard('Active Workorders', shown('workorder', activeWOs.length), '', opsLink(() => navigate('/delivery_operations')))}
+              {analyticsCard('Past Target (Active WOs)', shown('workorder', pastTargetWOs.length), 'text-red-700', opsLink(() => navigate('/delivery_operations/?filter=past-target')))}
+              {analyticsCard('Important Workorders', shown('workorder', importantWOs.length), 'text-purple-700', opsLink(() => navigate('/delivery_operations/?filter=important')))}
+              {analyticsCard('Deliveries Today (Booked)', shown('delivery', deliveriesToday.length), '', officeLink(() => navigate('/delivery_operations/schedule?when=today')))}
+              {analyticsCard('Deliveries This Week (Booked)', shown('delivery', deliveriesThisWeek.length), '', officeLink(() => navigate('/delivery_operations/schedule?when=this-week')))}
+              {analyticsCard('Customer Collect (Booked)', shown('delivery', customerCollectCount), '', officeLink(() => navigate('/delivery_operations/schedule?filter=customer-collect')))}
+              {analyticsCard('Collections This Week', shown('collections', collectionsThisWeek.length), '', opsLink(() => navigate('/delivery_operations/current-collections?when=this-week')))}
+              {analyticsCard('Collections Next Week', shown('collections', collectionsNextWeek.length), '', opsLink(() => navigate('/delivery_operations/current-collections?when=next-week')))}
               {analyticsCard(`Workorders in ${today.getFullYear()}`, shown('workorder', totalWOsThisYear))}
             </div>
 
@@ -332,7 +354,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-gray-50 rounded p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold">Deliveries “To Be Booked” by State</h3>
+                  <h3 className="font-semibold">Deliveries â€œTo Be Bookedâ€ by State</h3>
                   {!isWorkshop && (
                     <button
                       className="text-xs text-blue-600 hover:underline"
@@ -343,13 +365,17 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {tbbByStateData.length ? (
+                {failed.has('delivery') ? (
+                  <div className="text-sm text-gray-600">Deliveries could not be loaded.</div>
+                ) : !loaded ? (
+                  <div className="text-sm text-gray-600">Loadingâ€¦</div>
+                ) : tbbByStateData.length ? (
                   <BarChart
                     data={tbbByStateData}
                     onBarClick={isWorkshop ? undefined : (state) => navigate(`/delivery_operations/to-be-booked?state=${encodeURIComponent(state)}`)}
                   />
                 ) : (
-                  <div className="text-sm text-gray-500">No “To Be Booked” deliveries.</div>
+                  <div className="text-sm text-gray-500">No â€œTo Be Bookedâ€ deliveries.</div>
                 )}
               </div>
 
