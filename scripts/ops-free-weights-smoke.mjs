@@ -353,6 +353,52 @@ console.log('G21 revision — new free-weight categories (owner, 30 Oct 2026)');
   const pre = makeDb({ missing: true });
   r = await call(pre, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Sandbags' } });
   check('before the migration: adding a category → 503', r.statusCode === 503);
+
+  // Review fixes: someone else added the same KEY between our read and our insert.
+  const race = makeDb();
+  const origQuery = race.query.bind(race);
+  let raced = false;
+  race.query = async (text, params) => {
+    if (/^\s*INSERT INTO free_weight_categories/i.test(text) && !raced) {
+      raced = true;
+      race.db.categories.push({ key: params[0], label: 'Someone else', sort: 1000, builtin: false });
+      throw Object.assign(new Error('duplicate key value violates unique constraint "free_weight_categories_pkey"'), { code: '23505', constraint: 'free_weight_categories_pkey' });
+    }
+    return origQuery(text, params);
+  };
+  r = await call(race, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Sandbags' } });
+  check('a key taken at the same moment → retried with the next key', r.statusCode === 201 && r.body.category.key === 'sandbags-2', JSON.stringify(r.body));
+  const race2 = makeDb();
+  const q2 = race2.query.bind(race2);
+  race2.query = async (text, params) => {
+    if (/^\s*INSERT INTO free_weight_categories/i.test(text)) throw Object.assign(new Error('dup'), { code: '23505', constraint: 'uq_free_weight_categories_label' });
+    return q2(text, params);
+  };
+  r = await call(race2, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Sandbags' } });
+  check('the same NAME added at the same moment → 409', r.statusCode === 409 && /already exists/i.test(r.body.error), JSON.stringify([r.statusCode, r.body]));
+
+  // A database whose categories table is missing still shows its stock.
+  const half = makeDb();
+  const q3 = half.query.bind(half);
+  half.query = async (text, params) => {
+    if (/FROM free_weight_categories/i.test(text)) throw Object.assign(new Error('relation "free_weight_categories" does not exist'), { code: '42P01' });
+    return q3(text, params);
+  };
+  r = await call(half, { as: AS.admin, query: { resource: 'list' } });
+  check('categories table missing → stock still listed, built-in categories', r.statusCode === 200 && r.body.available === true && r.body.categories.length === 7);
+}
+
+console.log('G21 revision — the migration upgrades a database that ran the old 0011');
+{
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync(new URL('../db/migrations/0011_free_weights.sql', import.meta.url), 'utf8');
+  const down = readFileSync(new URL('../db/migrations/0011_free_weights_down.sql', import.meta.url), 'utf8');
+  check('categories table is created before product lines reference it', up.indexOf('CREATE TABLE IF NOT EXISTS free_weight_categories') < up.indexOf('CREATE TABLE IF NOT EXISTS free_weight_products'));
+  check('the old fixed CHECK is dropped if present', /ALTER TABLE free_weight_products DROP CONSTRAINT IF EXISTS free_weight_products_category_check/.test(up));
+  check('the foreign key is added only if missing (idempotent)', /IF NOT EXISTS \(SELECT 1 FROM pg_constraint c JOIN pg_namespace n[\s\S]*?c\.conname = 'free_weight_products_category_fkey' AND n\.nspname = current_schema\(\)\)/.test(up));
+  check('"Other" is listed last', /\('other', 'Other', 9999, true\)/.test(up));
+  check('label length is enforced in the database', /char_length\(label\) BETWEEN 2 AND 40/.test(up));
+  check('down drops product lines before categories', down.indexOf('DROP TABLE IF EXISTS free_weight_products') < down.indexOf('DROP TABLE IF EXISTS free_weight_categories'));
 }
 
 console.log('G21 free weights — before the migration (42P01)');

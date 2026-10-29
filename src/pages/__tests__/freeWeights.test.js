@@ -464,6 +464,7 @@ describe('CSV byte-order mark (regression, 30 Oct 2026)', () => {
     installFetch();
     const parts = [];
     const RealBlob = global.Blob;
+    const { createObjectURL, revokeObjectURL } = global.URL;
     global.Blob = function FakeBlob(p, o) { parts.push(p); return new RealBlob(p, o); };
     global.URL.createObjectURL = jest.fn(() => 'blob:x');
     global.URL.revokeObjectURL = jest.fn();
@@ -477,7 +478,29 @@ describe('CSV byte-order mark (regression, 30 Oct 2026)', () => {
       expect(text.slice(1, 8)).toBe('"Brand"');
     } finally {
       global.Blob = RealBlob;
+      global.URL.createObjectURL = createObjectURL;
+      global.URL.revokeObjectURL = revokeObjectURL;
       click.mockRestore();
     }
+  });
+});
+
+describe('G21 revision — new-category box keyboard behaviour (review)', () => {
+  test('opens with focus in the name box; Escape closes only the box, not the form', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage();
+    await card('Olympic Rubber Weight');
+    fireEvent.click(screen.getByRole('button', { name: '+ Add product line' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Brand'), { target: { value: 'Typed already' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '+ New category' }));
+    const box = within(dialog).getByLabelText('New category name');
+    expect(box).toHaveFocus();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument(); // the product-line form stays open
+    expect(within(dialog).queryByLabelText('New category name')).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Brand')).toHaveValue('Typed already');
+    expect(within(dialog).getByLabelText('Category')).toHaveFocus();
   });
 });

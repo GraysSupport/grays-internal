@@ -192,6 +192,15 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose, categ
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [newCat, setNewCat] = useState({ open: false, label: '', saving: false });
+  const categoryRef = useRef(null);
+  const newCatRef = useRef(null);
+  // The name box takes focus when it opens (it only opens from the user's own click).
+  useEffect(() => { if (newCat.open) newCatRef.current?.focus(); }, [newCat.open]);
+  // Closing the small "new category" box hands focus back to the Category list.
+  const closeNewCat = () => {
+    categoryRef.current?.focus(); // the list is always on screen, so focus can move first
+    setNewCat({ open: false, label: '', saving: false });
+  };
 
   // Adds the category on the server, refreshes the list everywhere, and selects it here.
   const addCategory = async () => {
@@ -201,10 +210,10 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose, categ
     setError(null);
     try {
       const data = await send('/api/free-weights?resource=category', 'POST', { label }, navigate);
-      if (!data) return;
+      if (!data) { setNewCat((c) => ({ ...c, saving: false })); return; }
       onCategoriesChange?.(data.categories);
       setCategory(data.category.key);
-      setNewCat({ open: false, label: '', saving: false });
+      closeNewCat();
     } catch (err) {
       setError(err.message);
       setNewCat((c) => ({ ...c, saving: false }));
@@ -281,7 +290,7 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose, categ
           </label>
           <label className="block text-sm">
             <span className="font-medium">Category</span>
-            <select className={INPUT} value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select ref={categoryRef} className={INPUT} value={category} onChange={(e) => setCategory(e.target.value)}>
               {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
           </label>
@@ -297,15 +306,20 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose, categ
               <label className="text-sm">
                 <span className="block font-medium">New category name</span>
                 <input
+                  ref={newCatRef}
                   className={INPUT}
                   maxLength={40}
                   value={newCat.label}
                   onChange={(e) => setNewCat((c) => ({ ...c, label: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addCategory(); }
+                    // Escape closes only this box — not the whole product-line form.
+                    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeNewCat(); }
+                  }}
                 />
               </label>
-              <button type="button" onClick={addCategory} disabled={newCat.saving || newCat.label.trim().length < 2} className={PRIMARY}>Add category</button>
-              <button type="button" onClick={() => setNewCat({ open: false, label: '', saving: false })} className="rounded bg-gray-200 px-4 py-2 text-gray-900 hover:bg-gray-300">Cancel</button>
+              <button type="button" onClick={addCategory} disabled={newCat.saving || newCat.label.trim().length < 2} className="rounded border border-gray-400 bg-white px-4 py-2 text-gray-900 hover:bg-gray-100 disabled:opacity-50">Add category</button>
+              <button type="button" onClick={closeNewCat} className="rounded bg-gray-200 px-4 py-2 text-gray-900 hover:bg-gray-300">Cancel</button>
             </div>
           )}
         </div>

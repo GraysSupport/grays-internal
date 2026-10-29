@@ -15,7 +15,7 @@
 -- The seven built-ins are seeded; a product line's category must be one of these rows.
 CREATE TABLE IF NOT EXISTS free_weight_categories (
   key         TEXT        PRIMARY KEY,
-  label       TEXT        NOT NULL,
+  label       TEXT        NOT NULL CHECK (char_length(label) BETWEEN 2 AND 40),
   sort        INTEGER     NOT NULL DEFAULT 1000,
   builtin     BOOLEAN     NOT NULL DEFAULT false,
   created_by  VARCHAR(2),
@@ -32,7 +32,7 @@ INSERT INTO free_weight_categories (key, label, sort, builtin) VALUES
   ('kettlebell', 'Kettlebells', 40, true),
   ('bar', 'Bars', 50, true),
   ('collar', 'Collars', 60, true),
-  ('other', 'Other', 70, true)
+  ('other', 'Other', 9999, true)
 ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS free_weight_products (
@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS free_weight_products (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_free_weight_products_brand_name
   ON free_weight_products (lower(brand), lower(name));
+
+-- Upgrade path for a database that ran the earlier 0011 (fixed CHECK list of categories):
+-- swap the CHECK for the foreign key. No-ops on a fresh database.
+ALTER TABLE free_weight_products DROP CONSTRAINT IF EXISTS free_weight_products_category_check;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+                 WHERE c.conname = 'free_weight_products_category_fkey' AND n.nspname = current_schema()) THEN
+    ALTER TABLE free_weight_products
+      ADD CONSTRAINT free_weight_products_category_fkey FOREIGN KEY (category) REFERENCES free_weight_categories(key);
+  END IF;
+END $$;
+UPDATE free_weight_categories SET sort = 9999 WHERE key = 'other' AND sort = 70;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+                 WHERE c.conname = 'free_weight_categories_label_check' AND n.nspname = current_schema()) THEN
+    ALTER TABLE free_weight_categories ADD CONSTRAINT free_weight_categories_label_check CHECK (char_length(label) BETWEEN 2 AND 40);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS free_weight_variants (
   id            SERIAL        PRIMARY KEY,
