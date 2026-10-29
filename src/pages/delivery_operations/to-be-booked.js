@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import DeliveryBoardNotes from '../../components/DeliveryBoardNotes';
+import { DispatchEvidenceButton } from '../../components/DispatchEvidencePanel';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import { blockWorkshop } from '../../components/WorkshopBlocked';
 
@@ -881,7 +882,10 @@ function ToBeBookedDeliveriesPage() {
                     onClick={(e) => { if (!shouldBlockRowNav(e)) goWorkorder(row.workorder_id); }}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id); }}
                   >
-                    <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
+                    <td className="px-3 py-2 text-sm font-mono">
+                      {row.invoice_id || '—'}
+                      {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                    </td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">

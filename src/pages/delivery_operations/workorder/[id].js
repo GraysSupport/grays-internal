@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
+import { WorkorderEvidence } from '../../../components/DispatchEvidencePanel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
 /**
@@ -376,6 +377,15 @@ export default function WorkorderDetailPage() {
         setWo(data);
         setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
       }
+    } catch { /* ignore */ }
+  }, [id]);
+
+  // G18: an evidence upload/delete adds a NOTE_ADDED line — refresh just the Activity Log.
+  const reloadActivity = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/workorder?id=${encodeURIComponent(id)}`, { headers: identityHeaders() });
+      const data = await r.json();
+      if (r.ok) setActivity(data.activity || []);
     } catch { /* ignore */ }
   }, [id]);
 
@@ -809,6 +819,8 @@ export default function WorkorderDetailPage() {
           </h1>
 
           <div className="flex items-center gap-2">
+            {/* G18: dispatch evidence opens in a pop-up (owner, 29 Oct 2026); the folder button shows once dispatched. */}
+            <WorkorderEvidence workorderId={id} invoiceId={wo.invoice_id} onChanged={reloadActivity} />
             {isWorkshop ? (important && <span className="rounded-md border border-amber-300 px-3 py-1 text-sm text-amber-700">★ Important</span>) : (
             <button
               onClick={() => setImportant((v) => !v)}

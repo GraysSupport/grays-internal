@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { DispatchEvidenceButton } from '../../components/DispatchEvidencePanel';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import {
   RUN_ORDER_ROLES, compareStops, sameRun, moveStop, neighbourInRun, runOrderPayload, stopsInRun,
@@ -910,7 +911,10 @@ function DeliverySchedulePage() {
                           ) : <span className="text-gray-600" title="Set a delivery date to order this stop">—</span>}
                         </td>
                       )}
-                      <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
+                      <td className="px-3 py-2 text-sm font-mono">
+                        {row.invoice_id || '—'}
+                        {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                      </td>
                       <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
@@ -983,7 +987,10 @@ function DeliverySchedulePage() {
                       if (e.key === 'Enter' || e.key === ' ') goWorkorder(row.workorder_id);
                     }}
                   >
-                    <td className="px-3 py-2 text-sm font-mono">{row.invoice_id || '—'}</td>
+                    <td className="px-3 py-2 text-sm font-mono">
+                      {row.invoice_id || '—'}
+                      {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                    </td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
