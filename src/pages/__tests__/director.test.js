@@ -227,3 +227,82 @@ describe("Director's View — review fixes", () => {
     await waitFor(() => expect(screen.queryByText(/updating/i)).not.toBeInTheDocument());
   });
 });
+
+// G22b — products sold, earnings and profit.
+const PR = (sku, name, over = {}) => ({ sku, name, brand: 'TEC', units: 2, revenue: 10000, lines: 2, costed_lines: 2, priced_lines: 1, estimated_lines: 1, costed_revenue: 10000, cogs: 2000, gross_profit: 8000, margin: 0.8, ...over });
+const PRODUCTS = {
+  range: { from: '2026-07-01', to: '2026-10-30' },
+  totals: { units: 8, revenue: 75300, costed_revenue: 70000, cogs: 47000, lines: 7, costed_lines: 4, priced_lines: 3, estimated_lines: 4, gross_profit: 23000, margin: 0.3286 },
+  product_count: 4,
+  top_revenue: [PR('A', 'Alpha', { revenue: 50000 }), PR('C', 'Charlie', { gross_profit: null, margin: null, costed_lines: 0 })],
+  bottom_revenue: [PR('C', 'Charlie', { gross_profit: null, margin: null, costed_lines: 0 })],
+  top_profit: [PR('B', 'Bravo', { gross_profit: 18000 })],
+  bottom_profit: [PR('A', 'Alpha', { gross_profit: 5000 })],
+  brands: [{ brand: 'TEC', units: 4, revenue: 70000, lines: 4, costed_lines: 4, gross_profit: 23000 }],
+  conditions: [{ condition: 'CS', units: 10, revenue: 30000, lines: 8 }],
+  by_fy: [{ fy: 2026, units: 1977, revenue: 2813375.5 }],
+  stock: { products: 258, units: 4228, units_costed: 217, value_cost: 106323.54, units_priced: 4228, value_sell: 1602880, negative: 4 },
+  aged: { in_stock: 73, over90: 35, over180: 0, oldest: [{ lot_number: 'L00001', sku: 'A', name: 'Alpha', age_days: 112 }] },
+  cost_missing: { total: 287, items: [{ sku: 'CR-1', name: 'Chamber', brand: 'CR', price: 55900, stock: 3 }] },
+  previous: { mode: 'year', range: { from: '2025-07-01', to: '2025-10-30' }, totals: { revenue: 50200 } },
+};
+function installBoth() {
+  const mock = jest.fn(async (url) => {
+    const u = String(url);
+    const json = u.includes('resource=products') ? PRODUCTS : u.includes('sales-workorders') ? DRILL : SALES;
+    return { ok: true, status: 200, json: async () => json };
+  });
+  global.fetch = mock;
+  return mock;
+}
+const openProducts = async () => {
+  await screen.findByRole('table', { name: /sales team/i });
+  fireEvent.click(screen.getByRole('tab', { name: 'Products & profit' }));
+  const region = await screen.findByRole('region', { name: 'Products & profit' });
+  await within(region).findByRole('table', { name: 'Top 10 products by revenue' }); // figures loaded
+  return region;
+};
+
+describe("Director's View — products & profit (G22b)", () => {
+  test('a second tab loads the products figures with the same period + comparison', async () => {
+    login(['superadmin']);
+    const f = installBoth();
+    renderPage();
+    await openProducts();
+    expect(f.mock.calls.some(([u]) => String(u) === '/api/director?resource=products&from=2026-07-01&to=2026-10-30&compare=year')).toBe(true);
+  });
+
+  test('headline figures with change and coverage', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    expect(within(region).getByText('$75,300')).toBeInTheDocument();
+    expect(within(region).getByText('▲ 50%')).toBeInTheDocument();
+    expect(within(region).getByText(/4 of 7 lines have a cost set/i)).toBeInTheDocument();
+    expect(within(region).getByText(/217 of 4,228 units in stock have a cost/i)).toBeInTheDocument();
+    expect(within(region).getByText(/4 products with negative stock are left out/i)).toBeInTheDocument();
+  });
+
+  test('a product with no cost shows profit as —, never $0', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    const table = within(region).getByRole('table', { name: 'Top 10 products by revenue' });
+    const row = within(table).getByRole('row', { name: /Charlie/ });
+    expect(row).toHaveTextContent('—');
+    expect(row).not.toHaveTextContent('$0');
+  });
+
+  test('clean-up worklist + aged lots + per financial year', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    expect(within(region).getByText(/showing 1 of 287/i)).toBeInTheDocument();
+    expect(within(region).getByRole('table', { name: /price set but cost missing/i })).toHaveTextContent('$55,900');
+    expect(within(region).getByRole('table', { name: /lots in stock over 90 days/i })).toHaveTextContent('112');
+    expect(within(region).getByRole('table', { name: /sold per financial year/i })).toHaveTextContent('FY2026');
+  });
+});

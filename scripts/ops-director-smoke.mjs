@@ -32,6 +32,18 @@ const ROW = (sp, name, over = {}) => ({
   completed_timed: '8', avg_days: '20.0', on_time_eligible: '8', on_time: '6', ecommerce: '7', ...over,
 });
 
+// Product rows (G22b) as pg returns them.
+const P = (sku, name, brand, over = {}) => ({
+  sku, name, brand, units: '2.00', revenue: '10000.00', costed_revenue: '10000.00', cogs: '2000.00',
+  lines: '2', costed_lines: '2', priced_lines: '1', estimated_lines: '1', ...over,
+});
+const PRODUCT_ROWS = [
+  P('A', 'Alpha', 'TEC', { revenue: '50000.00', costed_revenue: '50000.00', cogs: '45000.00' }), // big revenue, thin profit
+  P('B', 'Bravo', 'TEC', { revenue: '20000.00', costed_revenue: '20000.00', cogs: '2000.00' }),
+  P('C', 'Charlie', 'PRE', { revenue: '5000.00', costed_revenue: '0', cogs: '0', costed_lines: '0' }), // no cost known
+  P('OTHER', null, null, { revenue: '300.00', costed_revenue: '0', cogs: '0', costed_lines: '0', priced_lines: '1', estimated_lines: '0', lines: '1' }),
+];
+
 function makeClient({ failOn = null } = {}) {
   const calls = [];
   return {
@@ -41,6 +53,17 @@ function makeClient({ failOn = null } = {}) {
       calls.push({ sql, params });
       if (failOn && failOn.test(sql)) throw Object.assign(new Error('boom'), { code: 'XX000' });
       if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) return { rows: [] };
+      // G22b — products, earnings and profit.
+      if (/GROUP BY lines\.sku/i.test(sql)) {
+        const prev = params[0] === '2024-07-01';
+        return { rows: prev ? [P('A', 'Alpha', 'TEC', { revenue: '1000.00' })] : PRODUCT_ROWS };
+      }
+      if (/AS condition_code/i.test(sql)) return { rows: [{ condition_code: 'CS', units: '10.00', revenue: '30000.00', lines: '8' }, { condition_code: 'New', units: '2.00', revenue: '900.00', lines: '2' }] };
+      if (/AS fy\b/i.test(sql)) return { rows: [{ fy: 2026, units: '1977.00', revenue: '2813375.50' }, { fy: 2027, units: '11.00', revenue: '17950.00' }] };
+      if (/AS value_sell/i.test(sql)) return { rows: [{ products: '258', units: '4228', units_costed: '217', value_cost: '106323.54', units_priced: '4228', value_sell: '1602880.00', negative: '4' }] };
+      if (/AS over90/i.test(sql)) return { rows: [{ in_stock: '73', over90: '35', over180: '0' }] };
+      if (/AS age_days/i.test(sql)) return { rows: [{ lot_number: 'L00001', product_sku: 'A', name: 'Alpha', age_days: 112 }] };
+      if (/AS missing_total/i.test(sql)) return { rows: [{ sku: 'CR-1', name: 'Chamber', brand: 'CR', price: '55900.00', stock: 3, missing_total: '287' }] };
       if (/AS month/i.test(sql)) {
         return { rows: [{ salesperson: 'KM', month: '2025-07', sales: '5000.00' }, { salesperson: 'KM', month: '2025-08', sales: '15000.00' }] };
       }
@@ -179,6 +202,39 @@ console.log('G22a director — review fixes');
   check('no cache header on an error', bad.headers['Cache-Control'] === undefined);
   const una = await call({ calls: [], async query(text) { const sql = text.replace(/\s+/g, ' '); if (/GROUP BY wo\.salesperson/i.test(sql)) return { rows: [ROW(null, null)] }; if (/count\(DISTINCT/i.test(sql)) return { rows: [{ invoices: '9' }] }; return { rows: [] }; } }, { query: FY });
   check('a workorder with no salesperson shows as "Unassigned"', una.body.salespeople[0].salesperson_name === 'Unassigned' && una.body.salespeople[0].salesperson === null);
+}
+
+console.log('G22b director — products, earnings and profit');
+{
+  const PQ = { resource: 'products', from: FY.from, to: FY.to };
+  for (const [label, as] of [['admin', token('GA', ['admin'])], ['WK kiosk', token('WK', ['admin'])], ['no token', null]]) {
+    const c = makeClient();
+    const r = await call(c, { as, query: PQ });
+    check(`products: ${label} refused, no query run`, (r.statusCode === 401 || r.statusCode === 403) && c.calls.length === 0);
+  }
+  const c = makeClient();
+  const r = await call(c, { query: { ...PQ, compare: 'year' } });
+  const b = r.body;
+  check('products → 200', r.statusCode === 200, JSON.stringify(b).slice(0, 200));
+  check('read-only transaction, SELECT/WITH only', /^BEGIN TRANSACTION READ ONLY$/i.test(c.calls[0].sql) && /^COMMIT$/i.test(c.calls.at(-1).sql)
+    && c.calls.slice(1, -1).every((q) => /^(SELECT|WITH)\b/i.test(q.sql)));
+  check('totals: units + revenue', b.totals.units === 8 && b.totals.revenue === 75300);
+  check('profit only over costed lines', b.totals.gross_profit === 23000 && b.totals.costed_lines === 4 && b.totals.lines === 7);
+  check('margin = profit ÷ costed revenue', b.totals.margin === Math.round((23000 / 70000) * 10000) / 10000);
+  check('top by revenue', b.top_revenue.map((p) => p.sku).join() === 'A,B,C,OTHER');
+  check('top by profit ranks profit, not revenue', b.top_profit.map((p) => p.sku).join() === 'B,A');
+  check('a product with no cost has profit null and is left out of the profit ranking', b.top_revenue.find((p) => p.sku === 'C').gross_profit === null && !b.top_profit.some((p) => p.sku === 'C'));
+  check('custom lines are named', b.top_revenue.find((p) => p.sku === 'OTHER').name === 'Custom / misc items');
+  check('brands rolled up, profit null when nothing costed', b.brands[0].brand === 'TEC' && b.brands[0].revenue === 70000 && b.brands.find((x) => x.brand === 'PRE').gross_profit === null);
+  check('condition mix as stored', b.conditions[0].condition === 'CS' && b.conditions[0].revenue === 30000);
+  check('units + revenue per financial year (all time)', b.by_fy.length === 2 && b.by_fy[0].fy === 2026 && b.by_fy[0].revenue === 2813375.5);
+  check('stock value at cost + its coverage', b.stock.value_cost === 106323.54 && b.stock.units === 4228 && b.stock.units_costed === 217 && b.stock.negative === 4);
+  check('aged stock', b.aged.over90 === 35 && b.aged.oldest[0].lot_number === 'L00001' && b.aged.oldest[0].age_days === 112);
+  check('price set but cost missing worklist', b.cost_missing.total === 287 && b.cost_missing.items[0].sku === 'CR-1' && b.cost_missing.items[0].price === 55900);
+  check('compare: previous totals', b.previous.mode === 'year' && b.previous.totals.revenue === 1000 && b.previous.range.from === '2024-07-01');
+  check('cache header on success', r.headers['Cache-Control'] === 'private, max-age=300');
+  const cm = c.calls.find((q) => /AS missing_total/i.test(q.sql));
+  check('worklist uses the period as parameters', cm.params[0] === '2025-07-01' && cm.params[1] === '2026-07-01');
 }
 
 console.log('G22a director — drill-down');
