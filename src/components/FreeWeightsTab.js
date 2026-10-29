@@ -48,18 +48,29 @@ export default function FreeWeightsTab() {
     [data, term, category, lowOnly],
   );
 
+  // Patch the one weight and the totals in place (units, and for superadmin the value at cost
+  // or the "no cost set" count) rather than reloading the whole list.
   const onMoved = (variant) => {
-    setState((s) => ({
-      ...s,
-      data: {
-        ...s.data,
-        products: s.data.products.map((p) => ({
-          ...p,
-          variants: p.variants.map((v) => (v.id === variant.id ? { ...v, stock: variant.stock } : v)),
-        })),
-        totals: { ...s.data.totals, units: s.data.totals.units + (variant.stock - (moving?.variant.stock ?? variant.stock)) },
-      },
-    }));
+    const before = moving?.variant;
+    const delta = variant.stock - (before?.stock ?? variant.stock);
+    setState((s) => {
+      const t = { ...s.data.totals, units: s.data.totals.units + delta };
+      if (s.data.can_see_cost) {
+        if (before?.unit_cost == null) t.units_without_cost = (t.units_without_cost || 0) + delta;
+        else t.value_at_cost = Math.round(((t.value_at_cost || 0) + delta * before.unit_cost) * 100) / 100;
+      }
+      return {
+        ...s,
+        data: {
+          ...s.data,
+          products: s.data.products.map((p) => ({
+            ...p,
+            variants: p.variants.map((v) => (v.id === variant.id ? { ...v, stock: variant.stock } : v)),
+          })),
+          totals: t,
+        },
+      };
+    });
     setMoving(null);
   };
 

@@ -324,9 +324,67 @@ describe('CSV export', () => {
     const created = [];
     global.URL.createObjectURL = jest.fn((blob) => { created.push(blob); return 'blob:x'; });
     global.URL.revokeObjectURL = jest.fn();
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {}); // jsdom cannot navigate
     renderPage();
     await card('Olympic Rubber Weight');
     fireEvent.click(screen.getByRole('button', { name: 'Export free weights CSV' }));
     expect(created).toHaveLength(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+  });
+});
+
+describe('G21 review fixes', () => {
+  test('a typo in an optional number is caught, never sent as blank', async () => {
+    login(['admin']);
+    const f = installFetch();
+    renderPage();
+    await card('Olympic Rubber Weight');
+    fireEvent.click(screen.getByRole('button', { name: '+ Add product line' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Brand'), { target: { value: 'X' } });
+    fireEvent.change(within(dialog).getByLabelText('Product name'), { target: { value: 'Y' } });
+    fireEvent.change(within(dialog).getByLabelText(/^Weight \(kg\)/), { target: { value: '5' } });
+    fireEvent.change(within(dialog).getByLabelText('Price for 5 kg'), { target: { value: '49' } });
+    fireEvent.change(within(dialog).getByLabelText('Opening stock for 5 kg'), { target: { value: '4o' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save product line' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/opening stock for 5 kg/i);
+    expect(f.mock.calls.some(([, o]) => o?.method === 'POST')).toBe(false);
+  });
+
+  test('superadmin: value at cost follows a stock change', async () => {
+    login(['superadmin']);
+    const list = { ...SUPER_LIST, totals: { units: 11, value_at_cost: 100, units_without_cost: 3 } };
+    installFetch({ list: [200, list], move: [200, { variant: { id: 13, stock: 10 } }] }); // 20 kg: 8 → 10 at $9.50
+    renderPage();
+    const c = await card('Olympic Rubber Weight');
+    fireEvent.click(within(c).getByRole('button', { name: /Update stock — .* 20 kg/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Quantity'), { target: { value: '2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save stock change' }));
+    expect(await screen.findByText(/13 units on hand/)).toBeInTheDocument();
+    expect(screen.getByText(/value at cost: \$119/i)).toBeInTheDocument();
+  });
+
+  test('clicking outside the line form does not throw the edits away', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage();
+    await card('Olympic Rubber Weight');
+    fireEvent.click(screen.getByRole('button', { name: '+ Add product line' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(dialog); // the backdrop
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  test('switching tabs keeps other URL settings; the panel is labelled by its tab', async () => {
+    login(['admin']);
+    installFetch();
+    renderPage('/products?inStock=true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Brand New Free Weights' }));
+    expect(screen.getByTestId('where')).toHaveTextContent('inStock=true');
+    expect(screen.getByTestId('where')).toHaveTextContent('tab=free-weights');
+    expect(screen.getByRole('tabpanel', { name: 'Brand New Free Weights' })).toBeInTheDocument();
+    await card('Olympic Rubber Weight'); // let the list load settle
   });
 });

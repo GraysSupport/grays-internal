@@ -22,9 +22,11 @@ function ProductTabs({ active, onSelect }) {
       {TABS.map((t) => (
         <button
           key={t.key}
+          id={`products-tab-${t.key}`}
           type="button"
           role="tab"
           aria-selected={active === t.key}
+          aria-controls={`products-panel-${t.key}`}
           onClick={() => onSelect(t.key)}
           className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${active === t.key ? 'border-[#B50B1D] text-gray-900' : 'border-transparent text-gray-700 hover:text-gray-900'}`}
         >
@@ -46,7 +48,13 @@ export default function ProductsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') === 'free-weights' ? 'free-weights' : 'current';
-  const selectTab = (key) => setSearchParams(key === 'free-weights' ? { tab: 'free-weights' } : {});
+  // Only `tab` changes — anything else in the URL (e.g. ?inStock=) is kept.
+  const selectTab = (key) => setSearchParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (key === 'free-weights') next.set('tab', 'free-weights');
+    else next.delete('tab');
+    return next;
+  });
   const [showModal, setShowModal] = useState(false);
   // "View Lots" (in-stock lot numbers per product) — same roles as the Lot Tracker; the server decides.
   const canViewLots = hasAnyRole(getRoles(), LOT_TRACKER_ROLES);
@@ -183,12 +191,12 @@ export default function ProductsPage() {
       <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
         <ProductTabs active={tab} onSelect={selectTab} />
         {tab === 'free-weights' ? (
-          <>
+          <div role="tabpanel" id="products-panel-free-weights" aria-labelledby="products-tab-free-weights">
             <h2 className="mb-4 text-center text-xl font-bold">Brand New Free Weights</h2>
             <FreeWeightsTab />
-          </>
+          </div>
         ) : (
-        <>
+        <div role="tabpanel" id="products-panel-current" aria-labelledby="products-tab-current">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1 text-center">
             <h2 className="text-xl font-bold">Products</h2>
@@ -294,7 +302,7 @@ export default function ProductsPage() {
             Next
           </button>
         </div>
-        </>
+        </div>
         )}
       </div>
     </>

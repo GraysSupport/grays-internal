@@ -92,6 +92,8 @@ function makeDb({ missing = false } = {}) {
         const existing = db.variants.find((v) => v.product_id === productId && Number(v.weight_kg) === Number(weight));
         if (existing) {
           if (!/ON CONFLICT/i.test(sql)) throw Object.assign(new Error('duplicate weight'), { code: '23505' });
+          // The conflict update is guarded: a weight with stock on hand cannot be retired.
+          if (/WHERE EXCLUDED\.active OR free_weight_variants\.stock = 0/i.test(sql) && !active && existing.stock > 0) return { rows: [] };
           Object.assign(existing, { sku, price: String(price), reorder_level: reorder, active });
           if (canCost) existing.unit_cost = unitCost == null ? null : String(unitCost);
           return { rows: [{ id: existing.id }] };
@@ -269,8 +271,32 @@ console.log('G21 free weights — edit a line');
 
 {
   const upsert = dbc.calls.find((c) => /ON CONFLICT/i.test(c.sql));
-  const setClause = upsert.sql.split(/DO UPDATE SET/i)[1];
+  const setClause = upsert.sql.split(/DO UPDATE SET/i)[1]?.split(/\bWHERE\b/i)[0]; // the guard may READ stock
   check('the edit upsert never SETs stock (SQL text)', setClause && !/\bstock\b/i.test(setClause), setClause);
+}
+
+console.log('G21 free weights — review fixes');
+{
+  const pid = dbc.db.products[0].id;
+  const line = (variants) => ({ brand: 'Trigrip', name: 'Olympic Rubber Weight', category: 'plate', notes: 'Black', active: true, variants });
+  const v25 = dbc.db.variants[1]; // 2.5 kg, 10 on hand
+  let r = await call(dbc, { as: AS.admin, method: 'PUT', query: { resource: 'product', id: String(pid) }, body: line([{ weight_kg: 2.5, price: 32, active: false }]) });
+  check('retiring a weight that still has stock → 409, rolled back', r.statusCode === 409 && /2\.5 kg/.test(r.body.error) && dbc.db.variants[1].active === true && dbc.db.tx.at(-1) === 'ROLLBACK', JSON.stringify(r.body));
+  const v5 = dbc.db.variants.find((v) => v.product_id === pid && v.weight_kg === '5'); // 0 on hand
+  r = await call(dbc, { as: AS.admin, method: 'PUT', query: { resource: 'product', id: String(pid) }, body: line([{ weight_kg: 5, price: 49, active: false }]) });
+  check('retiring an empty weight is fine', r.statusCode === 200 && v5.active === false);
+  check('(2.5 kg untouched)', v25.stock === 10);
+
+  r = await call(dbc, { as: token('IT', ['it-technician']), query: { resource: 'list' } });
+  check('legacy it-technician office login can view', r.statusCode === 200);
+
+  const before = writes(dbc).length;
+  r = await call(dbc, { as: AS.admin, method: 'POST', query: { resource: 'move' }, body: { variant_id: 2 ** 31, qty: 1, reason: 'received' } });
+  check('variant_id beyond int range → 400 (not a 500)', r.statusCode === 400 && writes(dbc).length === before);
+  r = await call(dbc, { as: AS.admin, method: 'PUT', query: { resource: 'product', id: String(2 ** 31) }, body: line([{ weight_kg: 1, price: 1 }]) });
+  check('product id beyond int range → 400', r.statusCode === 400);
+  r = await call(dbc, { as: AS.admin, query: { resource: 'moves', variant_id: String(2 ** 31) } });
+  check('history id beyond int range → 400', r.statusCode === 400);
 }
 
 console.log('G21 free weights — before the migration (42P01)');

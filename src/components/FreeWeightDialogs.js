@@ -15,7 +15,8 @@ import {
 const PRIMARY = 'rounded bg-[#B50B1D] px-4 py-2 text-white hover:bg-[#8f0917] disabled:opacity-50';
 const INPUT = 'w-full rounded border p-2';
 
-function Dialog({ titleId, title, onClose, children, wide = false }) {
+// closeOnBackdrop=false for forms with typing in them: a stray click outside must not lose it.
+function Dialog({ titleId, title, onClose, children, wide = false, closeOnBackdrop = true }) {
   const panelRef = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -40,7 +41,7 @@ function Dialog({ titleId, title, onClose, children, wide = false }) {
     };
   }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={closeOnBackdrop ? onClose : undefined}>
       <div
         ref={panelRef}
         className={`flex max-h-[90vh] w-full ${wide ? 'max-w-4xl' : 'max-w-lg'} flex-col overflow-y-auto rounded-lg bg-white p-6 shadow-2xl`}
@@ -211,6 +212,21 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
       const w = Number(r.weight_kg);
       if (!r.weight_kg.trim() || !Number.isFinite(w) || w <= 0) { setError(`Enter a weight in kg for row ${i + 1}`); return; }
       if (!r.price.trim() || !Number.isFinite(Number(r.price)) || Number(r.price) < 0) { setError(`Enter a price for ${formatKg(w)}`); return; }
+      // Optional numbers: blank is fine, a typo is not (it would otherwise be sent as blank —
+      // silently zero stock, no reorder level, or a stored cost wiped).
+      const checks = [
+        ['reorder_level', `Reorder level for ${formatKg(w)}`, true],
+        ...(editing ? [] : [['stock', `Opening stock for ${formatKg(w)}`, true]]),
+        ...(canSeeCost ? [['unit_cost', `Unit cost for ${formatKg(w)}`, false]] : []),
+      ];
+      for (const [field, label, whole] of checks) {
+        const raw = String(r[field]).trim();
+        const n = Number(raw);
+        if (raw && (!Number.isFinite(n) || n < 0 || (whole && !Number.isInteger(n)))) {
+          setError(`${label} must be ${whole ? 'a whole number' : 'a dollar amount'} (or left blank)`);
+          return;
+        }
+      }
     }
     const variants = used.map((r) => {
       const v = { weight_kg: Number(r.weight_kg), price: Number(r.price), reorder_level: optNum(r.reorder_level), sku: r.sku.trim() || null, active: r.active };
@@ -233,7 +249,7 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
 
   const ladder = LADDERS[category];
   return (
-    <Dialog titleId="fw-line-title" title={editing ? `Edit ${line.brand} ${line.name}` : 'Add product line'} onClose={onClose} wide>
+    <Dialog titleId="fw-line-title" title={editing ? `Edit ${line.brand} ${line.name}` : 'Add product line'} onClose={onClose} wide closeOnBackdrop={false}>
       <form className="mt-4 space-y-3" onSubmit={save}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label className="block text-sm">
