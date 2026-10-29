@@ -72,8 +72,10 @@ export function lastSavedLine(c) {
  */
 export function signOffLine(c) {
   if (!c) return null;
-  if (!c.ok_to_ship || !c.approved_at) return lastSavedLine(c);
-  let line = `OK to ship · signed off by ${who(c.approved_by_name, c.approved_by)} · ${formatWhen(c.approved_at)}`;
+  if (!c.ok_to_ship) return lastSavedLine(c);
+  let line = `OK to ship · signed off by ${who(c.approved_by_name, c.approved_by)}`;
+  if (!c.approved_at) return line;
+  line += ` · ${formatWhen(c.approved_at)}`;
   const signed = new Date(c.approved_at).getTime();
   const updated = new Date(c.updated_at).getTime();
   if (updated - signed > SAME_SAVE_MS) {

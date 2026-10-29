@@ -345,3 +345,16 @@ describe('G20 sign-off line', () => {
     expect(await screen.findByText(/^OK to ship · signed off by Graeme · 27 Oct 2026, 2:21\s?pm · Updated 28 Oct 2026, 3:00\s?pm by Nick$/)).toBeInTheDocument();
   });
 });
+
+describe('G20 sign-off line — odd data (review)', () => {
+  test('OK to ship with no sign-off time still reads "OK to ship", never "Last saved"', () => {
+    const c = { ok_to_ship: true, approved_by: 'GR', approved_by_name: 'Graeme', approved_at: null, updated_by: 'NG', updated_by_name: 'Nick', updated_at: '2026-10-28T04:00:00.000Z' };
+    expect(signOffLine(c)).toBe('OK to ship · signed off by Graeme');
+  });
+
+  test('an unreadable timestamp shows "—" and no "Updated"', () => {
+    const c = { ok_to_ship: true, approved_by: 'GR', approved_by_name: 'Graeme', approved_at: '2026-10-27T03:21:00.000Z', updated_by: 'NG', updated_by_name: 'Nick', updated_at: 'not-a-date' };
+    expect(signOffLine(c)).not.toMatch(/Updated/);
+    expect(signOffLine({ ...c, approved_at: 'garbage' })).toBe('OK to ship · signed off by Graeme · —');
+  });
+});
