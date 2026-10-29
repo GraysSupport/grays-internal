@@ -45,7 +45,9 @@ function BarChart({ data = [], onBarClick }) {
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const isWorkshop = user?.email === 'workshop@graysfitness.com.au';
+  // G17/G19: workshop logins (technician / workshop role / the WK kiosk, by id) see the job and
+  // stock numbers but never the waitlist, and their cards don't link to pages they can't open.
+  const isWorkshop = currentUserIsWorkshop();
   // F19 incr 2a: the nav items — and every role gate that decides which ones appear — now live
   // in utils/nav.js, because the desktop sidebar and the mobile drawer both render them.
   const navItems = useMemo(() => buildNavItems({ user, roles: getRoles() }), [user]);
@@ -60,6 +62,8 @@ export default function Dashboard() {
   const [workorders, setWorkorders] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [collections, setCollections] = useState([]);
+  // G19: sources that failed to load — their cards say "Not available" instead of a fake 0.
+  const [failed, setFailed] = useState(() => new Set());
 
   const navigate = useNavigate();
 
@@ -130,49 +134,31 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchData = async () => {
-      // G17: workshop logins get no analytics, so fetch none of their data (the waitlist alone
-      // carries every waitlisted customer's email + phone, and the server now refuses it).
-      if (currentUserIsWorkshop()) return;
-      const load = Promise.all([
-        fetch('/api/products', { method: 'GET' }),
-        fetch('/api/waitlist', { method: 'GET' }),
-        fetch('/api/workorder', { method: 'GET', headers: identityHeaders() }),      // all WOs (we’ll compute active subset)
-        fetch('/api/delivery', { method: 'GET', headers: identityHeaders() }),
-        fetch('/api/collections', { method: 'GET' }),    // all collections
-      ])
-        .then(async ([productsRes, waitlistRes, woRes, delRes, colRes]) => {
-          const [productsData, waitlistData, woData, delData, colData] = await Promise.all([
-            productsRes.json().catch(() => null),
-            waitlistRes.json().catch(() => null),
-            woRes.json().catch(() => null),
-            delRes.json().catch(() => null),
-            colRes.json().catch(() => null),
-          ]);
+      // G19: every source loads on its own, so one refused or failing endpoint only hides its
+      // own cards. Workshop logins (G17) skip the waitlist — it carries every waitlisted
+      // customer's email + phone and the server refuses it — and their workorder / delivery
+      // loads identify the caller so the server redacts money + customer contact.
+      const sources = [
+        { key: 'products', url: '/api/products', set: setProducts },
+        { key: 'waitlist', url: '/api/waitlist', set: setWaitlist, office: true },
+        { key: 'workorder', url: '/api/workorder', set: setWorkorders, identify: true }, // all WOs (we’ll compute active subset)
+        { key: 'delivery', url: '/api/delivery', set: setDeliveries, identify: true },
+        { key: 'collections', url: '/api/collections', set: setCollections },
+      ].filter((s) => !(s.office && currentUserIsWorkshop()));
 
-          if (!productsRes.ok) throw new Error(productsData?.error || `Products HTTP ${productsRes.status}`);
-          if (!waitlistRes.ok) throw new Error(waitlistData?.error || `Waitlist HTTP ${waitlistRes.status}`);
-          if (!woRes.ok) throw new Error(woData?.error || `Workorder HTTP ${woRes.status}`);
-          if (!delRes.ok) throw new Error(delData?.error || `Delivery HTTP ${delRes.status}`);
-          if (!colRes.ok) throw new Error(colData?.error || `Collections HTTP ${colRes.status}`);
+      const loadOne = async (s) => {
+        const res = await fetch(s.url, { method: 'GET', ...(s.identify ? { headers: identityHeaders() } : {}) });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error || `${s.key} HTTP ${res.status}`);
+        s.set(ensureArray(data));
+      };
 
-          setProducts(ensureArray(productsData));
-          setWaitlist(ensureArray(waitlistData));
-          setWorkorders(ensureArray(woData));
-          setDeliveries(ensureArray(delData));
-          setCollections(ensureArray(colData));
-        });
-
-      await toast.promise(load, {
-        loading: 'Fetching dashboard data...',
-        success: 'Data loaded successfully!',
-        error: 'Failed to load data.',
-      }).catch(() => {
-        setProducts([]);
-        setWaitlist([]);
-        setWorkorders([]);
-        setDeliveries([]);
-        setCollections([]);
-      });
+      const toastId = toast.loading('Fetching dashboard data...');
+      const results = await Promise.allSettled(sources.map(loadOne));
+      const down = sources.filter((_, i) => results[i].status === 'rejected').map((s) => s.key);
+      setFailed(new Set(down));
+      if (down.length) toast.error('Some dashboard numbers could not be loaded.', { id: toastId });
+      else toast.success('Data loaded successfully!', { id: toastId });
     };
 
     fetchData();
@@ -267,6 +253,11 @@ export default function Dashboard() {
     return d && d.getFullYear() === currentYear;
   }).length;
 
+  // G19: a count from a source that failed to load reads "Not available", never a fake 0.
+  const shown = (source, value) => (failed.has(source) ? 'Not available' : value);
+  // Workshop logins have no Products / Waitlist / ops pages to land on (G17), so no links.
+  const link = (fn) => (isWorkshop ? null : fn);
+
   const analyticsCard = (label, value, extraClasses = '', onClick = null) => (
     <div
       onClick={onClick || undefined}
@@ -299,25 +290,26 @@ export default function Dashboard() {
         </header>
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">
-          {/* G17: no analytics for workshop logins (technician / workshop / the WK kiosk). */}
-          {!currentUserIsWorkshop() && (
-            <>
-              <div className="bg-white p-6 rounded shadow-md">
-                <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {analyticsCard('Total Products', totalProducts, '', () => navigate('/products'))}
-                  {analyticsCard('In Stock', inStockCount, 'text-green-700', () => navigate('/products?inStock=true'))}
-                  {analyticsCard('Out of Stock', outOfStockCount, 'text-red-700', () => navigate('/products?inStock=false'))}
-                  {analyticsCard('Total Waitlist Entries', totalWaitlist, '', () => navigate('/waitlist'))}
-                  {analyticsCard('Products Waitlisted', uniqueWaitlistProducts)}
-                  {analyticsCard('Customers Waitlisted', uniqueWaitlistCustomers)}
-                  {analyticsCard('Waitlist in Stock', waitlistWithStock, 'text-green-700', () => navigate('/waitlist?inStock=true'))}
-                  {analyticsCard('Waitlist Coming In', waitlistComingIn, 'text-amber-700')}
-                </div>
-              </div>
-              <br />
-            </>
-          )}
+          {/* G19: stock numbers for everyone; the waitlist cards (customer contact) are never
+              shown to workshop logins (technician / workshop / the WK kiosk — G17). */}
+          <div className="bg-white p-6 rounded shadow-md">
+            <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {analyticsCard('Total Products', shown('products', totalProducts), '', link(() => navigate('/products')))}
+              {analyticsCard('In Stock', shown('products', inStockCount), 'text-green-700', link(() => navigate('/products?inStock=true')))}
+              {analyticsCard('Out of Stock', shown('products', outOfStockCount), 'text-red-700', link(() => navigate('/products?inStock=false')))}
+              {!isWorkshop && (
+                <>
+                  {analyticsCard('Total Waitlist Entries', shown('waitlist', totalWaitlist), '', () => navigate('/waitlist'))}
+                  {analyticsCard('Products Waitlisted', shown('waitlist', uniqueWaitlistProducts))}
+                  {analyticsCard('Customers Waitlisted', shown('waitlist', uniqueWaitlistCustomers))}
+                  {analyticsCard('Waitlist in Stock', shown('waitlist', waitlistWithStock), 'text-green-700', () => navigate('/waitlist?inStock=true'))}
+                  {analyticsCard('Waitlist Coming In', shown('waitlist', waitlistComingIn), 'text-amber-700')}
+                </>
+              )}
+            </div>
+          </div>
+          <br />
 
           {/* Workshop / Ops Analytics */}
           <div className="bg-white p-6 rounded shadow-md">
@@ -325,15 +317,15 @@ export default function Dashboard() {
 
             {/* KPI grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-              {analyticsCard('Active Workorders', activeWOs.length, '', isWorkshop ? null : () => navigate('/delivery_operations'))}
-              {analyticsCard('Past Target (Active WOs)', pastTargetWOs.length, 'text-red-700', isWorkshop ? null : () => navigate('/delivery_operations/?filter=past-target'))}
-              {analyticsCard('Important Workorders', importantWOs.length, 'text-purple-700', isWorkshop ? null : () => navigate('/delivery_operations/?filter=important'))}
-              {analyticsCard('Deliveries Today (Booked)', deliveriesToday.length, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?when=today'))}
-              {analyticsCard('Deliveries This Week (Booked)', deliveriesThisWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?when=this-week'))}
-              {analyticsCard('Customer Collect (Booked)', customerCollectCount, '', isWorkshop ? null : () => navigate('/delivery_operations/schedule?filter=customer-collect'))}
-              {analyticsCard('Collections This Week', collectionsThisWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/current-collections?when=this-week'))}
-              {analyticsCard('Collections Next Week', collectionsNextWeek.length, '', isWorkshop ? null : () => navigate('/delivery_operations/current-collections?when=next-week'))}
-              {analyticsCard(`Workorders in ${today.getFullYear()}`, totalWOsThisYear)}
+              {analyticsCard('Active Workorders', shown('workorder', activeWOs.length), '', link(() => navigate('/delivery_operations')))}
+              {analyticsCard('Past Target (Active WOs)', shown('workorder', pastTargetWOs.length), 'text-red-700', link(() => navigate('/delivery_operations/?filter=past-target')))}
+              {analyticsCard('Important Workorders', shown('workorder', importantWOs.length), 'text-purple-700', link(() => navigate('/delivery_operations/?filter=important')))}
+              {analyticsCard('Deliveries Today (Booked)', shown('delivery', deliveriesToday.length), '', link(() => navigate('/delivery_operations/schedule?when=today')))}
+              {analyticsCard('Deliveries This Week (Booked)', shown('delivery', deliveriesThisWeek.length), '', link(() => navigate('/delivery_operations/schedule?when=this-week')))}
+              {analyticsCard('Customer Collect (Booked)', shown('delivery', customerCollectCount), '', link(() => navigate('/delivery_operations/schedule?filter=customer-collect')))}
+              {analyticsCard('Collections This Week', shown('collections', collectionsThisWeek.length), '', link(() => navigate('/delivery_operations/current-collections?when=this-week')))}
+              {analyticsCard('Collections Next Week', shown('collections', collectionsNextWeek.length), '', link(() => navigate('/delivery_operations/current-collections?when=next-week')))}
+              {analyticsCard(`Workorders in ${today.getFullYear()}`, shown('workorder', totalWOsThisYear))}
             </div>
 
             {/* Chart */}
@@ -366,13 +358,13 @@ export default function Dashboard() {
                 <h3 className="font-semibold mb-2">TL;DR</h3>
                 <ul className="text-sm space-y-1 list-disc list-inside">
                   <li>
-                    <span className="font-medium">Past Target WOs:</span> {pastTargetWOs.length}
+                    <span className="font-medium">Past Target WOs:</span> {shown('workorder', pastTargetWOs.length)}
                   </li>
                   <li>
-                    <span className="font-medium">Important WOs:</span> {importantWOs.length}
+                    <span className="font-medium">Important WOs:</span> {shown('workorder', importantWOs.length)}
                   </li>
                   <li>
-                    <span className="font-medium">To Be Booked Deliveries:</span> {toBeBooked.length}
+                    <span className="font-medium">To Be Booked Deliveries:</span> {shown('delivery', toBeBooked.length)}
                   </li>
                 </ul>
               </div>
