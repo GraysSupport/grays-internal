@@ -1,0 +1,57 @@
+-- 0011_free_weights.sql — G21 (owner, 29 Oct 2026): Brand New Free Weights stock.
+--
+-- A stock list kept completely apart from `product` / lots / workorders / the Woo sync: one row
+-- per product line (e.g. "Trigrip Olympic Rubber Weight"), one row per individual weight with
+-- its own stock count, and an append-only log of every stock change (who / why / when).
+-- `free_weight_variants.stock` is the running total, changed only together with a move row
+-- (lib/freeWeights.js, same transaction, SELECT … FOR UPDATE) and never below zero.
+--
+-- ADDITIVE + IDEMPOTENT. Apply ONLY to the Neon dev/preview branch — never prod (prod is the
+-- owner's call at merge time; lib/freeWeights.js tolerates the tables being absent).
+-- Paired rollback: 0011_free_weights_down.sql.
+-- No FK on the user columns (deleting a user must never fail or wipe history).
+
+CREATE TABLE IF NOT EXISTS free_weight_products (
+  id          SERIAL      PRIMARY KEY,
+  brand       TEXT        NOT NULL,
+  name        TEXT        NOT NULL,
+  category    TEXT        NOT NULL DEFAULT 'other'
+              CHECK (category IN ('plate', 'bumper', 'dumbbell', 'kettlebell', 'bar', 'collar', 'other')),
+  notes       TEXT,
+  active      BOOLEAN     NOT NULL DEFAULT true,
+  created_by  VARCHAR(2),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by  VARCHAR(2),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_free_weight_products_brand_name
+  ON free_weight_products (lower(brand), lower(name));
+
+CREATE TABLE IF NOT EXISTS free_weight_variants (
+  id            SERIAL        PRIMARY KEY,
+  product_id    INTEGER       NOT NULL REFERENCES free_weight_products(id),
+  weight_kg     NUMERIC(6,2)  NOT NULL CHECK (weight_kg > 0),
+  sku           TEXT,
+  stock         INTEGER       NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  price         NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+  unit_cost     NUMERIC(10,2) CHECK (unit_cost >= 0),
+  reorder_level INTEGER       CHECK (reorder_level >= 0),
+  active        BOOLEAN       NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  UNIQUE (product_id, weight_kg)
+);
+
+CREATE TABLE IF NOT EXISTS free_weight_stock_moves (
+  id          SERIAL      PRIMARY KEY,
+  variant_id  INTEGER     NOT NULL REFERENCES free_weight_variants(id),
+  delta       INTEGER     NOT NULL CHECK (delta <> 0),
+  reason      TEXT        NOT NULL CHECK (reason IN ('received', 'sold', 'adjustment', 'damaged', 'returned')),
+  reference   TEXT,
+  note        TEXT,
+  user_id     VARCHAR(2),
+  at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_free_weight_moves_variant ON free_weight_stock_moves (variant_id, at DESC);
