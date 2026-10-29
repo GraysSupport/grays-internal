@@ -4,7 +4,7 @@ import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 import { authHeaders, getRoles, getStoredUser, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { formatWhen } from '../utils/lotTracker';
-import { AUDIO_SUBS, CHECK_ITEMS, canUseTechChecklist, emptyChecks, unansweredItems } from '../utils/techChecklist';
+import { AUDIO_SUBS, CHECK_ITEMS, canUseTechChecklist, emptyChecks, unansweredItems, signOffLine, lastSavedLine } from '../utils/techChecklist';
 
 // G16 (Nick, 19 Oct 2026) — Technician screen & electronics checklist.
 //
@@ -202,7 +202,7 @@ function Checklist({ view, onSaved, request }) {
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-base font-semibold">Screen &amp; electronics checklist</h2>
         {c?.updated_at && (
-          <p className="mt-1 text-xs text-gray-600">Last saved {formatWhen(c.updated_at)} by {c.updated_by_name || c.updated_by}</p>
+          <p className="mt-1 text-xs text-gray-600">{lastSavedLine(c)}</p>
         )}
         <div className="mt-3 divide-y">
           {CHECK_ITEMS.map((item) => {
@@ -288,7 +288,7 @@ function Checklist({ view, onSaved, request }) {
           <p className="mt-1 text-xs text-gray-600">Answer every line (Yes or N/A) to sign off — {missing.length} to go.</p>
         )}
         {c?.ok_to_ship && c.approved_at && (
-          <p className="mt-1 text-sm text-green-800">Signed off by {c.approved_by_name || c.approved_by} · {formatWhen(c.approved_at)}</p>
+          <p className="mt-1 text-sm text-green-800">{signOffLine(c)}</p>
         )}
       </section>
 
