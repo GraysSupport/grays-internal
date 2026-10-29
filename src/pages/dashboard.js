@@ -23,7 +23,7 @@ function BarChart({ data = [], onBarClick }) {
             }
             role={clickable ? 'button' : undefined}
             tabIndex={clickable ? 0 : undefined}
-            title={clickable ? `View ${d.label} â€œTo Be Bookedâ€` : String(d.value)}
+            title={clickable ? `View ${d.label} “To Be Booked”` : String(d.value)}
           >
             <div className="w-16 text-sm text-gray-600">{d.label}</div>
             <div className="flex-1 bg-gray-100 rounded">
@@ -48,7 +48,7 @@ export default function Dashboard() {
   // G17/G19: workshop logins (technician / workshop role / the WK kiosk, by id) see the job and
   // stock numbers but never the waitlist, and their cards don't link to pages they can't open.
   const isWorkshop = currentUserIsWorkshop();
-  // F19 incr 2a: the nav items â€” and every role gate that decides which ones appear â€” now live
+  // F19 incr 2a: the nav items — and every role gate that decides which ones appear — now live
   // in utils/nav.js, because the desktop sidebar and the mobile drawer both render them.
   const navItems = useMemo(() => buildNavItems({ user, roles: getRoles() }), [user]);
   const [navOpen, setNavOpen] = useState(false);
@@ -62,7 +62,7 @@ export default function Dashboard() {
   const [workorders, setWorkorders] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [collections, setCollections] = useState([]);
-  // G19: sources that failed to load â€” their cards say "Not available" instead of a fake 0.
+  // G19: sources that failed to load — their cards say "Not available" instead of a fake 0.
   const [failed, setFailed] = useState(() => new Set());
   const [loaded, setLoaded] = useState(false);
 
@@ -103,7 +103,7 @@ export default function Dashboard() {
   }, [weekBounds]);
 
   // Lifted out of the sidebar's onClick so the drawer's Logout runs the SAME code, not a copy.
-  // In an installed PWA (F19 incr 1) this is the only way to sign out â€” there is no URL bar.
+  // In an installed PWA (F19 incr 1) this is the only way to sign out — there is no URL bar.
   const handleLogout = useCallback(async () => {
     const u = JSON.parse(localStorage.getItem('user') || 'null');
     if (u) {
@@ -138,13 +138,13 @@ export default function Dashboard() {
     let toastId;
     const fetchData = async () => {
       // G19: every source loads on its own, so one refused or failing endpoint only hides its
-      // own cards. Workshop logins (G17) skip the waitlist â€” it carries every waitlisted
-      // customer's email + phone and the server refuses it â€” and their workorder / delivery
+      // own cards. Workshop logins (G17) skip the waitlist — it carries every waitlisted
+      // customer's email + phone and the server refuses it — and their workorder / delivery
       // loads identify the caller so the server redacts money + customer contact.
       const sources = [
         { key: 'products', url: '/api/products', set: setProducts },
         { key: 'waitlist', url: '/api/waitlist', set: setWaitlist, office: true },
-        { key: 'workorder', url: '/api/workorder', set: setWorkorders, identify: true }, // all WOs (weâ€™ll compute active subset)
+        { key: 'workorder', url: '/api/workorder', set: setWorkorders, identify: true }, // all WOs (we’ll compute active subset)
         { key: 'delivery', url: '/api/delivery', set: setDeliveries, identify: true },
         { key: 'collections', url: '/api/collections', set: setCollections },
       ].filter((s) => !(s.office && currentUserIsWorkshop()));
@@ -263,12 +263,12 @@ export default function Dashboard() {
     return d && d.getFullYear() === currentYear;
   }).length;
 
-  // G19: a count reads "â€¦" while loading and "Not available" if its source failed â€” never a
+  // G19: a count reads "…" while loading and "Not available" if its source failed — never a
   // fake 0.
   const NOT_AVAILABLE = 'Not available';
-  const shown = (source, value) => (!loaded ? 'â€¦' : failed.has(source) ? NOT_AVAILABLE : value);
+  const shown = (source, value) => (!loaded ? '…' : failed.has(source) ? NOT_AVAILABLE : value);
   // Links: workshop logins can't open Products, the Waitlist, the Schedule or To-Be-Booked
-  // (G17 blockWorkshop); they CAN open Current Workorders and Collections â€” except the WK
+  // (G17 blockWorkshop); they CAN open Current Workorders and Collections — except the WK
   // kiosk, whose ops entry is /workshop.
   const isKiosk = String(user?.id || '').toUpperCase() === 'WK' || user?.email === 'workshop@graysfitness.com.au';
   const officeLink = (fn) => (isWorkshop ? null : fn);
@@ -282,7 +282,7 @@ export default function Dashboard() {
       <h3 className="font-medium">{label}</h3>
       {value === NOT_AVAILABLE ? (
         <p className="text-base font-medium text-gray-600">
-          {NOT_AVAILABLE}<span className="sr-only"> â€” this number could not be loaded</span>
+          {NOT_AVAILABLE}<span className="sr-only"> — this number could not be loaded</span>
         </p>
       ) : (
         <p className="text-2xl font-bold">{value}</p>
@@ -298,7 +298,7 @@ export default function Dashboard() {
         <NavList testId="sidebar-nav" items={navItems} onLogout={handleLogout} className="mt-4 px-4" />
       </aside>
 
-      {/* Mobile drawer â€” the only navigation below md. Mounted only while open so useDialog
+      {/* Mobile drawer — the only navigation below md. Mounted only while open so useDialog
           captures the opener and can restore focus to it (F26 convention). */}
       {navOpen && (
         <MobileNavDrawer items={navItems} onLogout={handleLogout} onClose={closeNav} />
@@ -313,7 +313,7 @@ export default function Dashboard() {
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">
           {/* G19: stock numbers for everyone; the waitlist cards (customer contact) are never
-              shown to workshop logins (technician / workshop / the WK kiosk â€” G17). */}
+              shown to workshop logins (technician / workshop / the WK kiosk — G17). */}
           <div className="bg-white p-6 rounded shadow-md">
             <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -354,7 +354,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-gray-50 rounded p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold">Deliveries â€œTo Be Bookedâ€ by State</h3>
+                  <h3 className="font-semibold">Deliveries “To Be Booked” by State</h3>
                   {!isWorkshop && (
                     <button
                       className="text-xs text-blue-600 hover:underline"
@@ -368,14 +368,14 @@ export default function Dashboard() {
                 {failed.has('delivery') ? (
                   <div className="text-sm text-gray-600">Deliveries could not be loaded.</div>
                 ) : !loaded ? (
-                  <div className="text-sm text-gray-600">Loadingâ€¦</div>
+                  <div className="text-sm text-gray-600">Loading…</div>
                 ) : tbbByStateData.length ? (
                   <BarChart
                     data={tbbByStateData}
                     onBarClick={isWorkshop ? undefined : (state) => navigate(`/delivery_operations/to-be-booked?state=${encodeURIComponent(state)}`)}
                   />
                 ) : (
-                  <div className="text-sm text-gray-500">No â€œTo Be Bookedâ€ deliveries.</div>
+                  <div className="text-sm text-gray-500">No “To Be Booked” deliveries.</div>
                 )}
               </div>
 
