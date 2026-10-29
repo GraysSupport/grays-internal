@@ -12,12 +12,12 @@ const S = (sp, name, over = {}) => ({
   aov: 2000, gross_profit: 7500, margin: 0.75, delivery_net: -400, on_time_pct: 0.75, ecommerce_share: 0.7, ...over,
 });
 const SALES = {
-  range: { from: '2026-07-01', to: '2027-06-30' },
+  range: { from: '2026-07-01', to: '2026-10-30' },
   salespeople: [S('KM', 'Kelly Munthe'), S('JG', 'John Gray', { sales: 5000, gross_profit: null, margin: null, costed_lines: 0 })],
   totals: S(null, null, { sales: 25000, workorders: 20 }),
   coverage: { lines: 20, priced_lines: 8, estimated_lines: 12, unpriced_lines: 0, costed_lines: 5, workorders: 20, completed: 16, completed_timed: 15, delivery_jobs: 16, jobs_no_cost: 2, ecommerce: 14 },
   monthly: { KM: { '2026-07': 5000, '2026-08': 15000 }, JG: { '2026-08': 5000 } },
-  previous: { range: { from: '2025-07-01', to: '2026-06-30' }, salespeople: [S('KM', 'Kelly Munthe', { sales: 10000 })], totals: S(null, null, { sales: 10000 }), coverage: {} },
+  previous: { mode: 'year', range: { from: '2025-07-01', to: '2025-10-30' }, salespeople: [S('KM', 'Kelly Munthe', { sales: 10000 })], totals: S(null, null, { sales: 10000 }), coverage: {} },
 };
 const DRILL = { range: SALES.range, salesperson: 'KM', workorders: [{ workorder_id: 901, invoice_id: 'INV-901', date_created: '2026-08-01T00:00:00Z', status: 'Completed', outstanding_balance: 0, sales: 1795 }] };
 
@@ -64,7 +64,7 @@ describe("Director's View", () => {
     renderPage();
     await screen.findByRole('table', { name: /sales team/i });
     const [url, opts] = f.mock.calls[0];
-    expect(url).toBe('/api/director?resource=sales&from=2026-07-01&to=2027-06-30&compare=1');
+    expect(url).toBe('/api/director?resource=sales&from=2026-07-01&to=2026-10-30&compare=year');
     expect(opts.headers.Authorization).toMatch(/^Bearer /);
   });
 
@@ -127,7 +127,7 @@ describe("Director's View", () => {
     const list = await screen.findByRole('region', { name: /Kelly Munthe — workorders/ });
     expect(await within(list).findByRole('link', { name: /INV-901/ })).toHaveAttribute('href', '/delivery_operations/workorder/901');
     expect(within(list).getByText('$1,795')).toBeInTheDocument();
-    expect(f.mock.calls.some(([u]) => String(u) === '/api/director?resource=sales-workorders&salesperson=KM&from=2026-07-01&to=2027-06-30')).toBe(true);
+    expect(f.mock.calls.some(([u]) => String(u) === '/api/director?resource=sales-workorders&salesperson=KM&from=2026-07-01&to=2026-10-30')).toBe(true);
   });
 
   test('an expired login goes back to the login page', async () => {
@@ -173,5 +173,57 @@ describe("Dashboard — Director's View button", () => {
     renderDash();
     await screen.findByText(/Dashboard Analytics/);
     expect(screen.queryByRole('button', { name: "Director's View" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Director's View — review fixes", () => {
+  test('the default comparison is the same dates a year earlier, and says so', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    await screen.findByRole('table', { name: /sales team/i });
+    expect(screen.getByText(/same dates a year earlier/i)).toBeInTheDocument();
+  });
+
+  test('a custom range compares with the period just before', async () => {
+    login(['superadmin']);
+    const f = installFetch();
+    renderPage();
+    await screen.findByRole('table', { name: /sales team/i });
+    fireEvent.change(screen.getByLabelText('Period'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-03-31' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+    await waitFor(() => expect(f.mock.calls.at(-1)[0]).toMatch(/from=2026-01-01&to=2026-03-31&compare=1$/));
+  });
+
+  test('workorders with no salesperson show as Unassigned, without a drill-down', async () => {
+    login(['superadmin']);
+    installFetch({ sales: [200, { ...SALES, salespeople: [...SALES.salespeople, S(null, 'Unassigned', { sales: 100 })] }] });
+    renderPage();
+    const table = await screen.findByRole('table', { name: /sales team/i });
+    const row = within(table).getByRole('row', { name: 'Unassigned' });
+    expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  test('unknown delivery charges are disclosed', async () => {
+    login(['superadmin']);
+    installFetch({ sales: [200, { ...SALES, coverage: { ...SALES.coverage, jobs_no_charge: 7 } }] });
+    renderPage();
+    await screen.findByRole('table', { name: /sales team/i });
+    expect(screen.getByText(/7 have no charge entered/i)).toBeInTheDocument();
+  });
+
+  test('while a new period loads, the old figures are marked as updating', async () => {
+    login(['superadmin']);
+    let release;
+    const f = installFetch();
+    renderPage();
+    await screen.findByRole('table', { name: /sales team/i });
+    f.mockImplementationOnce(() => new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => SALES }); }));
+    fireEvent.change(screen.getByLabelText('Period'), { target: { value: 'last12' } });
+    expect(await screen.findByText(/updating/i)).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText(/updating/i)).not.toBeInTheDocument());
   });
 });

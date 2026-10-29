@@ -48,6 +48,7 @@ function makeClient({ failOn = null } = {}) {
         const prev = params[0] === '2024-07-01';
         return { rows: prev ? [ROW('KM', 'Kelly', { sales: '10000.00', workorders: '5' })] : [ROW('KM', 'Kelly'), ROW('JG', 'John', { sales: '5000.00', costed_lines: '0', costed_sales: '0', cogs: '0', on_time_eligible: '0', on_time: '0', completed_timed: '0', avg_days: null })] };
       }
+      if (/count\(DISTINCT w\.invoice_id\)/i.test(sql)) return { rows: [{ invoices: '17' }] }; // 9 + 9 per person, 1 shared
       if (/ORDER BY w\.date_created/i.test(sql)) {
         return { rows: [{ workorder_id: 901, invoice_id: 'INV-901', date_created: '2025-08-01T00:00:00Z', status: 'Completed', outstanding_balance: '0.00', sales: '1795.00' }] };
       }
@@ -153,6 +154,31 @@ console.log('G22a director — the numbers');
   check('cache: private, 5 minutes', r.headers['Cache-Control'] === 'private, max-age=300');
   const noCompare = await call(makeClient(), { query: FY });
   check('no compare → no previous', noCompare.body.previous === null);
+}
+
+console.log('G22a director — review fixes');
+{
+  const { previousYear } = await import('../lib/director.js');
+  check('same dates a year earlier', JSON.stringify(previousYear({ from: '2026-07-01', toExclusive: '2026-10-31' })) === JSON.stringify({ from: '2025-07-01', toExclusive: '2025-10-31' }));
+  check('29 Feb a year earlier → 28 Feb', JSON.stringify(previousYear({ from: '2028-02-29', toExclusive: '2028-03-01' })) === JSON.stringify({ from: '2027-02-28', toExclusive: '2027-03-01' }));
+  let c = makeClient();
+  let r = await call(c, { query: { resource: 'sales', from: '2026-07-01', to: '2026-10-30', compare: 'year' } });
+  const prevQ = c.calls.filter((q) => /GROUP BY wo\.salesperson/i.test(q.sql) && !/AS month/i.test(q.sql))[1];
+  check('compare=year queries the same dates last year', prevQ.params[0] === '2025-07-01' && prevQ.params[1] === '2025-10-31' && r.body.previous.range.to === '2025-10-30');
+  check('compare=year is labelled as such', r.body.previous.mode === 'year');
+  r = await call(makeClient(), { query: { ...FY, compare: '1' } });
+  check('compare=1 is the period immediately before', r.body.previous.mode === 'previous');
+  check('total invoices are distinct across salespeople (not 9 + 9)', r.body.totals.invoices === 17);
+  check('previous total invoices distinct too', r.body.previous.totals.invoices === 17);
+  c = makeClient();
+  await call(c, { query: FY });
+  const sum = c.calls.find((q) => /GROUP BY wo\.salesperson/i.test(q.sql)).sql;
+  check('"free" = charged exactly $0 — an unknown charge is not free', /FILTER \(WHERE d\.delivery_charged = 0\)/i.test(sum) && !/COALESCE\(d\.delivery_charged, 0\) = 0/i.test(sum));
+  check('unknown charges are counted for the coverage line', /jobs_no_charge/i.test(sum) && r.body.coverage.jobs_no_charge !== undefined);
+  const bad = await call(makeClient(), { query: { resource: 'sales', from: 'x', to: 'y' } });
+  check('no cache header on an error', bad.headers['Cache-Control'] === undefined);
+  const una = await call({ calls: [], async query(text) { const sql = text.replace(/\s+/g, ' '); if (/GROUP BY wo\.salesperson/i.test(sql)) return { rows: [ROW(null, null)] }; if (/count\(DISTINCT/i.test(sql)) return { rows: [{ invoices: '9' }] }; return { rows: [] }; } }, { query: FY });
+  check('a workorder with no salesperson shows as "Unassigned"', una.body.salespeople[0].salesperson_name === 'Unassigned' && una.body.salespeople[0].salesperson === null);
 }
 
 console.log('G22a director — drill-down');

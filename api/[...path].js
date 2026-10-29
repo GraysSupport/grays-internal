@@ -288,6 +288,9 @@ async function handleProducts(req, res, subSku) {
 
 /* ---------- DIRECTOR'S VIEW (G22) ---------- */
 async function handleDirectorRoute(req, res) {
+  // Refuse before taking a pooled connection; handleDirector checks again (it is the authority).
+  const gate = requireRoles(req, ['superadmin']);
+  if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
   const client = await getClientWithTimezone();
   try {
     return await handleDirector(req, res, client);

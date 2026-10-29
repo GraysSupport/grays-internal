@@ -44,7 +44,7 @@ function PeriodPicker({ presets, value, onChange }) {
         </select>
       </label>
       {key === 'custom' && (
-        <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (from && to && from <= to) onChange({ key: 'custom', label: 'Custom', from, to }); }}>
+        <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (from && to && from <= to) onChange({ key: 'custom', label: 'Custom', from, to, compare: '1' }); }}>
           <label className="text-sm"><span className="block font-medium">From</span><input type="date" className="rounded border p-2" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
           <label className="text-sm"><span className="block font-medium">To</span><input type="date" className="rounded border p-2" value={to} onChange={(e) => setTo(e.target.value)} /></label>
           <button type="submit" className={PRIMARY} disabled={!from || !to || from > to}>Show</button>
@@ -63,6 +63,7 @@ function Drilldown({ person, range, onClose }) {
       try {
         const qs = new URLSearchParams({ resource: 'sales-workorders', salesperson: person.salesperson, from: range.from, to: range.to });
         const res = await fetch(`/api/director?${qs}`, { headers: authHeaders() });
+        if (cancelled) return;
         if (res.status === 401) { endExpiredSession(navigate); return; }
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Could not load the workorders');
@@ -140,7 +141,7 @@ function SalesTeam({ data, compare, range }) {
         <Coverage>Sales value: {c.priced_lines} of {c.lines} lines use the price on the order; {c.estimated_lines} are estimated from the product list price{c.unpriced_lines ? `; ${c.unpriced_lines} have no price and count as $0` : ''}. Canceled items are excluded.</Coverage>
         <Coverage>Profit: {c.costed_lines} of {c.lines} lines have a cost set — gross profit and margin cover those lines only (an unknown cost is never counted as $0).</Coverage>
         <Coverage>Completion: {c.completed_timed} of {c.completed} completed workorders have a completion record (days to complete and on-time use those). Outstanding is today&apos;s balance on open workorders created in the period.</Coverage>
-        <Coverage>Deliveries: Customer Collect excluded; “free” means charged $0; {c.jobs_no_cost} of {c.delivery_jobs} jobs have no carrier cost entered (counted as $0). Invoices are counted once per salesperson — one invoice number can appear on more than one workorder.</Coverage>
+        <Coverage>Deliveries: Customer Collect excluded; “free” means charged exactly $0; of {c.delivery_jobs} jobs, {c.jobs_no_cost} have no carrier cost entered (counted as $0) and {c.jobs_no_charge ?? 0} have no charge entered (not counted as free). The total invoice count is distinct across the team. Invoices are counted once per salesperson — one invoice number can appear on more than one workorder.</Coverage>
         <Coverage>E-commerce: the flag is set on {c.ecommerce} of {c.workorders} workorders, so it may not be reliable.</Coverage>
       </div>
 
@@ -164,11 +165,13 @@ function SalesTeam({ data, compare, range }) {
           </thead>
           <tbody>
             {data.salespeople.map((s) => (
-              <tr key={s.salesperson} aria-label={s.salesperson_name}>
+              <tr key={s.salesperson ?? 'unassigned'} aria-label={s.salesperson_name}>
                 <th scope="row" className="border px-2 py-1 text-left font-medium">
-                  <button type="button" onClick={() => setOpen(s)} aria-label={`Show workorders for ${s.salesperson_name}`} className="text-left text-blue-700 underline">
-                    {s.salesperson_name}
-                  </button>
+                  {s.salesperson ? (
+                    <button type="button" onClick={() => setOpen(s)} aria-label={`Show workorders for ${s.salesperson_name}`} className="text-left text-blue-700 underline">
+                      {s.salesperson_name}
+                    </button>
+                  ) : s.salesperson_name}
                 </th>
                 {COLS.map(([h, f, withChange]) => (
                   <td key={h} className="border px-2 py-1 text-right whitespace-nowrap">
@@ -191,7 +194,9 @@ function SalesTeam({ data, compare, range }) {
         </table>
       </div>
       {compare && data.previous && (
-        <Coverage>▲/▼ compares sales with {formatWhen(data.previous.range.from, true)} – {formatWhen(data.previous.range.to, true)}.</Coverage>
+        <Coverage>
+          ▲/▼ compares sales with {data.previous.mode === 'year' ? 'the same dates a year earlier' : 'the period just before'}: {formatWhen(data.previous.range.from, true)} – {formatWhen(data.previous.range.to, true)}.
+        </Coverage>
       )}
 
       {open && <Drilldown person={open} range={range} onClose={() => setOpen(null)} />}
@@ -231,7 +236,7 @@ export default function DirectorPage({ now }) {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       const qs = new URLSearchParams({ resource: 'sales', from: period.from, to: period.to });
-      if (compare) qs.set('compare', '1');
+      if (compare) qs.set('compare', period.compare || '1');
       const res = await fetch(`/api/director?${qs}`, { headers: authHeaders() });
       if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await res.json().catch(() => ({}));
@@ -240,7 +245,7 @@ export default function DirectorPage({ now }) {
     } catch (err) {
       if (!signal.cancelled) setState({ loading: false, error: err.message, data: null });
     }
-  }, [period.from, period.to, compare, navigate]);
+  }, [period.from, period.to, period.compare, compare, navigate]);
 
   useEffect(() => {
     if (!isSuperadmin) return undefined;
@@ -273,7 +278,12 @@ export default function DirectorPage({ now }) {
             </p>
             {state.error && <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">{state.error}</p>}
             {state.loading && !state.data && <p className="text-sm text-gray-600">Loading…</p>}
-            {state.data && <SalesTeam data={state.data} compare={compare} range={state.data.range} />}
+            {state.loading && state.data && <p role="status" className="text-sm text-gray-700">Updating…</p>}
+            {state.data && (
+              <div aria-busy={state.loading} className={state.loading ? 'opacity-60' : ''}>
+                <SalesTeam data={state.data} compare={compare} range={state.data.range} />
+              </div>
+            )}
           </div>
         )}
       </div>

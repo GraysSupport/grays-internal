@@ -5,21 +5,21 @@ import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, mo
 describe('director utils', () => {
   test('the Australian financial year is the default preset (1 Jul – 30 Jun)', () => {
     const p = periodPresets(new Date('2026-10-30T03:00:00Z'));
-    expect(p[0]).toMatchObject({ key: 'fy', label: 'This financial year (FY2027)', from: '2026-07-01', to: '2027-06-30' });
-    expect(p.find((x) => x.key === 'prev-fy')).toMatchObject({ from: '2025-07-01', to: '2026-06-30', label: 'Last financial year (FY2026)' });
+    expect(p[0]).toMatchObject({ key: 'fy', label: 'This financial year to date (FY2027)', from: '2026-07-01', to: '2026-10-30', compare: 'year' }); // capped at today: like-for-like
+    expect(p.find((x) => x.key === 'prev-fy')).toMatchObject({ from: '2025-07-01', to: '2026-06-30', label: 'Last financial year (FY2026)', compare: 'year' });
   });
 
   test('before July the FY started the previous calendar year', () => {
     const p = periodPresets(new Date('2026-03-15T03:00:00Z'));
-    expect(p[0]).toMatchObject({ from: '2025-07-01', to: '2026-06-30' });
+    expect(p[0]).toMatchObject({ from: '2025-07-01', to: '2026-03-15' });
   });
 
   test('calendar year, last 12 months and this month (Melbourne date)', () => {
     // 30 Oct 2026, 1 am in Melbourne is still 29 Oct in UTC — the Melbourne date wins.
     const p = periodPresets(new Date('2026-10-29T14:00:00Z'));
-    expect(p.find((x) => x.key === 'calendar')).toMatchObject({ from: '2026-01-01', to: '2026-12-31' });
-    expect(p.find((x) => x.key === 'last12')).toMatchObject({ from: '2025-10-31', to: '2026-10-30' });
-    expect(p.find((x) => x.key === 'month')).toMatchObject({ from: '2026-10-01', to: '2026-10-31' });
+    expect(p.find((x) => x.key === 'calendar')).toMatchObject({ from: '2026-01-01', to: '2026-10-30', compare: 'year' });
+    expect(p.find((x) => x.key === 'last12')).toMatchObject({ from: '2025-10-31', to: '2026-10-30', compare: '1' });
+    expect(p.find((x) => x.key === 'month')).toMatchObject({ from: '2026-10-01', to: '2026-10-30', compare: '1' });
   });
 
   test('money: whole dollars, AUD', () => {

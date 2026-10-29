@@ -5,7 +5,6 @@
 const MELB = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' });
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
-const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
 /** Today's Melbourne date as { y, m, d } (m = 1–12). */
 function melbourneToday(now) {
@@ -13,17 +12,23 @@ function melbourneToday(now) {
   return { y, m, d };
 }
 
-/** The presets for the period picker; the first (current FY) is the default. */
+/**
+ * The presets for the period picker; the first (current FY to date) is the default.
+ * Periods still running end TODAY, so a comparison is like-for-like. `compare` = how the server
+ * picks the comparison: 'year' = the same dates a year earlier (FY / calendar year to date),
+ * '1' = the same-length period immediately before.
+ */
 export function periodPresets(now = new Date()) {
   const { y, m, d } = melbourneToday(now);
+  const today = ymd(y, m, d);
   const fyStart = m >= 7 ? y : y - 1; // FY2027 = 1 Jul 2026 – 30 Jun 2027
   const last12 = new Date(Date.UTC(y - 1, m - 1, d + 1));
   return [
-    { key: 'fy', label: `This financial year (FY${fyStart + 1})`, from: ymd(fyStart, 7, 1), to: ymd(fyStart + 1, 6, 30) },
-    { key: 'prev-fy', label: `Last financial year (FY${fyStart})`, from: ymd(fyStart - 1, 7, 1), to: ymd(fyStart, 6, 30) },
-    { key: 'calendar', label: `Calendar year ${y}`, from: ymd(y, 1, 1), to: ymd(y, 12, 31) },
-    { key: 'last12', label: 'Last 12 months', from: last12.toISOString().slice(0, 10), to: ymd(y, m, d) },
-    { key: 'month', label: 'This month', from: ymd(y, m, 1), to: ymd(y, m, daysInMonth(y, m)) },
+    { key: 'fy', label: `This financial year to date (FY${fyStart + 1})`, from: ymd(fyStart, 7, 1), to: today, compare: 'year' },
+    { key: 'prev-fy', label: `Last financial year (FY${fyStart})`, from: ymd(fyStart - 1, 7, 1), to: ymd(fyStart, 6, 30), compare: 'year' },
+    { key: 'calendar', label: `Calendar year ${y} to date`, from: ymd(y, 1, 1), to: today, compare: 'year' },
+    { key: 'last12', label: 'Last 12 months', from: last12.toISOString().slice(0, 10), to: today, compare: '1' },
+    { key: 'month', label: 'This month to date', from: ymd(y, m, 1), to: today, compare: '1' },
   ];
 }
 
