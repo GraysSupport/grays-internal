@@ -30,7 +30,8 @@ export const LADDERS = {
   kettlebell: [4, 6, 8, 10, 12, 16, 20, 24, 28, 32],
 };
 
-export const categoryLabel = (key) => FREE_WEIGHT_CATEGORIES.find((c) => c.key === key)?.label || 'Other';
+// `categories` = the live list from the server (built-ins + ones staff added); the built-ins are the fallback.
+export const categoryLabel = (key, categories = FREE_WEIGHT_CATEGORIES) => categories.find((c) => c.key === key)?.label || 'Other';
 
 /** "1.25 kg", "20 kg". */
 export function formatKg(w) {
@@ -57,23 +58,23 @@ export function stockStatus(v) {
 
 const liveVariants = (p) => (p.variants || []).filter((v) => v.active !== false);
 
-function searchText(p) {
+function searchText(p, categories) {
   const weights = liveVariants(p).map((v) => {
     const kg = String(Math.round(Number(v.weight_kg) * 100) / 100);
     return `${kg}kg ${kg} ${v.sku || ''}`;
   });
-  return `${p.brand} ${p.name} ${categoryLabel(p.category)} ${weights.join(' ')}`.toLowerCase();
+  return `${p.brand} ${p.name} ${categoryLabel(p.category, categories)} ${weights.join(' ')}`.toLowerCase();
 }
 
 /** Search (every word must match brand / name / category / a weight like "20kg"), category, low stock. */
-export function filterProducts(products, { term = '', category = '', lowOnly = false } = {}) {
+export function filterProducts(products, { term = '', category = '', lowOnly = false, categories = FREE_WEIGHT_CATEGORIES } = {}) {
   // "10 kg" → "10kg" so a weight typed with a space still matches.
   const words = String(term).toLowerCase().replace(/(\d)\s+kg\b/g, '$1kg').split(/\s+/).filter(Boolean);
   return (products || []).filter((p) => {
     if (category && p.category !== category) return false;
     if (lowOnly && !liveVariants(p).some((v) => stockStatus(v) !== 'ok')) return false;
     if (!words.length) return true;
-    const text = searchText(p);
+    const text = searchText(p, categories);
     return words.every((w) => text.includes(w));
   });
 }
@@ -88,13 +89,13 @@ function cell(v) {
 const fixed2 = (v) => (v === null || v === undefined || v === '' ? '' : Number(v).toFixed(2));
 
 /** One CSV row per weight. Unit cost only when the caller may see it; unknown cost stays blank. */
-export function buildCsv(products, { canSeeCost = false } = {}) {
+export function buildCsv(products, { canSeeCost = false, categories = FREE_WEIGHT_CATEGORIES } = {}) {
   const head = ['Brand', 'Product', 'Category', 'Weight (kg)', 'SKU', 'On hand', 'Price (inc GST)', 'Reorder level'];
   if (canSeeCost) head.push('Unit cost');
   const lines = [head.map(cell).join(',')];
   for (const p of products || []) {
     for (const v of liveVariants(p)) {
-      const row = [p.brand, p.name, categoryLabel(p.category), Math.round(Number(v.weight_kg) * 100) / 100, v.sku || '',
+      const row = [p.brand, p.name, categoryLabel(p.category, categories), Math.round(Number(v.weight_kg) * 100) / 100, v.sku || '',
         Number(v.stock) || 0, fixed2(v.price), v.reorder_level ?? ''];
       if (canSeeCost) row.push(fixed2(v.unit_cost));
       lines.push(row.map(cell).join(','));

@@ -39,11 +39,16 @@ const USERS = { GS: 'Nick', GA: 'Vincent', BR: 'Brodie' };
 
 // In-memory free_weight_* tables. `missing: true` = prod before the migration (42P01).
 function makeDb({ missing = false } = {}) {
-  const db = { products: [], variants: [], moves: [], seq: { p: 0, v: 0, m: 0 }, tx: [], locked: [] };
+  // free_weight_categories is seeded with the built-ins by migration 0011.
+  const BUILTIN = [['plate', 'Plates'], ['bumper', 'Bumper plates'], ['dumbbell', 'Dumbbells'], ['kettlebell', 'Kettlebells'], ['bar', 'Bars'], ['collar', 'Collars'], ['other', 'Other']];
+  const db = {
+    products: [], variants: [], moves: [], seq: { p: 0, v: 0, m: 0 }, tx: [], locked: [],
+    categories: BUILTIN.map(([key, label], i) => ({ key, label, sort: (i + 1) * 10, builtin: true })),
+  };
   const calls = [];
   const undefinedTable = () => Object.assign(new Error('relation "free_weight_products" does not exist'), { code: '42P01' });
   let snapshot = null;
-  const clone = () => JSON.parse(JSON.stringify({ products: db.products, variants: db.variants, moves: db.moves, seq: db.seq }));
+  const clone = () => JSON.parse(JSON.stringify({ products: db.products, variants: db.variants, moves: db.moves, seq: db.seq, categories: db.categories }));
   const q = {
     db, calls,
     async query(text, params = []) {
@@ -55,6 +60,20 @@ function makeDb({ missing = false } = {}) {
       if (!/free_weight_/.test(sql)) throw new Error(`unexpected SQL in smoke: ${sql}`);
       if (missing) throw undefinedTable();
 
+      if (/^SELECT .* FROM free_weight_categories WHERE key = \$1/i.test(sql)) {
+        return { rows: db.categories.filter((c) => c.key === params[0]).map((c) => ({ key: c.key })) };
+      }
+      if (/^SELECT .* FROM free_weight_categories/i.test(sql)) {
+        return { rows: [...db.categories].sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label)).map((c) => ({ ...c })) };
+      }
+      if (/^INSERT INTO free_weight_categories/i.test(sql)) {
+        const [key, label, userId] = params;
+        if (db.categories.some((c) => c.key === key || c.label.toLowerCase() === String(label).toLowerCase())) {
+          throw Object.assign(new Error('duplicate key value violates unique constraint "uq_free_weight_categories_label"'), { code: '23505', constraint: 'uq_free_weight_categories_label' });
+        }
+        db.categories.push({ key, label, sort: 1000, builtin: false, created_by: userId });
+        return { rows: [{ key, label }] };
+      }
       if (/^SELECT .* FROM free_weight_products/i.test(sql)) {
         return { rows: db.products.map((p) => ({ ...p })) };
       }
@@ -297,6 +316,43 @@ console.log('G21 free weights — review fixes');
   check('product id beyond int range → 400', r.statusCode === 400);
   r = await call(dbc, { as: AS.admin, query: { resource: 'moves', variant_id: String(2 ** 31) } });
   check('history id beyond int range → 400', r.statusCode === 400);
+}
+
+console.log('G21 revision — new free-weight categories (owner, 30 Oct 2026)');
+{
+  const cdb = makeDb();
+  let r = await call(cdb, { as: AS.admin, query: { resource: 'list' } });
+  check('list carries the categories (built-ins first)', r.body.categories.length === 7 && r.body.categories[0].key === 'plate' && r.body.categories[0].label === 'Plates' && r.body.categories[0].builtin === true);
+  r = await call(cdb, { as: AS.sales, method: 'POST', query: { resource: 'category' }, body: { label: '  Medicine balls ' } });
+  check('an office login adds a category → 201 with a key made from the label', r.statusCode === 201 && r.body.category.key === 'medicine-balls' && r.body.category.label === 'Medicine balls', JSON.stringify(r.body));
+  check('…recorded with who added it', cdb.db.categories.at(-1).created_by === 'BR');
+  check('…and the response carries the full list', r.body.categories.some((c) => c.key === 'medicine-balls' && c.builtin === false));
+  r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'MEDICINE BALLS' } });
+  check('same name again (any case) → 409', r.statusCode === 409 && /already exists/i.test(r.body.error));
+  r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Plates' } });
+  check('a built-in name → 409', r.statusCode === 409);
+  r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Medicine-balls!' } });
+  check('a different label whose key would clash gets a unique key', r.statusCode === 201 && r.body.category.key === 'medicine-balls-2');
+  for (const [body, label] of [[{ label: '' }, 'blank'], [{ label: 'x' }, 'one letter'], [{ label: 'y'.repeat(41) }, 'over 40 characters'], [{ label: '!!!' }, 'no letters or numbers'], [{}, 'missing']]) {
+    const before = cdb.db.categories.length;
+    r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body });
+    check(`category ${label} → 400, nothing added`, r.statusCode === 400 && cdb.db.categories.length === before);
+  }
+  r = await call(cdb, { as: AS.technician, method: 'POST', query: { resource: 'category' }, body: { label: 'Sandbags' } });
+  check('workshop login cannot add a category', r.statusCode === 403);
+  r = await call(cdb, { query: { resource: 'category' }, method: 'POST', body: { label: 'Sandbags' } });
+  check('no token → 401', r.statusCode === 401);
+
+  r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'product' }, body: { brand: 'Grays', name: 'Slam Ball', category: 'medicine-balls', variants: [{ weight_kg: 6, price: 59 }] } });
+  check('a product line can use the new category', r.statusCode === 201 && cdb.db.products.at(-1).category === 'medicine-balls');
+  const before = writes(cdb).length;
+  r = await call(cdb, { as: AS.admin, method: 'POST', query: { resource: 'product' }, body: { brand: 'Grays', name: 'Sandbag', category: 'sandbags', variants: [{ weight_kg: 10, price: 59 }] } });
+  check('a category that does not exist → 400, nothing written', r.statusCode === 400 && /category/i.test(r.body.error) && writes(cdb).length === before, JSON.stringify(r.body));
+  r = await call(cdb, { as: AS.admin, method: 'PUT', query: { resource: 'product', id: String(cdb.db.products.at(-1).id) }, body: { brand: 'Grays', name: 'Slam Ball', category: 'nope', variants: [{ weight_kg: 6, price: 59 }] } });
+  check('editing a line to an unknown category → 400', r.statusCode === 400);
+  const pre = makeDb({ missing: true });
+  r = await call(pre, { as: AS.admin, method: 'POST', query: { resource: 'category' }, body: { label: 'Sandbags' } });
+  check('before the migration: adding a category → 503', r.statusCode === 503);
 }
 
 console.log('G21 free weights — before the migration (42P01)');

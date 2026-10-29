@@ -43,10 +43,13 @@ export default function FreeWeightsTab() {
   useEffect(() => { load(); }, [load]);
 
   const data = state.data;
+  // Built-ins plus any category staff have added (owner revision, 30 Oct 2026).
+  const categories = data?.categories?.length ? data.categories : FREE_WEIGHT_CATEGORIES;
   const shown = useMemo(
-    () => filterProducts((data?.products || []).filter((p) => p.active !== false), { term, category, lowOnly }),
-    [data, term, category, lowOnly],
+    () => filterProducts((data?.products || []).filter((p) => p.active !== false), { term, category, lowOnly, categories }),
+    [data, term, category, lowOnly, categories],
   );
+  const onCategoriesChange = (next) => setState((s) => ({ ...s, data: { ...s.data, categories: next } }));
 
   // Patch the one weight and the totals in place (units, and for superadmin the value at cost
   // or the "no cost set" count) rather than reloading the whole list.
@@ -75,8 +78,8 @@ export default function FreeWeightsTab() {
   };
 
   const exportCsv = () => {
-    const csv = buildCsv(shown, { canSeeCost: !!data?.can_see_cost });
-    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const csv = buildCsv(shown, { canSeeCost: !!data?.can_see_cost, categories });
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -107,6 +110,8 @@ export default function FreeWeightsTab() {
         <FreeWeightLineDialog
           line={editing.line}
           canSeeCost={!!data.can_see_cost}
+          categories={categories}
+          onCategoriesChange={onCategoriesChange}
           onSaved={(next) => { setState({ loading: false, error: null, data: next }); setEditing(null); }}
           onClose={() => setEditing(null)}
         />
@@ -149,7 +154,7 @@ export default function FreeWeightsTab() {
           <span>Category</span>
           <select className="rounded border p-2" value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="">All</option>
-            {FREE_WEIGHT_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
         </label>
         <label className="flex items-center gap-2 text-sm">
@@ -174,7 +179,7 @@ export default function FreeWeightsTab() {
                 <div>
                   <h3 className="text-base font-semibold text-gray-900">{title}</h3>
                   <p className="text-xs text-gray-600">
-                    {categoryLabel(line.category)}
+                    {categoryLabel(line.category, categories)}
                     {(line.category === 'plate' || line.category === 'bumper') && ' · counted each plate, not in pairs'}
                   </p>
                   {line.notes && <p className="mt-1 text-sm text-gray-700">{line.notes}</p>}

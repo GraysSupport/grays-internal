@@ -181,7 +181,7 @@ const fromVariant = (v) => ({
 const rowName = (r, i) => (r.weight_kg.trim() && Number(r.weight_kg) > 0 ? formatKg(r.weight_kg) : `row ${i + 1}`);
 const optNum = (v) => (String(v).trim() === '' ? null : Number(v));
 
-export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
+export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose, categories = FREE_WEIGHT_CATEGORIES, onCategoriesChange }) {
   const navigate = useNavigate();
   const editing = !!line;
   const [brand, setBrand] = useState(line?.brand || '');
@@ -191,6 +191,25 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
   const [rows, setRows] = useState(() => (editing ? line.variants.map(fromVariant) : [blankRow()]));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [newCat, setNewCat] = useState({ open: false, label: '', saving: false });
+
+  // Adds the category on the server, refreshes the list everywhere, and selects it here.
+  const addCategory = async () => {
+    const label = newCat.label.trim();
+    if (label.length < 2 || newCat.saving) return;
+    setNewCat((c) => ({ ...c, saving: true }));
+    setError(null);
+    try {
+      const data = await send('/api/free-weights?resource=category', 'POST', { label }, navigate);
+      if (!data) return;
+      onCategoriesChange?.(data.categories);
+      setCategory(data.category.key);
+      setNewCat({ open: false, label: '', saving: false });
+    } catch (err) {
+      setError(err.message);
+      setNewCat((c) => ({ ...c, saving: false }));
+    }
+  };
 
   const setRow = (key, field, value) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
   const useLadder = () => {
@@ -263,9 +282,32 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
           <label className="block text-sm">
             <span className="font-medium">Category</span>
             <select className={INPUT} value={category} onChange={(e) => setCategory(e.target.value)}>
-              {FREE_WEIGHT_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
           </label>
+        </div>
+        {/* Owner revision, 30 Oct 2026: staff can add their own categories. */}
+        <div>
+          {!newCat.open ? (
+            <button type="button" onClick={() => setNewCat({ open: true, label: '', saving: false })} className="text-sm text-blue-700 underline">
+              + New category
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-sm">
+                <span className="block font-medium">New category name</span>
+                <input
+                  className={INPUT}
+                  maxLength={40}
+                  value={newCat.label}
+                  onChange={(e) => setNewCat((c) => ({ ...c, label: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } }}
+                />
+              </label>
+              <button type="button" onClick={addCategory} disabled={newCat.saving || newCat.label.trim().length < 2} className={PRIMARY}>Add category</button>
+              <button type="button" onClick={() => setNewCat({ open: false, label: '', saving: false })} className="rounded bg-gray-200 px-4 py-2 text-gray-900 hover:bg-gray-300">Cancel</button>
+            </div>
+          )}
         </div>
         <label className="block text-sm">
           <span className="font-medium">Notes (optional)</span>
@@ -276,7 +318,7 @@ export function FreeWeightLineDialog({ line, canSeeCost, onSaved, onClose }) {
           <h3 className="text-sm font-semibold text-gray-900">Weights</h3>
           {ladder && (
             <button type="button" onClick={useLadder} className="text-sm text-blue-700 underline">
-              Use the {categoryLabel(category).toLowerCase()} ladder ({ladder[0]}–{ladder[ladder.length - 1]} kg)
+              Use the {categoryLabel(category, categories).toLowerCase()} ladder ({ladder[0]}–{ladder[ladder.length - 1]} kg)
             </button>
           )}
         </div>

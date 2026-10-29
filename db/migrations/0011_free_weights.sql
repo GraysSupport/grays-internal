@@ -11,12 +11,35 @@
 -- Paired rollback: 0011_free_weights_down.sql.
 -- No FK on the user columns (deleting a user must never fail or wipe history).
 
+-- Categories (owner revision, 30 Oct 2026): staff can add their own ("Medicine balls", …).
+-- The seven built-ins are seeded; a product line's category must be one of these rows.
+CREATE TABLE IF NOT EXISTS free_weight_categories (
+  key         TEXT        PRIMARY KEY,
+  label       TEXT        NOT NULL,
+  sort        INTEGER     NOT NULL DEFAULT 1000,
+  builtin     BOOLEAN     NOT NULL DEFAULT false,
+  created_by  VARCHAR(2),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_free_weight_categories_label
+  ON free_weight_categories (lower(label));
+
+INSERT INTO free_weight_categories (key, label, sort, builtin) VALUES
+  ('plate', 'Plates', 10, true),
+  ('bumper', 'Bumper plates', 20, true),
+  ('dumbbell', 'Dumbbells', 30, true),
+  ('kettlebell', 'Kettlebells', 40, true),
+  ('bar', 'Bars', 50, true),
+  ('collar', 'Collars', 60, true),
+  ('other', 'Other', 70, true)
+ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS free_weight_products (
   id          SERIAL      PRIMARY KEY,
   brand       TEXT        NOT NULL,
   name        TEXT        NOT NULL,
-  category    TEXT        NOT NULL DEFAULT 'other'
-              CHECK (category IN ('plate', 'bumper', 'dumbbell', 'kettlebell', 'bar', 'collar', 'other')),
+  category    TEXT        NOT NULL DEFAULT 'other' REFERENCES free_weight_categories(key),
   notes       TEXT,
   active      BOOLEAN     NOT NULL DEFAULT true,
   created_by  VARCHAR(2),

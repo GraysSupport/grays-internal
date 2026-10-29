@@ -51,6 +51,7 @@ function installFetch(fw = {}) {
     else if (u.includes('resource=moves')) pair = routes.moves;
     else if (u.includes('resource=move')) pair = routes.move;
     else if (u.includes('resource=product')) pair = routes.product;
+    else if (u.includes('resource=category')) pair = routes.category || [500, { error: 'no category route in this test' }];
     if (typeof pair === 'function') pair = pair(JSON.parse(opts.body || 'null'));
     const [status, json] = pair;
     return { ok: status >= 200 && status < 300, status, json: async () => json };
@@ -386,5 +387,97 @@ describe('G21 review fixes', () => {
     expect(screen.getByTestId('where')).toHaveTextContent('tab=free-weights');
     expect(screen.getByRole('tabpanel', { name: 'Brand New Free Weights' })).toBeInTheDocument();
     await card('Olympic Rubber Weight'); // let the list load settle
+  });
+});
+
+describe('G21 revision (owner, 30 Oct 2026) — categories + tabs', () => {
+  const CATS = [
+    { key: 'plate', label: 'Plates', builtin: true }, { key: 'dumbbell', label: 'Dumbbells', builtin: true },
+    { key: 'other', label: 'Other', builtin: true }, { key: 'medicine-balls', label: 'Medicine balls', builtin: false },
+  ];
+  const WITH_CATS = {
+    ...LIST,
+    categories: CATS,
+    products: [...LIST.products, { id: 3, brand: 'Grays', name: 'Slam Ball', category: 'medicine-balls', notes: '', active: true, variants: [{ id: 31, weight_kg: 6, sku: null, stock: 5, price: 59, reorder_level: null, active: true }] }],
+  };
+
+  test('the tabs are centred, clear of the Home / Back buttons', () => {
+    login(['admin']);
+    installFetch({ list: [200, WITH_CATS] });
+    renderPage('/products');
+    expect(screen.getByRole('tablist', { name: 'Products' })).toHaveClass('justify-center');
+  });
+
+  test('a custom category shows on its card and in the filter', async () => {
+    login(['admin']);
+    installFetch({ list: [200, WITH_CATS] });
+    renderPage();
+    const c = await card('Slam Ball');
+    expect(within(c).getByText(/Medicine balls/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'medicine-balls' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+  });
+
+  test('add a new category from the product-line form, then save the line in it', async () => {
+    login(['admin']);
+    const added = { key: 'sandbags', label: 'Sandbags', builtin: false };
+    const f = installFetch({ list: [200, WITH_CATS], category: [201, { category: added, categories: [...CATS, added] }] });
+    renderPage();
+    await card('Olympic Rubber Weight');
+    fireEvent.click(screen.getByRole('button', { name: '+ Add product line' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('option', { name: 'Medicine balls' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '+ New category' }));
+    fireEvent.change(within(dialog).getByLabelText('New category name'), { target: { value: 'Sandbags' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add category' }));
+    await waitFor(() => expect(within(dialog).getByLabelText('Category')).toHaveValue('sandbags'));
+    const post = f.mock.calls.find(([u, o]) => String(u) === '/api/free-weights?resource=category' && o?.method === 'POST');
+    expect(bodyOf(post)).toEqual({ label: 'Sandbags' });
+    fireEvent.change(within(dialog).getByLabelText('Brand'), { target: { value: 'Grays' } });
+    fireEvent.change(within(dialog).getByLabelText('Product name'), { target: { value: 'Sandbag' } });
+    fireEvent.change(within(dialog).getByLabelText(/^Weight \(kg\)/), { target: { value: '10' } });
+    fireEvent.change(within(dialog).getByLabelText('Price for 10 kg'), { target: { value: '59' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save product line' }));
+    await waitFor(() => expect(f.mock.calls.some(([u, o]) => String(u) === '/api/free-weights?resource=product' && o?.method === 'POST')).toBe(true));
+    const save = f.mock.calls.find(([u, o]) => String(u) === '/api/free-weights?resource=product' && o?.method === 'POST');
+    expect(bodyOf(save).category).toBe('sandbags');
+  });
+
+  test('a refused category (already exists) shows why and keeps the form open', async () => {
+    login(['admin']);
+    installFetch({ list: [200, WITH_CATS], category: [409, { error: 'The category "Plates" already exists' }] });
+    renderPage();
+    await card('Olympic Rubber Weight');
+    fireEvent.click(screen.getByRole('button', { name: '+ Add product line' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '+ New category' }));
+    fireEvent.change(within(dialog).getByLabelText('New category name'), { target: { value: 'plates' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add category' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/already exists/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('CSV byte-order mark (regression, 30 Oct 2026)', () => {
+  test('the export starts with a real BOM, then the header — never the text "FEFF"', async () => {
+    login(['admin']);
+    installFetch();
+    const parts = [];
+    const RealBlob = global.Blob;
+    global.Blob = function FakeBlob(p, o) { parts.push(p); return new RealBlob(p, o); };
+    global.URL.createObjectURL = jest.fn(() => 'blob:x');
+    global.URL.revokeObjectURL = jest.fn();
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      renderPage();
+      await card('Olympic Rubber Weight');
+      fireEvent.click(screen.getByRole('button', { name: 'Export free weights CSV' }));
+      const text = parts[0][0];
+      expect(text.charCodeAt(0)).toBe(0xfeff);
+      expect(text.slice(1, 8)).toBe('"Brand"');
+    } finally {
+      global.Blob = RealBlob;
+      click.mockRestore();
+    }
   });
 });

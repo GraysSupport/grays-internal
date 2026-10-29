@@ -18,7 +18,8 @@ const TABS = [
 
 function ProductTabs({ active, onSelect }) {
   return (
-    <div role="tablist" aria-label="Products" className="mb-4 flex gap-1 border-b border-gray-300">
+    // Centred (owner, 30 Oct 2026): left-aligned tabs sat under the fixed Home / Back buttons.
+    <div role="tablist" aria-label="Products" className="mb-4 flex justify-center gap-1 border-b border-gray-300">
       {TABS.map((t) => (
         <button
           key={t.key}
