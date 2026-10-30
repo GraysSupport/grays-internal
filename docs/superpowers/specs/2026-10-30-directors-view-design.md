@@ -67,3 +67,23 @@ Agent decisions (flagged):
 
 ## Out of scope (later phases)
 G22b–d; ex-GST toggle; commission; salesperson self-view.
+
+## G22d — business overview tiles (31 Oct 2026, scheduled run)
+A "Business overview" block at the top of `/director`, above the section tabs, for the chosen
+period (same picker + compare). `GET /api/director?resource=overview&from&to[&compare]` — same
+superadmin gate, read-only transaction, private 5-minute cache.
+- **Period tiles:** sales (vs previous, priced/estimated line coverage); gross profit + margin
+  (costed lines only, labour not included); delivery net margin (comparable jobs only, vs
+  previous); workshop items completed (first "Completed" status log in the period, item still
+  Completed; vs previous) + average days `in_workshop` → completed (only items with a workshop
+  start) + items in the workshop now; on-time completion %; customers (individual / business /
+  not set, new = first-ever workorder in the period — history starts at the oldest workorder);
+  sales by the workorder's delivery state (customers hold no state).
+- **"Today" tiles (snapshots):** open-order pipeline (live lines on `Work Ordered` WOs); money
+  still owed (positive balances on all non-cancelled WOs, and on open ones; credits counted,
+  never netted); stock value at cost (+ Brand New Free Weights at cost, only when its tables
+  exist — checked with `to_regclass` first so the read-only transaction never aborts).
+- A cancelled workorder (G23, migration 0012, not yet on main) is compared as text
+  (`status::text IS DISTINCT FROM 'Cancelled'`), safe before and after that migration.
+- Tiles with a section (sales, products, deliveries) are buttons that open it.
+- No migration. One new component (`DirectorOverview.js`) → contrast pin 75 → 76.

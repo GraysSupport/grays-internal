@@ -26,9 +26,24 @@ function login(roles, id = 'GS') {
   localStorage.setItem('token', `${b64({ alg: 'none' })}.${b64({ id, roles })}.sig`);
   localStorage.setItem('user', JSON.stringify({ id, name: 'Nick', access: roles[0], roles }));
 }
-function installFetch({ sales = [200, SALES], drill = [200, DRILL] } = {}) {
+const OVERVIEW = {
+  range: { from: '2026-07-01', to: '2026-10-30' },
+  sales: { value: 25000, previous: 10000, workorders: 20, lines: 20, priced_lines: 8, estimated_lines: 12, unpriced_lines: 0 },
+  profit: { gross_profit: 7500, margin: 0.75, costed_lines: 5, lines: 20, previous: 5000 },
+  on_time: { pct: 0.75, on_time: 6, eligible: 8, previous: 0.5 },
+  pipeline: { value: 532244, workorders: 43, lines: 60, estimated_lines: 20, unpriced_lines: 1 },
+  owed: { total: 255748, workorders: 26, open_total: 208325, open_workorders: 20, credit_workorders: 0 },
+  deliveries: { net: -8650, jobs_both: 300, jobs: 420, previous: -10000 },
+  workshop: { items_completed: 799, items_timed: 250, avg_days: 10.3, in_workshop_now: 10, previous: 400 },
+  stock: { value_cost: 106324, units: 4228, units_costed: 217, free_weights: { available: true, value_cost: 1795, units: 40, units_costed: 30 } },
+  customers: { total: 524, individual: 347, business: 170, not_set: 7, new: 521, returning: 3, history_from: '2025-05-09' },
+  states: [{ state: 'VIC', workorders: 278, sales: 900000 }, { state: 'NSW', workorders: 145, sales: 450000 }],
+  previous: { mode: 'year', range: { from: '2025-07-01', to: '2025-10-30' } },
+};
+function installFetch({ sales = [200, SALES], drill = [200, DRILL], overview = [200, OVERVIEW] } = {}) {
   const mock = jest.fn(async (url) => {
-    const [status, json] = String(url).includes('resource=sales-workorders') ? drill : sales;
+    const u = String(url);
+    const [status, json] = u.includes('resource=sales-workorders') ? drill : u.includes('resource=overview') ? overview : sales;
     return { ok: status >= 200 && status < 300, status, json: async () => json };
   });
   global.fetch = mock;
@@ -63,7 +78,7 @@ describe("Director's View", () => {
     const f = installFetch();
     renderPage();
     await screen.findByRole('table', { name: /sales team/i });
-    const [url, opts] = f.mock.calls[0];
+    const [url, opts] = f.mock.calls.find(([u]) => String(u).includes('resource=sales&'));
     expect(url).toBe('/api/director?resource=sales&from=2026-07-01&to=2026-10-30&compare=year');
     expect(opts.headers.Authorization).toMatch(/^Bearer /);
   });
@@ -477,5 +492,138 @@ describe("Director's View — owner answers (30 Oct 2026)", () => {
     expect(within(region).getByText('Gross margin 33%')).toBeInTheDocument();
     expect(within(region).getByText(/lot's cost where recorded, otherwise the product average cost — refurbishment labour is not included/i)).toBeInTheDocument(); // Products coverage
     expect(within(region).getByText(/Cancelled items are excluded/)).toBeInTheDocument();
+  });
+});
+
+describe("Director's View — business overview (G22d)", () => {
+  const overview = async () => { await screen.findByRole('button', { name: /^sales this period/i }); return screen.getByRole('region', { name: /business overview/i }); };
+
+  test('loads the overview for the same period and comparison', async () => {
+    login(['superadmin']);
+    const f = installFetch();
+    renderPage();
+    await overview();
+    expect(f.mock.calls.some(([u]) => String(u) === '/api/director?resource=overview&from=2026-07-01&to=2026-10-30&compare=year')).toBe(true);
+  });
+
+  test('headline tiles with whole-dollar money and change vs the previous period', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    const sales = within(region).getByRole('button', { name: /^sales this period/i });
+    expect(sales).toHaveTextContent('$25,000');
+    expect(sales).toHaveTextContent('▲ 150%');
+    expect(within(region).getByRole('button', { name: /^gross profit/i })).toHaveTextContent('$7,500');
+    expect(within(region).getByText('$532,244')).toBeInTheDocument(); // open orders (today)
+    expect(within(region).getByText('$255,748')).toBeInTheDocument(); // money still owed (today)
+    expect(within(region).getByRole('button', { name: /^delivery net margin/i })).toHaveTextContent('−$8,650');
+    expect(within(region).getByText('799')).toBeInTheDocument();
+    expect(within(region).getByText('$106,324')).toBeInTheDocument();
+  });
+
+  test('every tile says what share of the data it rests on', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/8 of 20 lines priced on the order/i)).toBeInTheDocument();
+    expect(within(region).getByText(/75% gross margin on 5 of 20 lines with a cost/i)).toBeInTheDocument();
+    expect(within(region).getByText(/300 of 420 jobs have both a cost and a charge/i)).toBeInTheDocument();
+    expect(within(region).getByText(/217 of 4,228 units have a cost/i)).toBeInTheDocument();
+    expect(within(region).getByText(/250 of 799 items have a workshop start/i)).toBeInTheDocument();
+    expect(within(region).getByText(/history starts 9 May 2025/i)).toBeInTheDocument();
+    expect(within(region).getByText(/Brand New Free Weights: \$1,795 at cost/i)).toBeInTheDocument();
+  });
+
+  test('customer mix, new vs returning, sales by state', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/347 individual · 170 business · 7 not set/i)).toBeInTheDocument();
+    expect(within(region).getByText(/521 new · 3 returning/i)).toBeInTheDocument();
+    const states = within(region).getByRole('list', { name: /sales by delivery state/i });
+    expect(states).toHaveTextContent('VIC');
+    expect(states).toHaveTextContent('$900,000');
+  });
+
+  test('a tile opens its section', async () => {
+    login(['superadmin']);
+    const f = installFetch();
+    renderPage();
+    const region = await overview();
+    fireEvent.click(within(region).getByRole('button', { name: /^delivery net margin/i }));
+    expect(screen.getByRole('tab', { name: /deliveries/i })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(f.mock.calls.some(([u]) => String(u).includes('resource=deliveries'))).toBe(true));
+  });
+
+  test('unknown profit shows —, never $0; free weights not set up says so', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { ...OVERVIEW, profit: { ...OVERVIEW.profit, gross_profit: null, margin: null, costed_lines: 0 }, stock: { ...OVERVIEW.stock, free_weights: { available: false } } }] });
+    renderPage();
+    const region = await overview();
+    const gp = within(region).getByRole('button', { name: /^gross profit/i });
+    expect(gp).toHaveTextContent('—');
+    expect(gp).not.toHaveTextContent('$0');
+    expect(within(region).queryByText(/Brand New Free Weights/i)).not.toBeInTheDocument();
+  });
+
+  test('an overview failure is shown and the sections still work', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [500, { error: 'Server error' }] });
+    renderPage();
+    expect(await screen.findByText(/could not load the overview/i)).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: /sales team/i })).toBeInTheDocument();
+  });
+});
+
+describe("Director's View — overview review fixes (G22d)", () => {
+  const overview = async () => { await screen.findByRole('button', { name: /^sales this period/i }); return screen.getByRole('region', { name: /business overview/i }); };
+
+  test('lines with no price are named, not hidden as "estimated"', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { ...OVERVIEW, sales: { ...OVERVIEW.sales, estimated_lines: 9, unpriced_lines: 3 } }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/9 estimated from the list price, 3 with no price \(counted as \$0\)/i)).toBeInTheDocument();
+  });
+
+  test('"today" tiles do not open a period section', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    expect(within(region).queryByRole('button', { name: /^open orders/i })).not.toBeInTheDocument();
+    expect(within(region).queryByRole('button', { name: /^money still owed/i })).not.toBeInTheDocument();
+    expect(within(region).getByText('$255,748')).toBeInTheDocument();
+  });
+
+  test('tile buttons are named by their label, the note describes them', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    const b = within(region).getByRole('button', { name: 'Sales this period' });
+    expect(b).toHaveAccessibleDescription(/lines priced on the order/i);
+    expect(b.querySelector('div')).toBeNull();
+  });
+
+  test('no workshop start yet → "no average yet"; deliveries go by delivery date', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { ...OVERVIEW, workshop: { ...OVERVIEW.workshop, avg_days: null, items_timed: 0 } }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/no average yet/i)).toBeInTheDocument();
+    expect(within(region).getByText(/deliveries by the delivery date/i)).toBeInTheDocument();
+  });
+
+  test('a partial overview response does not crash the page', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { range: OVERVIEW.range, sales: OVERVIEW.sales, previous: null }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByRole('button', { name: 'Sales this period' })).toHaveTextContent('$25,000');
+    expect(await screen.findByRole('table', { name: /sales team/i })).toBeInTheDocument();
   });
 });
