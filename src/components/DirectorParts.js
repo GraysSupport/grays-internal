@@ -13,13 +13,19 @@ export function Coverage({ children }) {
   return <p role="note" className="text-xs text-gray-700">{children}</p>;
 }
 
-/** A headline figure. */
-export function Tile({ label, value, badge, note }) {
-  return (
-    <div className="rounded-lg border bg-gray-50 p-3">
+/** A headline figure. With `onOpen` the whole tile is a button (G22d: opens its section). */
+export function Tile({ label, value, badge, note, onOpen }) {
+  const body = (
+    <>
       <div className="text-xs font-medium text-gray-700">{label}</div>
       <div className="text-lg font-bold text-gray-900"><span>{value}</span><Change badge={badge} /></div>
       {note && <div className="text-xs text-gray-700">{note}</div>}
-    </div>
+    </>
+  );
+  if (!onOpen) return <div className="rounded-lg border bg-gray-50 p-3">{body}</div>;
+  return (
+    <button type="button" onClick={onOpen} className="rounded-lg border bg-gray-50 p-3 text-left hover:border-[#B50B1D] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#B50B1D]">
+      {body}
+    </button>
   );
 }
