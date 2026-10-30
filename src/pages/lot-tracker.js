@@ -6,7 +6,7 @@ import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { LOT_TRACKER_ROLES, looksLikeLotNumber, formatWhen } from '../utils/lotTracker';
 import { currentUserIsWorkshop } from '../utils/workshopAccess';
-import { AUDIO_SUBS, CHECK_ITEMS } from '../utils/techChecklist';
+import { AUDIO_SUBS, CHECK_ITEMS, signOffLine, lastSavedLine } from '../utils/techChecklist';
 
 // G11 (Nick, 1 Oct 2026) — Lot Tracker.
 //
@@ -61,9 +61,7 @@ function ChecklistSection({ checklist }) {
       ) : (
         <>
           <p className={`mt-2 text-sm font-medium ${checklist.ok_to_ship ? 'text-green-800' : 'text-gray-700'}`}>
-            {checklist.ok_to_ship
-              ? `OK to ship · signed off by ${checklist.approved_by_name || checklist.approved_by} · ${formatWhen(checklist.approved_at)}`
-              : 'Not signed off yet'}
+            {checklist.ok_to_ship ? signOffLine(checklist) : 'Not signed off yet'}
           </p>
           <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Base S/N">{checklist.base_serial && <span className="font-mono">{checklist.base_serial}</span>}</Field>
@@ -87,7 +85,7 @@ function ChecklistSection({ checklist }) {
             })}
           </ul>
           {checklist.comments && <p className="mt-3 whitespace-pre-wrap text-sm text-gray-800">{checklist.comments}</p>}
-          <p className="mt-3 text-xs text-gray-600">Last saved {formatWhen(checklist.updated_at)} by {checklist.updated_by_name || checklist.updated_by}</p>
+          {checklist.updated_at && <p className="mt-3 text-xs text-gray-600">{lastSavedLine(checklist)}</p>}
         </>
       )}
     </section>
