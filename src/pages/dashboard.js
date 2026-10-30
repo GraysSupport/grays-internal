@@ -202,8 +202,8 @@ export default function Dashboard() {
   const allDeliveries = Array.isArray(deliveries) ? deliveries : [];
   const allCollections = Array.isArray(collections) ? collections : [];
 
-  // Active workorders (not Completed)
-  const activeWOs = allWOs.filter((wo) => String(wo?.status) !== 'Completed');
+  // Active workorders (not Completed, not Cancelled)
+  const activeWOs = allWOs.filter((wo) => !['Completed', 'Cancelled'].includes(String(wo?.status)));
 
   // Past target date (estimated_completion < today)
   const pastTargetWOs = activeWOs.filter((wo) => {

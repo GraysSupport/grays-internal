@@ -32,6 +32,8 @@ export default function CompletedOperationsPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  // G23: the same list for cancelled workorders (owner, 30 Oct 2026).
+  const [show, setShow] = useState('Completed');
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
   // G17: workshop logins (technician / workshop / WK) get no balances.
@@ -45,13 +47,14 @@ export default function CompletedOperationsPage() {
     }
     let mounted = true;
     const load = async () => {
-      toast.loading('Loading completed operations...', { id: 'ops-load' });
+      setLoading(true);
+      toast.loading(`Loading ${show.toLowerCase()} operations...`, { id: 'ops-load' });
       try {
-        const res = await fetch('/api/workorder?status=Completed', { headers: identityHeaders() });
+        const res = await fetch(`/api/workorder?status=${show}`, { headers: identityHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || 'Failed to load');
         if (mounted) setRows(data || []);
-        toast.success('Completed operations loaded', { id: 'ops-load' });
+        toast.success(`${show} operations loaded`, { id: 'ops-load' });
       } catch (e) {
         toast.error(e.message || 'Failed to load', { id: 'ops-load' });
       } finally {
@@ -60,7 +63,7 @@ export default function CompletedOperationsPage() {
     };
     load();
     return () => { mounted = false; };
-  }, [navigate]);
+  }, [navigate, show]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -114,12 +117,18 @@ export default function CompletedOperationsPage() {
                 />
               </div>
               <div className="hidden sm:flex justify-center">
-                <h2 className="text-lg font-semibold">Operations Completed</h2>
+                <h2 className="text-lg font-semibold">Operations {show}</h2>
               </div>
               <div className="sm:hidden">
-                <h2 className="text-lg font-semibold text-center">Operations Completed</h2>
+                <h2 className="text-lg font-semibold text-center">Operations {show}</h2>
               </div>
-              <div />
+              <label className="flex items-center gap-2 text-sm sm:justify-self-end">
+                <span>Show</span>
+                <select aria-label="Show completed or cancelled" className="rounded-lg border px-3 py-2" value={show} onChange={(e) => { setShow(e.target.value); setPage(1); }}>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </label>
             </div>
 
             <div className="overflow-x-auto">

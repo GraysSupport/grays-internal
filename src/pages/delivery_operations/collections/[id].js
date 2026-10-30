@@ -627,7 +627,7 @@ export default function CollectionDetailPage() {
                         <td className="px-3 py-2">{l.product_name || '—'}</td>
                         <td className="px-3 py-2">
                           <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
-                            l.status === 'Sold' ? 'bg-green-100 text-green-800'
+                            l.status === 'Written Off' ? 'bg-red-100 text-red-800'
                             : l.status === 'Assigned' ? 'bg-blue-100 text-blue-800'
                             : l.status === 'Void' ? 'bg-gray-200 text-gray-700'
                             : 'bg-amber-100 text-amber-800'}`}>
