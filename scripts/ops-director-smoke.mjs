@@ -44,6 +44,25 @@ const PRODUCT_ROWS = [
   P('OTHER', null, null, { revenue: '300.00', costed_revenue: '0', cogs: '0', costed_lines: '0', priced_lines: '1', estimated_lines: '0', lines: '1' }),
 ];
 
+// Delivery rows (G22c) as pg returns them.
+const R = (id, name, over = {}) => ({
+  removalist_id: id, removalist: name, jobs: '10', jobs_with_cost: '8', jobs_both: '8', carrier_cost: '4000.00', charged: '3500.00',
+  both_cost: '4000.00', both_charged: '3200.00', avg_cost: '500.00', median_cost: '450.00', loss_jobs: '5', loss_amount: '900.00',
+  free_jobs: '2', free_jobs_with_cost: '2', free_cost: '700.00', under_target_jobs: '7', target: '4800.00', cash_jobs: '0', install_jobs: '0', install_cost: '0', ...over,
+});
+const REMOVALIST_ROWS = [R(1, 'Moving Soon'), R(14, 'DTL Logistics', { both_cost: '2000.00', both_charged: '2600.00', loss_jobs: '0', loss_amount: '0', target: '2400.00' }), R(null, null, { jobs: '2', jobs_both: '0', both_cost: '0', both_charged: '0', target: '0', free_jobs_with_cost: '0' })];
+const STATE_ROWS = [
+  { state: 'ACT', jobs: '13', single_jobs: '9', single_avg_cost: '524.10', both_cost: '100', both_charged: '90', jobs_both: '3' },
+  { state: 'TAS', jobs: '12', single_jobs: '4', single_avg_cost: '687.50', both_cost: '100', both_charged: '90', jobs_both: '2' },
+  { state: 'NT', jobs: '2', single_jobs: '1', single_avg_cost: '2000.00', both_cost: '0', both_charged: '0', jobs_both: '0' },
+  { state: 'VIC', jobs: '262', single_jobs: '91', single_avg_cost: '279.78', both_cost: '100', both_charged: '90', jobs_both: '50' },
+];
+const LIKE_ROWS = [
+  { state: 'NSW', removalist_id: 14, removalist: 'DTL Logistics', like_jobs: '30', avg_cost: '750.00', median_cost: '700.00' },
+  { state: 'NSW', removalist_id: 1, removalist: 'Moving Soon', like_jobs: '5', avg_cost: '600.00', median_cost: '590.00' },
+  { state: 'WA', removalist_id: 9, removalist: 'Solo', like_jobs: '14', avg_cost: '656.43', median_cost: '650.00' },
+];
+
 function makeClient({ failOn = null } = {}) {
   const calls = [];
   return {
@@ -53,6 +72,15 @@ function makeClient({ failOn = null } = {}) {
       calls.push({ sql, params });
       if (failOn && failOn.test(sql)) throw Object.assign(new Error('boom'), { code: 'XX000' });
       if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) return { rows: [] };
+      // G22c — deliveries & removalists (CTE "dj").
+      if (/FROM dj/i.test(sql)) {
+        const prev = params[0] === '2024-07-01';
+        if (/AS loss_amount/i.test(sql)) return { rows: prev ? [R(1, 'Moving Soon', { both_cost: '1000.00', both_charged: '900.00' })] : REMOVALIST_ROWS };
+        if (/AS single_avg_cost/i.test(sql)) return { rows: STATE_ROWS };
+        if (/AS like_jobs/i.test(sql)) return { rows: LIKE_ROWS };
+        if (/AS dj_month/i.test(sql)) return { rows: [{ dj_month: '2025-07', jobs: '10', jobs_both: '6', cost: '5000.00', charged: '4000.00' }] };
+      }
+      if (/AS excluded_collects/i.test(sql)) return { rows: [{ excluded_collects: '84' }] };
       // G22b — products, earnings and profit.
       if (/GROUP BY lines\.sku/i.test(sql)) {
         const prev = params[0] === '2024-07-01';
@@ -248,6 +276,57 @@ console.log('G22b director — products, earnings and profit');
   check('…but stay in the totals', b.totals.revenue === 75300);
   check('unpriced lines are counted for the coverage line', b.totals.unpriced_lines !== undefined);
   check('brands keep how many lines are costed', b.brands[0].costed_lines === 4 && b.brands[0].lines === 4);
+}
+
+const { shapeDeliveries } = await import('../lib/director.js');
+const shapeDeliveriesFor = (state) => shapeDeliveries({ removalists: [], states: [{ state, jobs: '5', single_jobs: '5', single_avg_cost: '600', both_cost: '0', both_charged: '0', jobs_both: '0' }], like: [], monthly: [], excluded: [] }).states[0];
+
+console.log('G22c director — deliveries & removalists');
+{
+  const DQ = { resource: 'deliveries', from: FY.from, to: FY.to };
+  const refused = makeClient();
+  const rr = await call(refused, { as: token('GA', ['admin']), query: DQ });
+  check('deliveries: admin refused, no query', rr.statusCode === 403 && refused.calls.length === 0);
+  const c = makeClient();
+  const r = await call(c, { query: { ...DQ, compare: 'year' } });
+  const b = r.body;
+  check('deliveries → 200', r.statusCode === 200, JSON.stringify(b).slice(0, 200));
+  check('read-only, SELECT/WITH only', /^BEGIN TRANSACTION READ ONLY$/i.test(c.calls[0].sql) && c.calls.slice(1, -1).every((q) => /^(SELECT|WITH)\b/i.test(q.sql)));
+  const jobs = c.calls.find((q) => /AS loss_amount/i.test(q.sql)).sql;
+  check('Customer Collect excluded: delivery_type, state AND the "Customer Collect" removalist', /delivery_type IS DISTINCT FROM 'Customer Collect'/i.test(jobs)
+    && /delivery_state IS DISTINCT FROM 'Customer Collect'/i.test(jobs) && /lower\(r\.name\), ''\) <> 'customer collect'/i.test(jobs));
+  check('carrier cost 0 = not entered (NULLIF)', /NULLIF\(d\.delivery_quoted, 0\)/i.test(jobs));
+  check('period by delivery date, else created date', /COALESCE\(d\.delivery_date, d\.date_created::date\) >= \$1::date/i.test(jobs));
+  const ms = b.removalists.find((x) => x.removalist_id === 1);
+  check('price difference + recovery on jobs with both cost and charge', ms.price_difference === -800 && ms.recovery === 0.8);
+  check('vs target (cost + 20%)', ms.vs_target === -1600);
+  check('a carrier with no comparable jobs → recovery null', b.removalists.find((x) => x.removalist_id === null).recovery === null);
+  check('no carrier set is named', b.removalists.find((x) => x.removalist_id === null).removalist === 'No carrier set');
+  check('company totals', b.totals.both_cost === 6000 && b.totals.both_charged === 5800 && b.totals.price_difference === -200 && b.totals.loss_amount === 1800);
+  const act = b.states.find((s) => s.state === 'ACT');
+  const tas = b.states.find((s) => s.state === 'TAS');
+  const vic = b.states.find((s) => s.state === 'VIC');
+  const nt = b.states.find((s) => s.state === 'NT');
+  check('zone drift vs the 22 Sep 2026 rate card (ACT 474)', act.card_zone === 'ACT' && act.card_base === 474 && act.drift === Math.round((524.10 / 474 - 1) * 10000) / 10000 && act.flag === 'drift');
+  check('within 10% → no flag (TAS 724 vs 687.50)', tas.flag === 'ok');
+  check('too few single-item jobs → not judged', nt.flag === 'too-few');
+  check('multi-zone state → no card comparison, says why', vic.card_base === null && vic.flag === 'several-zones');
+  check('like-for-like: only states with 2+ carriers', b.like_for_like.length === 1 && b.like_for_like[0].state === 'NSW' && b.like_for_like[0].carriers.length === 2);
+  check('monthly trend', b.monthly[0].month === '2025-07' && b.monthly[0].margin === -1000);
+  check('Customer Collect pickups counted for the coverage line', b.coverage.excluded_collects === 84);
+  check('compare: previous totals', b.previous.mode === 'year' && b.previous.totals.price_difference === -100);
+
+  // G22c review fixes
+  const likeSql = c.calls.find((q) => /AS like_jobs/i.test(q.sql)).sql;
+  check('like-for-like leaves out jobs with no carrier set', /dj\.removalist_id IS NOT NULL/i.test(likeSql));
+  check('free deliveries: how many have a known carrier cost', /AS free_jobs_with_cost/i.test(jobs) && b.totals.free_jobs_with_cost === 4);
+  const stSql = c.calls.find((q) => /AS single_avg_cost/i.test(q.sql)).sql;
+  const moSql = c.calls.find((q) => /AS dj_month/i.test(q.sql)).sql;
+  check('states + months count comparable jobs', /AS jobs_both/i.test(stSql) && /AS jobs_both/i.test(moSql) && b.states[0].jobs_both !== undefined && b.monthly[0].jobs_both === 6);
+  check('a state with no comparable jobs → price difference null, not $0', b.states.find((s) => s.state === 'NT').price_difference === null);
+  check('metro card bases are labelled as metro, with a regional caveat', b.states.find((s) => s.state === 'ACT').regional_caveat === false
+    && shapeDeliveriesFor('SA').card_zone === 'Adelaide (metro)' && shapeDeliveriesFor('SA').regional_caveat === true);
+  check('a delivery with no state is labelled', shapeDeliveriesFor(null).state === 'No state set');
 }
 
 console.log('G22a director — drill-down');

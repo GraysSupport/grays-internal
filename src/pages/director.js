@@ -8,6 +8,7 @@ import { formatWhen } from '../utils/lotTracker';
 import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, monthLabel } from '../utils/director';
 import { Change, Coverage } from '../components/DirectorParts';
 import DirectorProducts from '../components/DirectorProducts';
+import DirectorDeliveries from '../components/DirectorDeliveries';
 
 // G22 Director's View (owner, 29 Oct 2026) — superadmin only; read-only performance figures.
 // G22a = the shell (period picker, compare, coverage lines) + the sales team section. The server
@@ -20,6 +21,7 @@ const PRIMARY = 'rounded bg-[#B50B1D] px-4 py-2 text-white hover:bg-[#8f0917] di
 const SECTIONS = [
   { key: 'sales', label: 'Sales team' },
   { key: 'products', label: 'Products & profit' },
+  { key: 'deliveries', label: 'Deliveries & removalists' },
 ];
 
 function PeriodPicker({ presets, value, onChange }) {
@@ -290,7 +292,11 @@ export default function DirectorPage({ now }) {
                 </button>
               ))}
             </div>
-            {section === 'products' ? (
+            {section === 'deliveries' ? (
+              <div role="tabpanel" id="dv-panel-deliveries" aria-labelledby="dv-tab-deliveries">
+                <DirectorDeliveries period={period} compare={compare} />
+              </div>
+            ) : section === 'products' ? (
               <div role="tabpanel" id="dv-panel-products" aria-labelledby="dv-tab-products">
                 <DirectorProducts period={period} compare={compare} />
               </div>

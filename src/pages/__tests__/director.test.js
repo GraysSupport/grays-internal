@@ -328,3 +328,129 @@ describe("Director's View — products & profit review fixes", () => {
     expect(within(region).getByText(/profit rankings include only the 1 product with every line costed/i)).toBeInTheDocument();
   });
 });
+
+// G22c — deliveries & removalists.
+const DEL_ROW = (id, name, over = {}) => ({ removalist_id: id, removalist: name, jobs: 10, jobs_with_cost: 8, jobs_both: 8, carrier_cost: 4000, charged: 3500, both_cost: 4000, both_charged: 3200, avg_cost: 500, median_cost: 450, loss_jobs: 5, loss_amount: 900, free_jobs: 2, free_jobs_with_cost: 2, free_cost: 700, under_target_jobs: 7, target: 4800, cash_jobs: 0, install_jobs: 0, install_cost: 0, price_difference: -800, recovery: 0.8, vs_target: -1600, ...over });
+const DELIVERIES = {
+  range: { from: '2026-07-01', to: '2026-10-30' },
+  totals: DEL_ROW(null, 'All', { jobs: 443, jobs_both: 332, both_cost: 257213.16, both_charged: 182492.94, price_difference: -74720.22, recovery: 0.7095, loss_jobs: 264, loss_amount: 86411.23, free_jobs: 92, vs_target: -126163 }),
+  removalists: [DEL_ROW(1, 'Moving Soon'), DEL_ROW(null, 'No carrier set', { jobs_both: 0, recovery: null, price_difference: 0 })],
+  states: [
+    { state: 'ACT', jobs: 13, single_jobs: 9, single_avg_cost: 524.1, card_zone: 'ACT', card_base: 474, drift: 0.1057, flag: 'drift', both_cost: 100, both_charged: 90, price_difference: -10 },
+    { state: 'VIC', jobs: 262, single_jobs: 91, single_avg_cost: 279.78, card_zone: null, card_base: null, drift: null, flag: 'several-zones', both_cost: 100, both_charged: 90, price_difference: -10 },
+  ],
+  like_for_like: [{ state: 'NSW', carriers: [{ removalist_id: 14, removalist: 'DTL Logistics', jobs: 30, avg_cost: 750, median_cost: 700 }, { removalist_id: 1, removalist: 'Moving Soon', jobs: 5, avg_cost: 600, median_cost: 590 }] }],
+  monthly: [{ month: '2026-07', jobs: 10, cost: 5000, charged: 4000, margin: -1000 }],
+  target_markup: 1.2,
+  coverage: { jobs: 443, jobs_with_cost: 340, jobs_both: 332, excluded_collects: 84 },
+  previous: { mode: 'year', range: { from: '2025-07-01', to: '2025-10-30' }, totals: DEL_ROW(null, 'All', { price_difference: -50000 }) },
+};
+function installAll() {
+  const mock = jest.fn(async (url) => {
+    const u = String(url);
+    const json = u.includes('resource=deliveries') ? DELIVERIES : u.includes('resource=products') ? PRODUCTS : u.includes('sales-workorders') ? DRILL : SALES;
+    return { ok: true, status: 200, json: async () => json };
+  });
+  global.fetch = mock;
+  return mock;
+}
+const openDeliveries = async () => {
+  await screen.findByRole('table', { name: /sales team/i });
+  fireEvent.click(screen.getByRole('tab', { name: 'Deliveries & removalists' }));
+  const region = await screen.findByRole('region', { name: 'Deliveries & removalists' });
+  await within(region).findByRole('table', { name: /by removalist/i });
+  return region;
+};
+
+describe("Director's View — deliveries & removalists (G22c)", () => {
+  test('loads the deliveries figures for the period', async () => {
+    login(['superadmin']);
+    const f = installAll();
+    renderPage();
+    await openDeliveries();
+    expect(f.mock.calls.some(([u]) => String(u) === '/api/director?resource=deliveries&from=2026-07-01&to=2026-10-30&compare=year')).toBe(true);
+  });
+
+  test('company net, loss jobs, recovery and coverage', async () => {
+    login(['superadmin']);
+    installAll();
+    renderPage();
+    const region = await openDeliveries();
+    expect(within(region).getByText('−$74,720')).toBeInTheDocument();
+    expect(within(region).getByText(/332 of 443 jobs have both a carrier cost and a charge/i)).toBeInTheDocument();
+    expect(within(region).getByText(/84 Customer Collect pickups are left out/i)).toBeInTheDocument();
+    expect(within(region).getByText(/GST/)).toBeInTheDocument();
+  });
+
+  test('per removalist: price difference + recovery; no comparable jobs shows —', async () => {
+    login(['superadmin']);
+    installAll();
+    renderPage();
+    const region = await openDeliveries();
+    const table = within(region).getByRole('table', { name: /by removalist/i });
+    const ms = within(table).getByRole('row', { name: /Moving Soon/ });
+    expect(ms).toHaveTextContent('−$800');
+    expect(ms).toHaveTextContent('80%');
+    expect(within(table).getByRole('row', { name: /No carrier set/ })).toHaveTextContent('—');
+  });
+
+  test('zone drift flagged against the rate card; multi-zone states say why', async () => {
+    login(['superadmin']);
+    installAll();
+    renderPage();
+    const region = await openDeliveries();
+    const zones = within(region).getByRole('table', { name: /rate card/i });
+    expect(within(zones).getByRole('row', { name: /ACT/ })).toHaveTextContent(/\+11%.*refresh/i);
+    expect(within(zones).getByRole('row', { name: /VIC/ })).toHaveTextContent(/several card zones/i);
+  });
+
+  test('like-for-like carriers within one state', async () => {
+    login(['superadmin']);
+    installAll();
+    renderPage();
+    const region = await openDeliveries();
+    const like = within(region).getByRole('table', { name: /like-for-like/i });
+    expect(like).toHaveTextContent('NSW');
+    expect(like).toHaveTextContent('DTL Logistics');
+    expect(like).toHaveTextContent('$750');
+  });
+});
+
+describe("Director's View — deliveries review fixes", () => {
+  const D2 = {
+    ...DELIVERIES,
+    removalists: [DEL_ROW(1, 'Moving Soon'), DEL_ROW(7, 'Quiet Co', { jobs_both: 0, recovery: null, loss_jobs: 0, loss_amount: 0, price_difference: 0, vs_target: 0 })],
+    states: [...DELIVERIES.states, { state: 'SA', jobs: 22, jobs_both: 0, single_jobs: 12, single_avg_cost: 546.02, card_zone: 'Adelaide (metro)', card_base: 583, drift: -0.0634, flag: 'ok', regional_caveat: true, both_cost: 0, both_charged: 0, price_difference: null }],
+    monthly: [{ month: '2026-07', jobs: 10, jobs_both: 6, cost: 5000, charged: 4000, margin: -1000 }, { month: '2026-08', jobs: 2, jobs_both: 0, cost: 0, charged: 0, margin: null }],
+  };
+  const open = async () => {
+    login(['superadmin']);
+    global.fetch = jest.fn(async (url) => ({ ok: true, status: 200, json: async () => (String(url).includes('resource=deliveries') ? D2 : SALES) }));
+    renderPage();
+    return openDeliveries();
+  };
+
+  test('cost/charge columns say they are comparable jobs only', async () => {
+    const region = await open();
+    expect(within(region).getByRole('columnheader', { name: /carrier cost \(comparable\)/i })).toBeInTheDocument();
+    expect(within(region).getByRole('columnheader', { name: /charged \(comparable\)/i })).toBeInTheDocument();
+  });
+
+  test('nothing comparable → —, never $0', async () => {
+    const region = await open();
+    const quiet = within(within(region).getByRole('table', { name: /by removalist/i })).getByRole('row', { name: /Quiet Co/ });
+    expect(quiet).not.toHaveTextContent('$0');
+    const sa = within(within(region).getByRole('table', { name: /rate card/i })).getByRole('row', { name: /SA/ });
+    expect(sa).toHaveTextContent(/metro/i);
+    expect(sa).toHaveTextContent(/regional jobs/i);
+    expect(sa).not.toHaveTextContent('$0');
+    const aug = within(within(region).getByRole('table', { name: /monthly/i })).getByRole('row', { name: /Aug 2026/ });
+    expect(aug).toHaveTextContent('—');
+    expect(aug).not.toHaveTextContent('$0');
+  });
+
+  test('free deliveries say how many had a known cost', async () => {
+    const region = await open();
+    expect(within(region).getByText(/absorbed on 2 of 92 free jobs/i)).toBeInTheDocument();
+  });
+});
