@@ -352,3 +352,29 @@ describe('search', () => {
     expect(screen.getByLabelText('Lot number or search')).toHaveFocus();
   });
 });
+
+// G20 (owner, 29 Oct 2026) — the Lot Tracker shows the same "Updated … by …" stamp.
+describe('G20 sign-off line in the Lot Tracker', () => {
+  const CHECKLIST = {
+    checks: {}, test_tag_no: '', base_serial: '', console_serial: '', comments: '',
+    ok_to_ship: true, approved_by: 'GR', approved_by_name: 'Graeme', approved_at: '2026-10-27T03:21:00.000Z',
+    updated_by: 'NG', updated_by_name: 'Nick', updated_at: '2026-10-28T04:00:00.000Z', version: 3,
+  };
+
+  test('signed off by Graeme, re-saved by Nick → the owner\'s example string', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, checklist: CHECKLIST }] });
+    renderPage('/lot-tracker?lot=L00001');
+    const section = await screen.findByRole('region', { name: 'Screen & electronics checklist' });
+    expect(within(section).getByText(/^OK to ship · signed off by Graeme · 27 Oct 2026, 2:21\s?pm · Updated 28 Oct 2026, 3:00\s?pm by Nick$/)).toBeInTheDocument();
+  });
+
+  test('never edited since sign-off → no "Updated"', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, checklist: { ...CHECKLIST, updated_by: 'GR', updated_by_name: 'Graeme', updated_at: CHECKLIST.approved_at } }] });
+    renderPage('/lot-tracker?lot=L00001');
+    const section = await screen.findByRole('region', { name: 'Screen & electronics checklist' });
+    expect(within(section).getByText(/^OK to ship · signed off by Graeme · 27 Oct 2026, 2:21\s?pm$/)).toBeInTheDocument();
+    expect(within(section).queryByText(/· Updated/)).not.toBeInTheDocument();
+  });
+});
