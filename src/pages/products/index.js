@@ -7,6 +7,36 @@ import CreateProductModal from '../../components/CreateProductModal';
 import ProductLotsModal from '../../components/ProductLotsModal';
 import { getRoles, hasAnyRole } from '../../utils/auth';
 import { LOT_TRACKER_ROLES } from '../../utils/lotTracker';
+import FreeWeightsTab from '../../components/FreeWeightsTab';
+
+// G21 (owner, 29 Oct 2026): two tabs — the existing stock list, and the separate Brand New
+// Free Weights stock. The tab lives in the URL (?tab=free-weights) so it can be linked.
+const TABS = [
+  { key: 'current', label: 'Current stock' },
+  { key: 'free-weights', label: 'Brand New Free Weights' },
+];
+
+function ProductTabs({ active, onSelect }) {
+  return (
+    // Centred (owner, 30 Oct 2026): left-aligned tabs sat under the fixed Home / Back buttons.
+    <div role="tablist" aria-label="Products" className="mb-4 flex justify-center gap-1 border-b border-gray-300">
+      {TABS.map((t) => (
+        <button
+          key={t.key}
+          id={`products-tab-${t.key}`}
+          type="button"
+          role="tab"
+          aria-selected={active === t.key}
+          aria-controls={`products-panel-${t.key}`}
+          onClick={() => onSelect(t.key)}
+          className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${active === t.key ? 'border-[#B50B1D] text-gray-900' : 'border-transparent text-gray-700 hover:text-gray-900'}`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function ProductsPage() {
   const storedUser = useMemo(() => {
@@ -17,7 +47,15 @@ export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get('tab') === 'free-weights' ? 'free-weights' : 'current';
+  // Only `tab` changes — anything else in the URL (e.g. ?inStock=) is kept.
+  const selectTab = (key) => setSearchParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (key === 'free-weights') next.set('tab', 'free-weights');
+    else next.delete('tab');
+    return next;
+  });
   const [showModal, setShowModal] = useState(false);
   // "View Lots" (in-stock lot numbers per product) — same roles as the Lot Tracker; the server decides.
   const canViewLots = hasAnyRole(getRoles(), LOT_TRACKER_ROLES);
@@ -52,8 +90,8 @@ export default function ProductsPage() {
       navigate('/');
       return;
     }
-    fetchProducts();
-  }, [navigate, fetchProducts]);
+    if (tab === 'current') fetchProducts();
+  }, [navigate, fetchProducts, tab]);
 
   const filteredProducts = products.filter((product) => {
     const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
@@ -152,6 +190,14 @@ export default function ProductsPage() {
 
       {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
       <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
+        <ProductTabs active={tab} onSelect={selectTab} />
+        {tab === 'free-weights' ? (
+          <div role="tabpanel" id="products-panel-free-weights" aria-labelledby="products-tab-free-weights">
+            <h2 className="mb-4 text-center text-xl font-bold">Brand New Free Weights</h2>
+            <FreeWeightsTab />
+          </div>
+        ) : (
+        <div role="tabpanel" id="products-panel-current" aria-labelledby="products-tab-current">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1 text-center">
             <h2 className="text-xl font-bold">Products</h2>
@@ -257,6 +303,8 @@ export default function ProductsPage() {
             Next
           </button>
         </div>
+        </div>
+        )}
       </div>
     </>
   );

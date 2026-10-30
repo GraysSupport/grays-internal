@@ -4,6 +4,7 @@
 // is the real authority on who may use it.
 
 import { hasAnyRole } from './auth.js';
+import { formatWhen } from './lotTracker.js';
 
 export const CHECK_ITEMS = [
   { key: 'boots_ok', label: 'Boots OK' },
@@ -50,4 +51,35 @@ export function emptyChecks() {
     if (i.key === 'audio') for (const s of AUDIO_SUBS) out[i.key][s.key] = null;
   }
   return out;
+}
+
+// G20 (owner, 29 Oct 2026) — one sign-off line for /tech-checklist and the Lot Tracker so the
+// two screens never drift. The save that signs off writes approved_at and updated_at together,
+// so a later save only counts as an update when it is more than a minute after the sign-off.
+const SAME_SAVE_MS = 60 * 1000;
+const who = (name, id) => name || id;
+
+/** "Last saved 28 Oct 2026, 3:00 pm by Nick", or null when nothing has been saved. */
+export function lastSavedLine(c) {
+  if (!c?.updated_at) return null;
+  return `Last saved ${formatWhen(c.updated_at)} by ${who(c.updated_by_name, c.updated_by)}`;
+}
+
+/**
+ * "OK to ship · signed off by Graeme · 27 Oct 2026, 2:21 pm", plus
+ * " · Updated 28 Oct 2026, 3:00 pm by Nick" once it has been re-saved since the sign-off.
+ * Not signed off → the "Last saved …" line.
+ */
+export function signOffLine(c) {
+  if (!c) return null;
+  if (!c.ok_to_ship) return lastSavedLine(c);
+  let line = `OK to ship · signed off by ${who(c.approved_by_name, c.approved_by)}`;
+  if (!c.approved_at) return line;
+  line += ` · ${formatWhen(c.approved_at)}`;
+  const signed = new Date(c.approved_at).getTime();
+  const updated = new Date(c.updated_at).getTime();
+  if (updated - signed > SAME_SAVE_MS) {
+    line += ` · Updated ${formatWhen(c.updated_at)} by ${who(c.updated_by_name, c.updated_by)}`;
+  }
+  return line;
 }
