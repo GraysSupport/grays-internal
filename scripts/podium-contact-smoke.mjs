@@ -159,7 +159,7 @@ check('phoneKey: empty → empty', C.phoneKey(null) === '');
   const wo = await C.openWorkordersForCustomer(client, 7);
   const call = client.calls.find((c) => isSelWO(c.sql));
   check('workorders: returns rows', wo.length === 1 && wo[0].workorder_id === 100);
-  check("workorders: excludes Completed (status <> 'Completed')", /status <> 'Completed'/.test(call.sql));
+  check("workorders: excludes Completed and Cancelled (G23)", /status::text NOT IN \('Completed', 'Cancelled'\)/.test(call.sql));
   check('workorders: empty for no customer', (await C.openWorkordersForCustomer(client, null)).length === 0);
 }
 {

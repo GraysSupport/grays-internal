@@ -202,8 +202,8 @@ export default function Dashboard() {
   const allDeliveries = Array.isArray(deliveries) ? deliveries : [];
   const allCollections = Array.isArray(collections) ? collections : [];
 
-  // Active workorders (not Completed)
-  const activeWOs = allWOs.filter((wo) => String(wo?.status) !== 'Completed');
+  // Active workorders (not Completed, not Cancelled)
+  const activeWOs = allWOs.filter((wo) => !['Completed', 'Cancelled'].includes(String(wo?.status)));
 
   // Past target date (estimated_completion < today)
   const pastTargetWOs = activeWOs.filter((wo) => {
@@ -260,6 +260,7 @@ export default function Dashboard() {
   // Total workorders so far this year (by date_created)
   const currentYear = today.getFullYear();
   const totalWOsThisYear = allWOs.filter((wo) => {
+    if (String(wo?.status) === 'Cancelled') return false; // G23
     const d = parseISO(wo?.date_created);
     return d && d.getFullYear() === currentYear;
   }).length;
