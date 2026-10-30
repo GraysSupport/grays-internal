@@ -528,7 +528,7 @@ function main() {
     // — six of the ten pages this increment fixed — AND reverted a grey inside it, and the
     // floor kept the suite green at 64/64. That is the same unfalsifiable-floor mistake this
     // file already calls out for the inbox token count, so it gets the same conservation law.
-    check(`the walk found the portal (${files.length} source files)`, files.length === 70, // 70 = 67 (main after G18) + G21's components/FreeWeightsTab.js + components/FreeWeightDialogs.js + utils/freeWeights.js
+    check(`the walk found the portal (${files.length} source files)`, files.length === 72, // 72 = 67 (main after G18) + G21 3 (FreeWeightsTab, FreeWeightDialogs, utils/freeWeights) + G22a 2 (pages/director.js, utils/director.js)
       'a deliberate edit when files are added or removed — a floor here let a whole directory vanish');
     check('… and it excludes the test fixtures', !files.some((f) => f.includes(`${sep}__tests__${sep}`)));
     // Naming the directories as well as the count: a count alone is satisfied by any 52 files,

@@ -730,7 +730,7 @@ console.log('\nevery page that pins the Home/Back overlay clears it:');
   const overlayPages = files.filter((f) => overlaySites(readFileSync(f, 'utf8')).length > 0);
   check(
     `found the pages that pin the overlay (${overlayPages.length})`,
-    overlayPages.length === 13,
+    overlayPages.length === 14, // 14 = 13 + G22a pages/director.js (clears it with max-sm:pt-16)
     'the count is PINNED, not a floor: a floor hides over-detection by a parser that re-reads every ' +
       'preceding tag, and 13 is the set measured at 375px. Adding a 14th overlay page is fine — bump ' +
       'this number in the same commit, having confirmed the new page clears the overlay.',

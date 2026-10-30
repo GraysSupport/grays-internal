@@ -42,6 +42,7 @@ import WorkshopPage from './pages/workshop';
 import ScanPage from './pages/scan';
 import LotTrackerPage from './pages/lot-tracker';
 import TechChecklistPage from './pages/tech-checklist';
+import DirectorPage from './pages/director';
 import { isPodiumEnabled } from './utils/featureFlags';
 
 // 28 Oct 2026: Podium screens are hidden until REACT_APP_FEATURE_PODIUM=true. While hidden,
@@ -119,6 +120,7 @@ function App() {
         <Route path="/scan" element={<ScanPage />} />
         <Route path="/lot-tracker" element={<LotTrackerPage />} />
         <Route path="/tech-checklist" element={<TechChecklistPage />} />
+        <Route path="/director" element={<DirectorPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />

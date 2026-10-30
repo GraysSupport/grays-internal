@@ -51,6 +51,7 @@ export default function Dashboard() {
   // F19 incr 2a: the nav items — and every role gate that decides which ones appear — now live
   // in utils/nav.js, because the desktop sidebar and the mobile drawer both render them.
   const navItems = useMemo(() => buildNavItems({ user, roles: getRoles() }), [user]);
+  const isSuperadmin = getRoles().some((r) => String(r).toLowerCase() === 'superadmin');
   const [navOpen, setNavOpen] = useState(false);
   // Stable identity: the drawer subscribes to Escape and to a matchMedia change with this in
   // the dependency array, so an inline arrow would resubscribe on every dashboard render.
@@ -315,7 +316,19 @@ export default function Dashboard() {
           {/* G19: stock numbers for everyone; the waitlist cards (customer contact) are never
               shown to workshop logins (technician / workshop / the WK kiosk — G17). */}
           <div className="bg-white p-6 rounded shadow-md">
-            <h2 className="text-xl font-bold mb-4">Dashboard Analytics</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-xl font-bold">Dashboard Analytics</h2>
+              {/* G22: superadmin only (display) — /api/director re-checks on the server. */}
+              {isSuperadmin && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/director')}
+                  className="rounded bg-[#B50B1D] px-4 py-2 text-sm font-semibold text-white hover:bg-[#8f0917]"
+                >
+                  Director&apos;s View
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {analyticsCard('Total Products', shown('products', totalProducts), '', officeLink(() => navigate('/products')))}
               {analyticsCard('In Stock', shown('products', inStockCount), 'text-green-700', officeLink(() => navigate('/products?inStock=true')))}
