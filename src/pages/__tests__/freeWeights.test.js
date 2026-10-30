@@ -504,3 +504,29 @@ describe('G21 revision — new-category box keyboard behaviour (review)', () => 
     expect(within(dialog).getByLabelText('Category')).toHaveFocus();
   });
 });
+
+describe('G21b — view-only logins (owner, 30 Oct 2026)', () => {
+  test('a staff login sees the stock but no add, edit or update-stock buttons', async () => {
+    login(['staff'], 'SF');
+    installFetch({ list: [200, { ...LIST, can_change: false }] });
+    renderPage();
+    const c = await card('Trigrip Olympic Rubber Weight');
+    expect(within(c).getByRole('listitem', { name: /20 kg/ })).toHaveTextContent('8 on hand');
+    expect(screen.queryByRole('button', { name: /add product line/i })).not.toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: /^Update stock/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/only superadmin, admin, logistics and sales logins can change/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /export free weights csv/i })).toBeInTheDocument();
+  });
+
+  test('a sales login keeps every button', async () => {
+    login(['sales'], 'BR');
+    installFetch({ list: [200, { ...LIST, can_change: true }] });
+    renderPage();
+    const c = await card('Trigrip Olympic Rubber Weight');
+    expect(screen.getByRole('button', { name: /add product line/i })).toBeInTheDocument();
+    expect(within(c).getByRole('button', { name: /^Edit/ })).toBeInTheDocument();
+    expect(within(c).getAllByRole('button', { name: /^Update stock/ })).toHaveLength(3);
+    expect(screen.queryByText(/only superadmin, admin, logistics and sales logins can change/i)).not.toBeInTheDocument();
+  });
+});

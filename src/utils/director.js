@@ -71,6 +71,13 @@ export function monthsBetween(from, to) {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** '2026-02' → 'Feb 2026'. */
+// Workorder item condition codes → the names used on the website (owner, 30 Oct 2026).
+const CONDITION_NAMES = { CS: 'Clean and Serviced', CCG: 'Check, Clean and Go', AT: 'As Traded', Reco: 'Fully Reconditioned' };
+export function conditionLabel(code) {
+  const name = CONDITION_NAMES[code];
+  return name ? `${name} (${code})` : code;
+}
+
 export function monthLabel(ym) {
   const [y, m] = String(ym).split('-').map(Number);
   return `${MONTHS[m - 1]} ${y}`;

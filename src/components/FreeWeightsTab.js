@@ -101,6 +101,8 @@ export default function FreeWeightsTab() {
   }
 
   const totals = data.totals || { units: 0 };
+  // The server is the authority (403 on any change); older payloads without the flag keep the buttons.
+  const canChange = data.can_change !== false;
   return (
     <div>
       {moving && (
@@ -137,9 +139,15 @@ export default function FreeWeightsTab() {
           >
             Export CSV
           </button>
-          <button type="button" onClick={() => setEditing({ line: null })} className={PRIMARY}>+ Add product line</button>
+          {canChange && <button type="button" onClick={() => setEditing({ line: null })} className={PRIMARY}>+ Add product line</button>}
         </div>
       </div>
+
+      {!canChange && (
+        <p className="mb-4 rounded border border-gray-300 bg-gray-50 p-2 text-sm text-gray-700">
+          View only — only superadmin, admin, logistics and sales logins can change free weights.
+        </p>
+      )}
 
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
         <input
@@ -184,14 +192,14 @@ export default function FreeWeightsTab() {
                   </p>
                   {line.notes && <p className="mt-1 text-sm text-gray-700">{line.notes}</p>}
                 </div>
-                <button
+                {canChange && <button
                   type="button"
                   onClick={() => setEditing({ line })}
                   aria-label={`Edit ${title}`}
                   className="text-sm text-blue-700 underline"
                 >
                   Edit
-                </button>
+                </button>}
               </div>
               <ul className="mt-3 flex flex-wrap gap-2">
                 {weights.map((v) => {
@@ -202,14 +210,14 @@ export default function FreeWeightsTab() {
                       <div>{v.stock} on hand</div>
                       <div>{formatAud(v.price)}</div>
                       {status && <div className="font-semibold"><span aria-hidden="true">{status.icon} </span>{status.text}</div>}
-                      <button
+                      {canChange && <button
                         type="button"
                         onClick={() => setMoving({ line, variant: v })}
                         aria-label={`Update stock — ${title} ${formatKg(v.weight_kg)}`}
                         className="mt-1 text-xs text-blue-700 underline"
                       >
                         Update stock
-                      </button>
+                      </button>}
                     </li>
                   );
                 })}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authHeaders } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
-import { formatDollars, formatPct, changeBadge } from '../utils/director';
+import { formatDollars, formatPct, changeBadge, conditionLabel } from '../utils/director';
 import { Coverage, Tile } from './DirectorParts';
 
 // G22b (owner, 29 Oct 2026) — Director's View: products sold, earnings and profit. Read-only,
@@ -22,7 +22,7 @@ function ProductTable({ label, rows }) {
             <th className="border px-2 py-1 text-right">Units</th>
             <th className="border px-2 py-1 text-right">Revenue</th>
             <th className="border px-2 py-1 text-right">Gross profit</th>
-            <th className="border px-2 py-1 text-right">Margin</th>
+            <th className="border px-2 py-1 text-right">Gross margin</th>
           </tr>
         </thead>
         <tbody>
@@ -81,14 +81,14 @@ export default function DirectorProducts({ period, compare }) {
         <div aria-busy={state.loading} className={`space-y-4 ${state.loading ? 'opacity-60' : ''}`}>
           <div className="space-y-1">
             <Coverage>Revenue: {d.totals.priced_lines} of {d.totals.lines} lines use the price on the order; {d.totals.estimated_lines} are estimated from the product list price{d.totals.unpriced_lines ? `; ${d.totals.unpriced_lines} have no price and count as $0` : ''}. Canceled items are excluded; custom items count in the totals but are not ranked as products.</Coverage>
-            <Coverage>Profit: {d.totals.costed_lines} of {d.totals.lines} lines have a cost set — gross profit and margin cover those lines only (a cost of $0 means “not set” and is never counted as $0).</Coverage>
+            <Coverage>Profit: {d.totals.costed_lines} of {d.totals.lines} lines have a cost set — gross profit and gross margin cover those lines only (a cost of $0 means “not set” and is never counted as $0). Cost is the product average cost — refurbishment labour is not included.</Coverage>
             <Coverage>Stock: {fmtInt(d.stock.units_costed)} of {fmtInt(d.stock.units)} units in stock have a cost — “at cost” covers those only.{d.stock.negative > 0 && ` ${d.stock.negative} products with negative stock are left out.`}</Coverage>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
             <Tile label="Revenue" value={formatDollars(d.totals.revenue)} badge={compare && d.previous ? changeBadge(d.totals.revenue, d.previous.totals.revenue) : null} />
             <Tile label="Units sold" value={fmtInt(d.totals.units)} />
-            <Tile label="Gross profit (costed lines)" value={formatDollars(d.totals.gross_profit)} note={`Margin ${formatPct(d.totals.margin)}`} />
+            <Tile label="Gross profit (costed lines)" value={formatDollars(d.totals.gross_profit)} note={`Gross margin ${formatPct(d.totals.margin)}`} />
             <Tile label="Products sold" value={fmtInt(d.product_count)} />
             <Tile label="Stock on hand at cost" value={formatDollars(d.stock.value_cost)} note={`${fmtInt(d.stock.units_costed)} of ${fmtInt(d.stock.units)} units costed`} />
             <Tile label="Stock on hand at sell price" value={formatDollars(d.stock.value_sell)} note={`${fmtInt(d.stock.units_priced)} of ${fmtInt(d.stock.units)} units have a price · ${fmtInt(d.stock.products)} products in stock`} />
@@ -131,11 +131,11 @@ export default function DirectorProducts({ period, compare }) {
                 <thead className="bg-gray-100"><tr><th className="border px-2 py-1 text-left">Condition</th><th className="border px-2 py-1 text-right">Units</th><th className="border px-2 py-1 text-right">Revenue</th></tr></thead>
                 <tbody>
                   {d.conditions.map((c) => (
-                    <tr key={c.condition}><th scope="row" className="border px-2 py-1 text-left font-normal">{c.condition}</th><td className="border px-2 py-1 text-right">{fmtInt(c.units)}</td><td className="border px-2 py-1 text-right">{formatDollars(c.revenue)}</td></tr>
+                    <tr key={c.condition}><th scope="row" className="border px-2 py-1 text-left font-normal">{conditionLabel(c.condition)}</th><td className="border px-2 py-1 text-right">{fmtInt(c.units)}</td><td className="border px-2 py-1 text-right">{formatDollars(c.revenue)}</td></tr>
                   ))}
                 </tbody>
               </table>
-              <Coverage>Condition codes are shown as stored on the workorder item.</Coverage>
+              <Coverage>Conditions use the website names; anything else is shown as stored on the workorder item.</Coverage>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border text-sm">

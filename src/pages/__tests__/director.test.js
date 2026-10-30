@@ -454,3 +454,26 @@ describe("Director's View — deliveries review fixes", () => {
     expect(within(region).getByText(/absorbed on 2 of 92 free jobs/i)).toBeInTheDocument();
   });
 });
+
+describe("Director's View — owner answers (30 Oct 2026)", () => {
+  test('condition codes show their website names', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const region = await openProducts();
+    const table = within(region).getByRole('table', { name: 'Sales by item condition' });
+    expect(within(table).getByRole('rowheader', { name: 'Clean and Serviced (CS)' })).toBeInTheDocument();
+  });
+
+  test('margin is labelled gross margin, with labour not included', async () => {
+    login(['superadmin']);
+    installBoth();
+    renderPage();
+    const team = await screen.findByRole('table', { name: /sales team/i });
+    expect(within(team).getByRole('columnheader', { name: 'Gross margin' })).toBeInTheDocument();
+    const region = await openProducts();
+    expect(within(region).getByRole('table', { name: 'Top 10 products by revenue' })).toHaveTextContent('Gross margin');
+    expect(within(region).getByText('Gross margin 33%')).toBeInTheDocument();
+    expect(within(region).getAllByText(/refurbishment labour is not included/i).length).toBeGreaterThan(0);
+  });
+});
