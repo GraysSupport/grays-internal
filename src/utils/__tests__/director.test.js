@@ -1,4 +1,4 @@
-import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, monthLabel } from '../director';
+import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, monthLabel, conditionLabel } from '../director';
 
 // G22a — pure helpers behind the Director's View.
 
@@ -46,5 +46,24 @@ describe('director utils', () => {
   test('months in a range', () => {
     expect(monthsBetween('2025-11-15', '2026-02-01')).toEqual(['2025-11', '2025-12', '2026-01', '2026-02']);
     expect(monthLabel('2026-02')).toBe('Feb 2026');
+  });
+});
+
+describe('conditionLabel (owner, 30 Oct 2026 — website labelling)', () => {
+  test('known codes get their names, the code kept in brackets', () => {
+    expect(conditionLabel('CS')).toBe('Clean and Serviced (CS)');
+    expect(conditionLabel('CCG')).toBe('Check, Clean and Go (CCG)');
+    expect(conditionLabel('AT')).toBe('As Traded (AT)');
+    expect(conditionLabel('Reco')).toBe('Fully Reconditioned (Reco)');
+  });
+  test('anything else is shown as stored', () => {
+    expect(conditionLabel('New')).toBe('New');
+    expect(conditionLabel('Not set')).toBe('Not set');
+    expect(conditionLabel('XYZ')).toBe('XYZ');
+    expect(conditionLabel('constructor')).toBe('constructor');
+  });
+  test('older imports with other spacing or capitals still match', () => {
+    expect(conditionLabel('RECO')).toBe('Fully Reconditioned (RECO)');
+    expect(conditionLabel('cs ')).toBe('Clean and Serviced (cs)');
   });
 });

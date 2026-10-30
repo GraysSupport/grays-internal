@@ -412,6 +412,43 @@ console.log('G21 free weights — before the migration (42P01)');
   check('create → 503', r.statusCode === 503);
 }
 
+console.log('G21b — only superadmin, admin, logistics and sales change free weights (owner, 30 Oct 2026)');
+{
+  const db = makeDb();
+  let r = await call(db, { as: AS.admin, method: 'POST', query: { resource: 'product' }, body: TRIGRIP });
+  check('(setup) admin adds a line', r.statusCode === 201);
+  const pid = db.db.products.at(-1).id;
+  const vid = db.db.variants.find((v) => v.product_id === pid).id;
+  for (const [who, as] of [['superadmin', AS.superadmin], ['admin', AS.admin], ['logistics', token('LG', ['logistics'])], ['sales', AS.sales], ['technician + sales', AS.techSales]]) {
+    r = await call(db, { as, query: { resource: 'list' } });
+    check(`${who}: list says can_change`, r.statusCode === 200 && r.body.can_change === true);
+    r = await call(db, { as, method: 'POST', query: { resource: 'move' }, body: { variant_id: vid, qty: 1, reason: 'received' } });
+    check(`${who}: may move stock`, r.statusCode === 200, JSON.stringify(r.body));
+  }
+  for (const [who, as] of [['staff', token('SF', ['staff'])], ['it-technician', token('IT', ['it-technician'])]]) {
+    r = await call(db, { as, query: { resource: 'list' } });
+    check(`${who}: can still view, can_change false`, r.statusCode === 200 && r.body.can_change === false);
+    r = await call(db, { as, query: { resource: 'moves', variant_id: String(vid) } });
+    check(`${who}: can still read the history`, r.statusCode === 200);
+    const before = writes(db).length;
+    for (const [method, resource, body, query] of [
+      ['POST', 'move', { variant_id: vid, qty: 1, reason: 'received' }],
+      ['POST', 'product', { ...TRIGRIP, name: 'Other plate' }],
+      ['PUT', 'product', TRIGRIP, { id: String(pid) }],
+      ['POST', 'category', { label: 'Sandbags' }],
+    ]) {
+      r = await call(db, { as, method, query: { resource, ...(query || {}) }, body });
+      check(`${who}: ${method} ${resource} → 403 with a plain reason`, r.statusCode === 403 && /superadmin, admin, logistics or sales/i.test(r.body.error), JSON.stringify(r.body));
+    }
+    check(`${who}: nothing written`, writes(db).length === before);
+  }
+}
+{
+  const pre = makeDb({ missing: true });
+  const r = await call(pre, { as: token('SF', ['staff']), query: { resource: 'list' } });
+  check('before the migration a staff login still gets can_change: false', r.statusCode === 200 && r.body.can_change === false);
+}
+
 console.log('G21 free weights — client and server agree');
 check('categories match', JSON.stringify(server.FREE_WEIGHT_CATEGORIES) === JSON.stringify(client.FREE_WEIGHT_CATEGORIES.map((c) => c.key)));
 check('move reasons match', JSON.stringify(server.MOVE_REASONS) === JSON.stringify(client.MOVE_REASONS.map((r) => r.key)));

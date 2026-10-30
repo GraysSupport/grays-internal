@@ -64,8 +64,8 @@ async function send(url, method, body, navigate) {
 
 const reasonLabel = (key) => MOVE_REASONS.find((r) => r.key === key)?.label || key;
 
-/* ---------- Update stock on one weight ---------- */
-export function FreeWeightMoveDialog({ line, variant, onSaved, onClose }) {
+/* ---------- Update stock on one weight (readOnly: history only, for view-only logins) ---------- */
+export function FreeWeightMoveDialog({ line, variant, onSaved, onClose, readOnly = false }) {
   const navigate = useNavigate();
   const [reason, setReason] = useState('received');
   const [direction, setDirection] = useState('add'); // adjustment only
@@ -114,6 +114,11 @@ export function FreeWeightMoveDialog({ line, variant, onSaved, onClose }) {
   return (
     <Dialog titleId="fw-move-title" title={titleText} onClose={onClose}>
       <p className="mt-1 text-sm text-gray-700">{variant.stock} on hand now</p>
+      {readOnly ? (
+        <div className="mt-4 flex justify-end">
+          <button type="button" onClick={onClose} className="rounded bg-gray-200 px-4 py-2 text-gray-900 hover:bg-gray-300">Close</button>
+        </div>
+      ) : (
       <form className="mt-4 space-y-3" onSubmit={save}>
         <label className="block text-sm">
           <span className="font-medium">Reason</span>
@@ -150,6 +155,7 @@ export function FreeWeightMoveDialog({ line, variant, onSaved, onClose }) {
           <button type="submit" disabled={saving} className={PRIMARY}>Save stock change</button>
         </div>
       </form>
+      )}
 
       <h3 className="mt-6 text-sm font-semibold text-gray-900">History</h3>
       {history.loading && <p className="text-sm text-gray-600">Loading history…</p>}
