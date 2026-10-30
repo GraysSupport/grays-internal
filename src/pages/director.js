@@ -6,6 +6,8 @@ import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { formatWhen } from '../utils/lotTracker';
 import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, monthLabel } from '../utils/director';
+import { Change, Coverage } from '../components/DirectorParts';
+import DirectorProducts from '../components/DirectorProducts';
 
 // G22 Director's View (owner, 29 Oct 2026) — superadmin only; read-only performance figures.
 // G22a = the shell (period picker, compare, coverage lines) + the sales team section. The server
@@ -13,17 +15,12 @@ import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, mo
 // show. Every money figure is AUD, GST-inclusive as stored; every section says what share of the
 // data its numbers rest on, so a low-coverage figure is never mistaken for the truth.
 
-const CHANGE_CLS = { up: 'text-green-800', down: 'text-red-800', flat: 'text-gray-700' };
 const PRIMARY = 'rounded bg-[#B50B1D] px-4 py-2 text-white hover:bg-[#8f0917] disabled:opacity-50';
-
-function Change({ badge }) {
-  if (!badge) return null;
-  return <span className={`ml-1 text-xs font-semibold ${CHANGE_CLS[badge.dir]}`}>{badge.text}</span>;
-}
-
-function Coverage({ children }) {
-  return <p role="note" className="text-xs text-gray-700">{children}</p>;
-}
+// The sections (one per G22 phase). Only the open one loads its figures.
+const SECTIONS = [
+  { key: 'sales', label: 'Sales team' },
+  { key: 'products', label: 'Products & profit' },
+];
 
 function PeriodPicker({ presets, value, onChange }) {
   const [key, setKey] = useState(value.key);
@@ -230,6 +227,7 @@ export default function DirectorPage({ now }) {
   const presets = useMemo(() => periodPresets(now || new Date()), [now]);
   const [period, setPeriod] = useState(presets[0]);
   const [compare, setCompare] = useState(true);
+  const [section, setSection] = useState('sales');
   const [state, setState] = useState({ loading: true, error: null, data: null });
 
   const load = useCallback(async (signal) => {
@@ -248,11 +246,11 @@ export default function DirectorPage({ now }) {
   }, [period.from, period.to, period.compare, compare, navigate]);
 
   useEffect(() => {
-    if (!isSuperadmin) return undefined;
+    if (!isSuperadmin || section !== 'sales') return undefined;
     const signal = { cancelled: false };
     load(signal);
     return () => { signal.cancelled = true; };
-  }, [isSuperadmin, load]);
+  }, [isSuperadmin, section, load]);
 
   return (
     <>
@@ -276,12 +274,36 @@ export default function DirectorPage({ now }) {
             <p className="text-xs text-gray-700">
               {formatWhen(period.from, true)} – {formatWhen(period.to, true)} · All money is AUD, GST-inclusive as stored, rounded to the dollar. Read-only — nothing here changes any record.
             </p>
-            {state.error && <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">{state.error}</p>}
-            {state.loading && !state.data && <p className="text-sm text-gray-600">Loading…</p>}
-            {state.loading && state.data && <p role="status" className="text-sm text-gray-700">Updating…</p>}
-            {state.data && (
-              <div aria-busy={state.loading} className={state.loading ? 'opacity-60' : ''}>
-                <SalesTeam data={state.data} compare={compare} range={state.data.range} />
+            <div role="tablist" aria-label="Director's View sections" className="flex gap-1 border-b border-gray-300">
+              {SECTIONS.map((s) => (
+                <button
+                  key={s.key}
+                  id={`dv-tab-${s.key}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={section === s.key}
+                  aria-controls={section === s.key ? `dv-panel-${s.key}` : undefined}
+                  onClick={() => setSection(s.key)}
+                  className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${section === s.key ? 'border-[#B50B1D] text-gray-900' : 'border-transparent text-gray-700 hover:text-gray-900'}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {section === 'products' ? (
+              <div role="tabpanel" id="dv-panel-products" aria-labelledby="dv-tab-products">
+                <DirectorProducts period={period} compare={compare} />
+              </div>
+            ) : (
+              <div role="tabpanel" id="dv-panel-sales" aria-labelledby="dv-tab-sales" className="space-y-4">
+                {state.error && <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">{state.error}</p>}
+                {state.loading && !state.data && <p className="text-sm text-gray-600">Loading…</p>}
+                {state.loading && state.data && <p role="status" className="text-sm text-gray-700">Updating…</p>}
+                {state.data && (
+                  <div aria-busy={state.loading} className={state.loading ? 'opacity-60' : ''}>
+                    <SalesTeam data={state.data} compare={compare} range={state.data.range} />
+                  </div>
+                )}
               </div>
             )}
           </div>
