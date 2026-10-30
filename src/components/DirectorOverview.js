@@ -38,7 +38,13 @@ export default function DirectorOverview({ period, compare, onOpen }) {
   }, [period.from, period.to, period.compare, compare, navigate]);
 
   // Only a well-formed overview is drawn.
-  const d = state.data?.sales ? state.data : null;
+  const raw = state.data?.sales ? state.data : null;
+  const d = raw && {
+    ...raw,
+    profit: raw.profit || {}, on_time: raw.on_time || {}, pipeline: raw.pipeline || {}, owed: raw.owed || {},
+    deliveries: raw.deliveries || {}, workshop: raw.workshop || {},
+    stock: raw.stock || {}, customers: raw.customers || {}, states: raw.states || [],
+  };
   const badge = (cur, prev) => (compare && d?.previous ? changeBadge(cur, prev) : null);
   const open = (section) => (onOpen ? () => onOpen(section) : undefined);
   const maxState = Math.max(1, ...(d?.states || []).map((s) => s.sales));
@@ -53,18 +59,18 @@ export default function DirectorOverview({ period, compare, onOpen }) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Tile
               label="Sales this period" value={formatDollars(d.sales.value)} badge={badge(d.sales.value, d.sales.previous)} onOpen={open('sales')}
-              note={`${fmtInt(d.sales.workorders)} workorders · ${d.sales.priced_lines} of ${d.sales.lines} lines priced on the order, the rest estimated from the list price`}
+              note={`${fmtInt(d.sales.workorders)} workorders · ${d.sales.priced_lines} of ${d.sales.lines} lines priced on the order · ${d.sales.estimated_lines} estimated from the list price${d.sales.unpriced_lines ? `, ${d.sales.unpriced_lines} with no price (counted as $0)` : ''}`}
             />
             <Tile
               label="Gross profit" value={formatDollars(d.profit.gross_profit)} badge={badge(d.profit.gross_profit, d.profit.previous)} onOpen={open('products')}
               note={`${formatPct(d.profit.margin)} gross margin on ${d.profit.costed_lines} of ${d.profit.lines} lines with a cost (refurbishment labour not included)`}
             />
             <Tile
-              label="Open orders (today)" value={formatDollars(d.pipeline.value)} onOpen={open('sales')}
+              label="Open orders (today)" value={formatDollars(d.pipeline.value)}
               note={`${fmtInt(d.pipeline.workorders)} open workorders · ${d.pipeline.estimated_lines} of ${d.pipeline.lines} lines estimated from the list price${d.pipeline.unpriced_lines ? `, ${d.pipeline.unpriced_lines} with no price` : ''}`}
             />
             <Tile
-              label="Money still owed (today)" value={formatDollars(d.owed.total)} onOpen={open('sales')}
+              label="Money still owed (today)" value={formatDollars(d.owed.total)}
               note={`${fmtInt(d.owed.workorders)} workorders · ${formatDollars(d.owed.open_total)} on ${fmtInt(d.owed.open_workorders)} open ones${d.owed.credit_workorders ? ` · ${d.owed.credit_workorders} in credit, not netted off` : ''}`}
             />
             <Tile
@@ -73,7 +79,7 @@ export default function DirectorOverview({ period, compare, onOpen }) {
             />
             <Tile
               label="Workshop items completed" value={fmtInt(d.workshop.items_completed)} badge={badge(d.workshop.items_completed, d.workshop.previous)}
-              note={`${fmtInt(d.workshop.in_workshop_now)} in the workshop now · average ${d.workshop.avg_days ?? '—'} days in the workshop (${d.workshop.items_timed} of ${d.workshop.items_completed} items have a workshop start)`}
+              note={`${fmtInt(d.workshop.in_workshop_now)} in the workshop now · ${d.workshop.avg_days == null ? 'no average yet' : `average ${d.workshop.avg_days} days`} in the workshop (${d.workshop.items_timed} of ${d.workshop.items_completed} items have a workshop start)`}
             />
             <Tile
               label="On-time completion" value={formatPct(d.on_time.pct)} onOpen={open('sales')}
@@ -115,7 +121,7 @@ export default function DirectorOverview({ period, compare, onOpen }) {
             </div>
           </div>
           <Coverage>
-            Period figures follow the period picker; tiles marked “today” are as of now. Sales, profit and customers count workorders by the date created; workshop items by the day they were first marked Completed.
+            Period figures follow the period picker; tiles marked “today” are as of now. Sales, profit and customers count workorders by the date created; deliveries by the delivery date; workshop items by the day they were first marked Completed.
             {compare && d.previous && ` ▲/▼ compares with ${formatWhen(d.previous.range.from, true)} – ${formatWhen(d.previous.range.to, true)}.`}
           </Coverage>
         </div>

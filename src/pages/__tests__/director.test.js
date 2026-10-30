@@ -515,8 +515,8 @@ describe("Director's View — business overview (G22d)", () => {
     expect(sales).toHaveTextContent('$25,000');
     expect(sales).toHaveTextContent('▲ 150%');
     expect(within(region).getByRole('button', { name: /^gross profit/i })).toHaveTextContent('$7,500');
-    expect(within(region).getByRole('button', { name: /^open orders/i })).toHaveTextContent('$532,244');
-    expect(within(region).getByRole('button', { name: /^money still owed/i })).toHaveTextContent('$255,748');
+    expect(within(region).getByText('$532,244')).toBeInTheDocument(); // open orders (today)
+    expect(within(region).getByText('$255,748')).toBeInTheDocument(); // money still owed (today)
     expect(within(region).getByRole('button', { name: /^delivery net margin/i })).toHaveTextContent('−$8,650');
     expect(within(region).getByText('799')).toBeInTheDocument();
     expect(within(region).getByText('$106,324')).toBeInTheDocument();
@@ -574,6 +574,56 @@ describe("Director's View — business overview (G22d)", () => {
     installFetch({ overview: [500, { error: 'Server error' }] });
     renderPage();
     expect(await screen.findByText(/could not load the overview/i)).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: /sales team/i })).toBeInTheDocument();
+  });
+});
+
+describe("Director's View — overview review fixes (G22d)", () => {
+  const overview = async () => { await screen.findByRole('button', { name: /^sales this period/i }); return screen.getByRole('region', { name: /business overview/i }); };
+
+  test('lines with no price are named, not hidden as "estimated"', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { ...OVERVIEW, sales: { ...OVERVIEW.sales, estimated_lines: 9, unpriced_lines: 3 } }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/9 estimated from the list price, 3 with no price \(counted as \$0\)/i)).toBeInTheDocument();
+  });
+
+  test('"today" tiles do not open a period section', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    expect(within(region).queryByRole('button', { name: /^open orders/i })).not.toBeInTheDocument();
+    expect(within(region).queryByRole('button', { name: /^money still owed/i })).not.toBeInTheDocument();
+    expect(within(region).getByText('$255,748')).toBeInTheDocument();
+  });
+
+  test('tile buttons are named by their label, the note describes them', async () => {
+    login(['superadmin']);
+    installFetch();
+    renderPage();
+    const region = await overview();
+    const b = within(region).getByRole('button', { name: 'Sales this period' });
+    expect(b).toHaveAccessibleDescription(/lines priced on the order/i);
+    expect(b.querySelector('div')).toBeNull();
+  });
+
+  test('no workshop start yet → "no average yet"; deliveries go by delivery date', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { ...OVERVIEW, workshop: { ...OVERVIEW.workshop, avg_days: null, items_timed: 0 } }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByText(/no average yet/i)).toBeInTheDocument();
+    expect(within(region).getByText(/deliveries by the delivery date/i)).toBeInTheDocument();
+  });
+
+  test('a partial overview response does not crash the page', async () => {
+    login(['superadmin']);
+    installFetch({ overview: [200, { range: OVERVIEW.range, sales: OVERVIEW.sales, previous: null }] });
+    renderPage();
+    const region = await overview();
+    expect(within(region).getByRole('button', { name: 'Sales this period' })).toHaveTextContent('$25,000');
     expect(await screen.findByRole('table', { name: /sales team/i })).toBeInTheDocument();
   });
 });

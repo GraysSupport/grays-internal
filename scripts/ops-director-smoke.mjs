@@ -82,11 +82,11 @@ function makeClient({ failOn = null } = {}) {
       }
       if (/AS excluded_collects/i.test(sql)) return { rows: [{ excluded_collects: '84' }] };
       // G22d — overview tiles.
-      if (/AS pipeline_value/i.test(sql)) return { rows: [{ workorders: '43', lines: '60', estimated_lines: '20', unpriced_lines: '1', pipeline_value: '310450.50' }] };
+      if (/AS pipeline_value/i.test(sql)) return { rows: [{ workorders: '43', lines: '60', estimated_lines: '20', unpriced_lines: '1', pipeline_value: '310450.50', in_workshop_now: '10' }] };
       if (/AS owed_open/i.test(sql)) return { rows: [{ owed_workorders: '26', owed: '255748.40', owed_open_workorders: '20', owed_open: '208325.00', credit_workorders: '2' }] };
       if (/AS items_completed/i.test(sql)) {
         const prev = params[0] === '2024-07-01';
-        return { rows: [prev ? { items_completed: '50', items_timed: '20', avg_workshop_days: '12.0', in_workshop_now: '10' } : { items_completed: '100', items_timed: '40', avg_workshop_days: '10.3', in_workshop_now: '10' }] };
+        return { rows: [prev ? { items_completed: '50', items_timed: '20', avg_workshop_days: '12.0' } : { items_completed: '100', items_timed: '40', avg_workshop_days: '10.3' }] };
       }
       if (/AS new_customers/i.test(sql)) return { rows: [{ customers: '200', individual: '120', business: '70', new_customers: '150', history_from: '2025-05-09T00:00:00Z' }] };
       if (/AS wo_state/i.test(sql)) return { rows: [{ wo_state: 'VIC', workorders: '100', sales: '400000.00' }, { wo_state: null, workorders: '2', sales: '0' }] };
@@ -370,6 +370,9 @@ console.log('G22d director — overview tiles');
   check('customers: individual / business / not set; new vs returning', o.customers.total === 200 && o.customers.individual === 120 && o.customers.business === 70
     && o.customers.not_set === 10 && o.customers.new === 150 && o.customers.returning === 50 && o.customers.history_from === '2025-05-09');
   check('sales by delivery state, a missing state labelled', o.states[0].state === 'VIC' && o.states[0].sales === 400000 && o.states[1].state === 'Not set');
+  const wsSql = c.calls.filter((q) => /AS items_completed/i.test(q.sql));
+  check('in-workshop-now is a snapshot of items on open workorders, read once (not per period)', /AS in_workshop_now/i.test(pipeSql)
+    && /status = 'Work Ordered'/i.test(pipeSql) && wsSql.length === 2 && wsSql.every((q) => !/in_workshop_now/i.test(q.sql)));
   check('previous period echoed', o.previous.mode === 'year' && o.previous.range.from === '2024-07-01');
 
   const nc = makeClient();
