@@ -17,6 +17,7 @@ import logisticsHandler from '../lib/handlers/logistics.js';
 import integrationsHandler from '../lib/handlers/integrations.js';
 import lotsHandler from '../lib/handlers/lots.js';
 import evidenceHandler from '../lib/handlers/evidence.js';
+import { handleFreeWeights } from '../lib/freeWeights.js';
 import { buildJourney } from '../lib/customerJourney.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
 import { isPodiumEnabled, podiumDisabled } from '../lib/featureFlags.js';
@@ -128,6 +129,9 @@ export default async function handler(req, res) {
       // G18 dispatch evidence → SharePoint. Query-form routes (?resource=), token-gated.
       case 'evidence':
         return evidenceHandler(req, res);
+      // G21 Brand New Free Weights stock. Query-form routes (?resource=), token-gated.
+      case 'free-weights':
+        return handleFreeWeightsRoute(req, res);
 
       default:
         return res.status(404).json({ error: 'Not found' });
@@ -277,6 +281,16 @@ async function handleProducts(req, res, subSku) {
     }
 
     return methodNotAllowed(res, ['GET', 'POST', 'PUT']);
+  } finally {
+    client.release();
+  }
+}
+
+/* ---------- FREE WEIGHTS (G21) ---------- */
+async function handleFreeWeightsRoute(req, res) {
+  const client = await getClientWithTimezone();
+  try {
+    return await handleFreeWeights(req, res, client);
   } finally {
     client.release();
   }
