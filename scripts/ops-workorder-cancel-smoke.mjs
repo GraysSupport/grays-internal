@@ -31,10 +31,10 @@ const AS = {
 };
 
 // --- a stateful fake ---------------------------------------------------------------------
-function makeDb({ deliveries = [], stock = {} } = {}) {
+function makeDb({ deliveries = [], stock = {}, status = 'Work Ordered', preMigration = false } = {}) {
   const state = {
     workorder: {
-      workorder_id: 41, invoice_id: 'INV-41', customer_id: 7, status: 'Work Ordered', outstanding_balance: 500,
+      workorder_id: 41, invoice_id: 'INV-41', customer_id: 7, status, outstanding_balance: 500,
       delivery_state: 'VIC', delivery_suburb: 'Altona North', delivery_charged: 150, notes: null,
       delivery_type: 'Standard', free_delivery: false, cash_to_removalist: false, installation_cost: null,
     },
@@ -49,6 +49,7 @@ function makeDb({ deliveries = [], stock = {} } = {}) {
       { lot_number: 'L-100', workorder_items_id: 1, status: 'Assigned' },
       { lot_number: 'L-101', workorder_items_id: 2, status: 'Assigned' },
       { lot_number: 'L-102', workorder_items_id: 2, status: 'Void' },
+      { lot_number: 'L-104', workorder_items_id: 4, status: 'Assigned' }, // left on an item removed before the cancel
       { lot_number: 'L-200', workorder_items_id: 99, status: 'Assigned' }, // another workorder
     ],
     deliveries,
@@ -92,6 +93,7 @@ function makeDb({ deliveries = [], stock = {} } = {}) {
       }
       if (/UPDATE product SET stock/i.test(t)) { state.stock[params[1]] = Number(params[0]); return { rows: [], rowCount: 1 }; }
       if (/UPDATE workorder_items SET status_before_cancel = status, status = 'Canceled'/i.test(t)) {
+        if (preMigration) throw Object.assign(new Error('column "status_before_cancel" of relation "workorder_items" does not exist'), { code: '42703' });
         const want = ids(params[0]);
         for (const i of state.items) if (want.includes(i.workorder_items_id)) { i.status_before_cancel = i.status; i.status = 'Canceled'; }
         return { rows: [], rowCount: want.length };
@@ -102,7 +104,9 @@ function makeDb({ deliveries = [], stock = {} } = {}) {
         return { rows: [], rowCount: want.length };
       }
       if (/UPDATE product_lots SET status = 'In Stock', workorder_items_id = NULL/i.test(t)) {
-        const want = ids(params[0]);
+        const want = /IN \(SELECT workorder_items_id FROM workorder_items WHERE workorder_id = \$1\)/i.test(t)
+          ? (Number(params[0]) === 41 ? state.items.map((i) => i.workorder_items_id) : [])
+          : ids(params[0]);
         const only = (t.match(/AND status = '([^']+)'/) || [])[1]; // honour the SQL, so a wrong predicate fails
         const hit = state.lots.filter((l) => want.includes(l.workorder_items_id) && (!only || l.status === only));
         for (const l of hit) { l.status = 'In Stock'; l.workorder_items_id = null; }
@@ -140,9 +144,9 @@ function fakeRes() {
 }
 
 // The first response (the PUT's own answer) is what counts; the closing GET re-read writes again.
-async function put(db, who, body) {
+async function put(db, who, body, { claimId } = {}) {
   const [id, roles] = who || [];
-  const headers = id ? { 'x-user-id': id, authorization: token(id, roles) } : { 'x-user-id': 'GA' };
+  const headers = id ? { 'x-user-id': claimId || id, authorization: token(id, roles) } : { 'x-user-id': 'GA' };
   const res = fakeRes();
   let first = null;
   const status = res.status;
@@ -166,12 +170,14 @@ console.log('G23 — cancelling a workorder');
   check('stock returned for each live stocked item', db.state.stock.TREAD === 6 && db.state.stock.BIKE === 5);
   check('…not for the removed item (already returned) or the custom item', db.state.stock.ROWER === 2 && db.state.stock.CUSTOM === undefined);
   check('assigned lots on this workorder are freed', lot(db, 'L-100').status === 'In Stock' && lot(db, 'L-100').workorder_items_id === null && lot(db, 'L-101').status === 'In Stock');
+  check('a lot left on an item removed earlier is freed too', lot(db, 'L-104').status === 'In Stock' && lot(db, 'L-104').workorder_items_id === null);
   check('a Void lot and another workorder\'s lot are untouched', lot(db, 'L-102').status === 'Void' && lot(db, 'L-200').status === 'Assigned' && lot(db, 'L-200').workorder_items_id === 99);
   check('one item log per cancelled item', events(db, 'ITEM_STATUS_CHANGED').filter((l) => l.item_status === 'Canceled').length === 3);
   const wo = events(db, 'WORKORDER_STATUS_CHANGED');
   check('one workorder log naming the cancel, the stock and the freed lots', wo.length === 1 && /cancelled/i.test(wo[0].notes_log) && /L-100/.test(wo[0].notes_log) && /L-101/.test(wo[0].notes_log), JSON.stringify(wo));
   check('no completion and no delivery', events(db, 'WORKORDER_COMPLETED').length === 0 && db.state.deliveries.length === 0);
   check('the client is released', db.released === true);
+  check('the save locks the workorder row first', db.sql.some((q) => /^SELECT \* FROM workorder WHERE workorder_id = \$1 FOR UPDATE$/i.test(q)));
 
   const again = await put(db, AS.sales, { status: 'Cancelled' });
   check('cancelling again changes nothing', again.code === 200 && db.state.stock.TREAD === 6 && events(db, 'WORKORDER_STATUS_CHANGED').length === 1);
@@ -183,7 +189,17 @@ for (const who of ['superadmin', 'admin', 'logistics']) {
   const r = await put(db, AS[who], { status: 'Cancelled' });
   check(`${who} may cancel`, r.code === 200 && db.state.workorder.status === 'Cancelled');
 }
-for (const [who, as] of [['staff', AS.staff], ['a claimed id with no login token', null]]) {
+{
+  const db = makeDb();
+  const r = await put(db, null, { status: 'Cancelled' });
+  check('a claimed id with no login token → 401 (log in again), nothing changed', r.code === 401 && db.state.workorder.status === 'Work Ordered' && db.state.stock.TREAD === 5);
+}
+{
+  const db = makeDb();
+  await put(db, AS.sales, { status: 'Cancelled' }, { claimId: 'GS' });
+  check('the cancel is logged as the signed login, not a claimed id', events(db, 'WORKORDER_STATUS_CHANGED')[0]?.user_id === 'BR' && events(db, 'ITEM_STATUS_CHANGED').every((l) => l.user_id === 'BR'));
+}
+for (const [who, as] of [['staff', AS.staff]]) {
   const db = makeDb();
   const r = await put(db, as, { status: 'Cancelled' });
   check(`${who} → 403 with a plain reason, nothing changed`,
@@ -204,6 +220,23 @@ console.log('G23 — a workorder with a delivery');
   check('…and nothing changed (rolled back, notes included)', db.state.workorder.status === 'Work Ordered' && db.state.workorder.notes === null && db.state.stock.TREAD === 5 && item(db, 1).status === 'In Workshop');
 }
 
+console.log('G23 — what cannot be cancelled');
+{
+  const db = makeDb({ status: 'Completed' });
+  const r = await put(db, AS.admin, { status: 'Cancelled' });
+  check('a Completed workorder → 409 (set it back to Work Ordered first), nothing changed', r.code === 409 && /completed/i.test(r.body?.error) && db.state.workorder.status === 'Completed' && db.state.stock.BIKE === 3, JSON.stringify(r.body));
+}
+{
+  const db = makeDb();
+  const r = await put(db, AS.admin, { status: 'Cancelled', items: [{ workorder_items_id: 1, status: 'Completed' }] });
+  check('a cancel carrying item changes → 409, nothing changed', r.code === 409 && db.state.workorder.status === 'Work Ordered' && item(db, 1).status === 'In Workshop');
+}
+{
+  const db = makeDb({ preMigration: true });
+  const r = await put(db, AS.admin, { status: 'Cancelled' });
+  check('before migration 0012 → a plain 409, not a 500; nothing changed', r.code === 409 && /0012/.test(r.body?.error) && db.state.workorder.status === 'Work Ordered' && db.state.stock.TREAD === 5, JSON.stringify(r.body));
+}
+
 console.log('G23 — a cancelled workorder');
 {
   const db = makeDb();
@@ -212,13 +245,17 @@ console.log('G23 — a cancelled workorder');
   check('adding an item → 409 (reopen first)', r.code === 409 && /reopen/i.test(r.body?.error) && db.state.items.length === 4);
   r = await put(db, AS.admin, { items: [{ workorder_items_id: 1, status: 'In Workshop' }] });
   check('changing an item → 409 (reopen first)', r.code === 409 && item(db, 1).status === 'Canceled');
+  r = await put(db, AS.admin, { notes: 'x', items: [{ workorder_items_id: 1, status: 'Canceled', technician_id: 'ZZ', item_sn: 'SN-9' }] });
+  check('any item edit on a cancelled workorder → 409 (nothing silently dropped)', r.code === 409 && db.state.workorder.notes === null);
   const before = db.sql.length;
-  r = await put(db, AS.admin, { notes: 'refund issued', items: [{ workorder_items_id: 1, status: 'Canceled', technician_id: 'ZZ', item_sn: 'SN-9' }] });
-  check('a normal save of a cancelled workorder leaves its items frozen', !db.sql.slice(before).some((q) => /^UPDATE workorder_items/i.test(q)));
+  r = await put(db, AS.admin, { notes: 'refund issued', items: [] });
+  check('a notes-only save leaves its items untouched', !db.sql.slice(before).some((q) => /^UPDATE workorder_items/i.test(q)));
   check('notes can still be edited', r.code === 200 && db.state.workorder.notes === 'refund issued' && db.state.workorder.status === 'Cancelled');
   r = await put(db, AS.admin, { status: 'Completed' });
   check('a cancelled workorder cannot jump to Completed', r.code === 409 && db.state.workorder.status === 'Cancelled');
-  r = await put(db, AS.staff, { status: 'Work Ordered' });
+  r = await put(db, AS.admin, { status: 'Work Ordered', notes: 'stale page' });
+  check('a stale page saving "Work Ordered" does NOT reopen it → 409 reload', r.code === 409 && /reload/i.test(r.body?.error) && db.state.workorder.status === 'Cancelled' && item(db, 1).status === 'Canceled' && db.state.stock.TREAD === 6, JSON.stringify(r.body));
+  r = await put(db, AS.staff, { status: 'Work Ordered', reopen: true });
   check('staff cannot reopen it', r.code === 403 && db.state.workorder.status === 'Cancelled');
 }
 
@@ -226,7 +263,7 @@ console.log('G23 — reopening');
 {
   const db = makeDb();
   await put(db, AS.sales, { status: 'Cancelled' });
-  const r = await put(db, AS.logistics, { status: 'Work Ordered' });
+  const r = await put(db, AS.logistics, { status: 'Work Ordered', reopen: true });
   check('logistics reopens → 200, Work Ordered', r.code === 200 && db.state.workorder.status === 'Work Ordered', JSON.stringify(r.body));
   check('items are back where they were', item(db, 1).status === 'In Workshop' && item(db, 2).status === 'Completed' && item(db, 3).status === 'Not in Workshop');
   check('…markers cleared', [1, 2, 3].every((n) => item(db, n).status_before_cancel === null));
@@ -241,8 +278,68 @@ console.log('G23 — reopening');
   const db = makeDb();
   await put(db, AS.sales, { status: 'Cancelled' });
   db.state.stock.BIKE = 1; // sold elsewhere meanwhile; item 2 needs 2
-  const r = await put(db, AS.admin, { status: 'Work Ordered' });
+  const r = await put(db, AS.admin, { status: 'Work Ordered', reopen: true });
   check('not enough stock to reopen → 409, nothing restored', r.code === 409 && /insufficient stock/i.test(r.body?.error) && db.state.workorder.status === 'Cancelled' && item(db, 1).status === 'Canceled' && db.state.stock.TREAD === 6, JSON.stringify(r.body));
+}
+
+console.log('G23 — nothing new attaches to a cancelled workorder');
+{
+  const { default: lotsHandler } = await import('../lib/handlers/lots.js');
+  const { default: deliveryHandler } = await import('../lib/handlers/delivery.js');
+  // A minimal client: answers the guard's lookup, records everything else.
+  const tiny = (row) => {
+    const sql = [];
+    return {
+      sql, release() {},
+      async query(text) {
+        const t = String(text).replace(/\s+/g, ' ').trim();
+        sql.push(t);
+        if (/FROM product_lots pl JOIN workorder_items wi/i.test(t)) return { rows: [row], rowCount: 1 };
+        if (/SELECT status::text AS status FROM workorder WHERE workorder_id = \$1 FOR UPDATE/i.test(t)) return { rows: [row], rowCount: 1 };
+        if (/INSERT INTO delivery/i.test(t)) return { rows: [{ delivery_id: 1, workorder_id: 41, delivery_status: 'To Be Booked' }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    };
+  };
+  const assign = { method: 'POST', query: { action: 'assign' }, body: { lot_id: 5, workorder_items_id: 1 }, headers: {} };
+  const lotRow = { lot_sku: 'TREAD', lot_status: 'In Stock', wi_sku: 'TREAD' };
+  for (const [label, extra] of [['a cancelled item', { wi_status: 'Canceled', wo_status: 'Work Ordered' }], ['an item on a cancelled workorder', { wi_status: 'In Workshop', wo_status: 'Cancelled' }]]) {
+    const c = tiny({ ...lotRow, ...extra });
+    const res = fakeRes();
+    await lotsHandler(assign, res, [], { getClient: async () => c });
+    check(`assigning a lot to ${label} → 409, nothing written`, res.statusCode === 409 && !c.sql.some((q) => /^UPDATE product_lots/i.test(q)), JSON.stringify(res.payload));
+  }
+  {
+    const c = tiny({ ...lotRow, wi_status: 'In Workshop', wo_status: 'Work Ordered' });
+    const res = fakeRes();
+    await lotsHandler(assign, res, [], { getClient: async () => c });
+    check('…a live item still takes the lot', res.statusCode === 200 && c.sql.some((q) => /^UPDATE product_lots SET status='Assigned'/i.test(q)));
+    check('…and the guard locks the item as well as the lot', c.sql.some((q) => /FOR UPDATE OF pl, wi/i.test(q)));
+  }
+  const newDelivery = { method: 'POST', query: {}, body: { invoice_id: 'INV-41', customer_id: 7, delivery_state: 'VIC', workorder_id: 41 }, headers: { 'x-user-id': 'GA' } };
+  {
+    const c = tiny({ status: 'Cancelled' });
+    const res = fakeRes();
+    await deliveryHandler(newDelivery, res, [], { getClient: async () => c });
+    check('a delivery for a cancelled workorder → 409, nothing inserted', res.statusCode === 409 && /cancelled/i.test(res.payload?.error) && !c.sql.some((q) => /INSERT INTO delivery/i.test(q)), JSON.stringify(res.payload));
+  }
+  {
+    const c = tiny({ status: 'Work Ordered' });
+    const res = fakeRes();
+    await deliveryHandler(newDelivery, res, [], { getClient: async () => c });
+    check('…a live workorder still gets its delivery', c.sql.some((q) => /INSERT INTO delivery/i.test(q)));
+  }
+}
+
+console.log('G23 — the Cancelled list');
+{
+  const db = makeDb();
+  const res = fakeRes();
+  await handler({ method: 'GET', query: { status: 'Cancelled' }, headers: { 'x-user-id': 'GA' } }, res, [], { getClient: async () => db });
+  const listSql = db.sql.find((q) => /FROM workorder wo JOIN customers c/i.test(q)) || '';
+  check('status=Cancelled is accepted', res.statusCode === 200, JSON.stringify(res.payload));
+  check('…compared as text (works before migration 0012 too)', /wo\.status::text = \$1/.test(listSql));
+  check('…and lists the items the cancel took off it', /wi\.status_before_cancel IS NOT NULL/.test(listSql));
 }
 
 console.log('G23 — status validation');

@@ -23,7 +23,7 @@ const COPY = {
     ],
     confirm: 'Yes, cancel workorder',
     keep: 'Keep workorder',
-    next: 'Cancelled',
+    send: { status: 'Cancelled' },
     done: 'Workorder cancelled',
   },
   reopen: {
@@ -34,7 +34,7 @@ const COPY = {
     ],
     confirm: 'Yes, reopen workorder',
     keep: 'Keep it cancelled',
-    next: 'Work Ordered',
+    send: { status: 'Work Ordered', reopen: true }, // the server reopens only on this explicit flag
     done: 'Workorder reopened',
   },
 };
@@ -72,6 +72,7 @@ export default function WorkorderCancel({ workorderId, status, onChanged }) {
   const [error, setError] = useState(null);
   const canManage = hasAnyRole(getRoles(), CANCEL_ROLES) && !currentUserIsWorkshop();
   const cancelled = String(status) === 'Cancelled';
+  const open_ = String(status) === 'Work Ordered'; // a Completed workorder is set back to Work Ordered first
 
   const close = () => { setOpen(null); setError(null); };
   const confirm = async () => {
@@ -81,7 +82,7 @@ export default function WorkorderCancel({ workorderId, status, onChanged }) {
       const res = await fetch(`/api/workorder?id=${encodeURIComponent(workorderId)}`, {
         method: 'PUT',
         headers: identityHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ status: COPY[open].next }),
+        body: JSON.stringify(COPY[open].send),
       });
       if (res.status === 401) { endExpiredSession(navigate); return; }
       const data = await res.json().catch(() => ({}));
@@ -104,7 +105,7 @@ export default function WorkorderCancel({ workorderId, status, onChanged }) {
           {canManage && <button type="button" onClick={() => setOpen('reopen')} className={SECONDARY}>Reopen workorder</button>}
         </div>
       )}
-      {!cancelled && canManage && (
+      {open_ && canManage && (
         <div className="mb-4 flex justify-end">
           <button type="button" onClick={() => setOpen('cancel')} className={SECONDARY}>Cancel workorder</button>
         </div>

@@ -698,7 +698,8 @@ export default function WorkorderDetailPage() {
           item_sn: it.item_sn ?? null,
         })),
       } : {
-        status: woStatus || wo.status,
+        // G23: only a real change is sent — a page opened before someone cancelled must not undo it.
+        ...(woStatus && woStatus !== wo.status ? { status: woStatus } : {}),
         notes,
         delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
         delivery_type: deliveryType,

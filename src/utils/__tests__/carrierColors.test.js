@@ -33,8 +33,8 @@ describe('carrierColor', () => {
     }
   });
 
-  test('unknown or blank names get no colour', () => {
-    expect(carrierColor('Someone New')).toBeNull();
+  test('a removalist added later gets the neutral colour; a blank name gets none', () => {
+    expect(carrierColor('Someone New')).toBe('#E5E7EB');
     expect(carrierColor('')).toBeNull();
     expect(carrierColor(null)).toBeNull();
   });

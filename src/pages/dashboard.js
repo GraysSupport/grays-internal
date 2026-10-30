@@ -260,6 +260,7 @@ export default function Dashboard() {
   // Total workorders so far this year (by date_created)
   const currentYear = today.getFullYear();
   const totalWOsThisYear = allWOs.filter((wo) => {
+    if (String(wo?.status) === 'Cancelled') return false; // G23
     const d = parseISO(wo?.date_created);
     return d && d.getFullYear() === currentYear;
   }).length;

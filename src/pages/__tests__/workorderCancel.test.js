@@ -65,6 +65,12 @@ describe('Cancel a workorder', () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  test('a Completed workorder shows no cancel button (set it back to Work Ordered first)', () => {
+    login(['admin']);
+    renderIt({ status: 'Completed' });
+    expect(screen.queryByRole('button', { name: 'Cancel workorder' })).not.toBeInTheDocument();
+  });
+
   test.each([['staff'], ['technician']])('a %s login sees no cancel button', (role) => {
     login([role]);
     renderIt();
@@ -89,6 +95,6 @@ describe('A cancelled workorder', () => {
     expect(screen.getByRole('dialog', { name: /reopen this workorder/i })).toHaveTextContent(/lots are not re-assigned/i);
     fireEvent.click(screen.getByRole('button', { name: 'Yes, reopen workorder' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ status: 'Work Ordered' });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ status: 'Work Ordered', reopen: true });
   });
 });

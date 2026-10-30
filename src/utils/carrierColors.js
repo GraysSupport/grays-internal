@@ -30,9 +30,13 @@ export const CARRIER_COLOR_RULES = [
   { like: 'grays', color: '#bfd6ebff' },
 ];
 
-/** Background colour for a removalist's name, or null when none is set. */
+// A removalist added later still gets a colour (neutral grey) until it is given its own here.
+export const DEFAULT_CARRIER_COLOR = '#E5E7EB';
+
+/** Background colour for a removalist's name; null only when there is no name. */
 export function carrierColor(name) {
-  const s = (name || '').toLowerCase();
+  const s = String(name || '').trim().toLowerCase();
+  if (!s) return null;
   const rule = CARRIER_COLOR_RULES.find((r) => s.includes(r.like));
-  return rule?.color || null;
+  return rule?.color || DEFAULT_CARRIER_COLOR;
 }
