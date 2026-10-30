@@ -471,9 +471,11 @@ describe("Director's View — owner answers (30 Oct 2026)", () => {
     renderPage();
     const team = await screen.findByRole('table', { name: /sales team/i });
     expect(within(team).getByRole('columnheader', { name: 'Gross margin' })).toBeInTheDocument();
+    expect(screen.getByText(/lot's cost where recorded, otherwise the product average cost — refurbishment labour is not included/i)).toBeInTheDocument(); // Sales team coverage
     const region = await openProducts();
     expect(within(region).getByRole('table', { name: 'Top 10 products by revenue' })).toHaveTextContent('Gross margin');
     expect(within(region).getByText('Gross margin 33%')).toBeInTheDocument();
-    expect(within(region).getAllByText(/refurbishment labour is not included/i).length).toBeGreaterThan(0);
+    expect(within(region).getByText(/lot's cost where recorded, otherwise the product average cost — refurbishment labour is not included/i)).toBeInTheDocument(); // Products coverage
+    expect(within(region).getByText(/Cancelled items are excluded/)).toBeInTheDocument();
   });
 });

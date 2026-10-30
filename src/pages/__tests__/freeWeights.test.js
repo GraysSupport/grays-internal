@@ -12,7 +12,7 @@ jest.mock('react-hot-toast', () => ({
 
 const PRODUCTS = [{ sku: 'LF-95T', name: 'Life Fitness 95T Treadmill', brand: 'Life Fitness', stock: 3, price: '1795' }];
 const LIST = {
-  available: true, can_see_cost: false,
+  available: true, can_see_cost: false, can_change: true,
   totals: { units: 11 },
   products: [
     {
@@ -515,8 +515,36 @@ describe('G21b — view-only logins (owner, 30 Oct 2026)', () => {
     expect(screen.queryByRole('button', { name: /add product line/i })).not.toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: /^Update stock/ })).not.toBeInTheDocument();
+    expect(within(c).getAllByRole('button', { name: /^History/ })).toHaveLength(3);
     expect(screen.getByText(/only superadmin, admin, logistics and sales logins can change/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /export free weights csv/i })).toBeInTheDocument();
+  });
+
+  test('a staff login can open the history of a weight, read only', async () => {
+    login(['staff'], 'SF');
+    const f = installFetch({
+      list: [200, { ...LIST, can_change: false }],
+      moves: [200, { moves: [{ id: 1, delta: 5, reason: 'received', reference: 'PO-77', note: null, user_id: 'GA', user_name: 'Gary', at: '2026-10-30T01:00:00Z' }] }],
+    });
+    renderPage();
+    const c = await card('Trigrip Olympic Rubber Weight');
+    fireEvent.click(within(c).getByRole('button', { name: /^History — .*20 kg/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/PO-77/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /save stock change/i })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Quantity')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(f.mock.calls.filter(([, o]) => o && o.method && o.method !== 'GET')).toHaveLength(0); // nothing written
+  });
+
+  test('a list without the flag is treated as view only', async () => {
+    login(['admin']);
+    const { can_change, ...noFlag } = LIST; // eslint-disable-line no-unused-vars
+    installFetch({ list: [200, noFlag] });
+    renderPage();
+    await card('Trigrip Olympic Rubber Weight');
+    expect(screen.queryByRole('button', { name: /add product line/i })).not.toBeInTheDocument();
   });
 
   test('a sales login keeps every button', async () => {

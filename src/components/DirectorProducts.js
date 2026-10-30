@@ -80,8 +80,8 @@ export default function DirectorProducts({ period, compare }) {
       {d && (
         <div aria-busy={state.loading} className={`space-y-4 ${state.loading ? 'opacity-60' : ''}`}>
           <div className="space-y-1">
-            <Coverage>Revenue: {d.totals.priced_lines} of {d.totals.lines} lines use the price on the order; {d.totals.estimated_lines} are estimated from the product list price{d.totals.unpriced_lines ? `; ${d.totals.unpriced_lines} have no price and count as $0` : ''}. Canceled items are excluded; custom items count in the totals but are not ranked as products.</Coverage>
-            <Coverage>Profit: {d.totals.costed_lines} of {d.totals.lines} lines have a cost set — gross profit and gross margin cover those lines only (a cost of $0 means “not set” and is never counted as $0). Cost is the product average cost — refurbishment labour is not included.</Coverage>
+            <Coverage>Revenue: {d.totals.priced_lines} of {d.totals.lines} lines use the price on the order; {d.totals.estimated_lines} are estimated from the product list price{d.totals.unpriced_lines ? `; ${d.totals.unpriced_lines} have no price and count as $0` : ''}. Cancelled items are excluded; custom items count in the totals but are not ranked as products.</Coverage>
+            <Coverage>Profit: {d.totals.costed_lines} of {d.totals.lines} lines have a cost set — gross profit and gross margin cover those lines only (a cost of $0 means “not set” and is never counted as $0). Cost is the lot's cost where recorded, otherwise the product average cost — refurbishment labour is not included.</Coverage>
             <Coverage>Stock: {fmtInt(d.stock.units_costed)} of {fmtInt(d.stock.units)} units in stock have a cost — “at cost” covers those only.{d.stock.negative > 0 && ` ${d.stock.negative} products with negative stock are left out.`}</Coverage>
           </div>
 

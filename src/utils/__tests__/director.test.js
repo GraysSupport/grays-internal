@@ -60,5 +60,10 @@ describe('conditionLabel (owner, 30 Oct 2026 — website labelling)', () => {
     expect(conditionLabel('New')).toBe('New');
     expect(conditionLabel('Not set')).toBe('Not set');
     expect(conditionLabel('XYZ')).toBe('XYZ');
+    expect(conditionLabel('constructor')).toBe('constructor');
+  });
+  test('older imports with other spacing or capitals still match', () => {
+    expect(conditionLabel('RECO')).toBe('Fully Reconditioned (RECO)');
+    expect(conditionLabel('cs ')).toBe('Clean and Serviced (cs)');
   });
 });

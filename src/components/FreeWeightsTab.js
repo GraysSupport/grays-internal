@@ -101,14 +101,14 @@ export default function FreeWeightsTab() {
   }
 
   const totals = data.totals || { units: 0 };
-  // The server is the authority (403 on any change); older payloads without the flag keep the buttons.
-  const canChange = data.can_change !== false;
+  // The server is the authority (403 on any change); a missing flag means view only.
+  const canChange = data.can_change === true;
   return (
     <div>
       {moving && (
-        <FreeWeightMoveDialog line={moving.line} variant={moving.variant} onSaved={onMoved} onClose={() => setMoving(null)} />
+        <FreeWeightMoveDialog line={moving.line} variant={moving.variant} readOnly={!canChange} onSaved={onMoved} onClose={() => setMoving(null)} />
       )}
-      {editing && (
+      {canChange && editing && (
         <FreeWeightLineDialog
           line={editing.line}
           canSeeCost={!!data.can_see_cost}
@@ -210,14 +210,14 @@ export default function FreeWeightsTab() {
                       <div>{v.stock} on hand</div>
                       <div>{formatAud(v.price)}</div>
                       {status && <div className="font-semibold"><span aria-hidden="true">{status.icon} </span>{status.text}</div>}
-                      {canChange && <button
+                      <button
                         type="button"
                         onClick={() => setMoving({ line, variant: v })}
-                        aria-label={`Update stock — ${title} ${formatKg(v.weight_kg)}`}
+                        aria-label={`${canChange ? 'Update stock' : 'History'} — ${title} ${formatKg(v.weight_kg)}`}
                         className="mt-1 text-xs text-blue-700 underline"
                       >
-                        Update stock
-                      </button>}
+                        {canChange ? 'Update stock' : 'History'}
+                      </button>
                     </li>
                   );
                 })}
