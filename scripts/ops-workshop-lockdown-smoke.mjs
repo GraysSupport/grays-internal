@@ -299,6 +299,17 @@ console.log('\ndeliveries:');
   check('single delivery for WK: no money or contact', one.res.statusCode === 200 && leaked(one.res.payload).length === 0);
   const admin = await dl(reqAs({ id: 'GA', roles: ['admin'] }), { deliveries: [D] });
   check('admin delivery list unchanged', admin.res.payload[0].outstanding_balance === '0' && admin.res.payload[0].delivery_charged === '150');
+  // G24 (owner, 2 Nov 2026): technicians see the delivery tabs, with the balance as Paid /
+  // Outstanding only — never the amount.
+  check('G24: a paid delivery says Paid to a technician', list.res.payload[0].balance_status === 'Paid');
+  const owing = await dl(reqAs({ id: 'ED', roles: ['technician'] }), { deliveries: [{ ...D, outstanding_balance: '1795.00' }] });
+  check('G24: an owing delivery says Outstanding — and no amount anywhere', owing.res.payload[0].balance_status === 'Outstanding' && !JSON.stringify(owing.res.payload).includes('1795') && leaked(owing.res.payload).length === 0);
+  const noWo = await dl(reqAs({ id: 'ED', roles: ['technician'] }), { deliveries: [{ ...D, workorder_id: null, outstanding_balance: null }] });
+  check('G24: no workorder balance → no payment status (not a false "Paid")', noWo.res.payload[0].balance_status === null);
+  check('G24: an overpaid (negative) balance is Paid', access.redactDelivery({ outstanding_balance: '-5.00' }).balance_status === 'Paid');
+  check('G24: a sub-cent float remainder counts as Paid', access.redactDelivery({ outstanding_balance: 0.004 }).balance_status === 'Paid');
+  check('G24: the WK kiosk gets the status too', one.res.payload.balance_status === 'Paid');
+  check('G24: admins get no balance_status (they see the amount)', !('balance_status' in admin.res.payload[0]));
   for (const method of ['POST', 'PUT', 'DELETE']) {
     const r = await dl(reqAs({ id: 'ED', roles: ['technician'], method, query: { id: '9' }, body: { delivery_status: 'Delivery Completed' } }), { deliveries: [D] });
     check(`technician ${method} on a delivery → 403, nothing written`, r.res.statusCode === 403 && writes(r.client).length === 0);

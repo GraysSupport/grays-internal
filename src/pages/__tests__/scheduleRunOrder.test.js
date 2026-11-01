@@ -238,16 +238,19 @@ describe('schedule page', () => {
     await waitFor(() => expect(orderOf(container)).toBe('Dan,Alice,Bob,Cara,Eve'));
   });
 
-  test('G17: a technician gets the "not available" screen instead of the schedule', () => {
+  // G24 (owner, 2 Nov 2026) replaced the G17 "not available" screen with a view-only schedule.
+  test('G24: a technician sees the schedule view-only — no reorder controls, nothing draggable', async () => {
     login(['technician']);
-    const fetchMock = installFetch();
-    render(
+    installFetch();
+    const { container } = render(
       <MemoryRouter initialEntries={['/delivery_operations/schedule']}>
         <DeliverySchedulePage />
       </MemoryRouter>
     );
-    expect(screen.getByText(/not available to workshop logins/i)).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/view only/i)).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelectorAll('tbody tr').length).toBeGreaterThan(1));
+    expect(screen.queryByRole('button', { name: /move .* (up|down)/i })).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[draggable="true"], [data-run-handle]')).toHaveLength(0);
   });
 
   test.each([['staff'], ['sales']])('%s gets no reorder controls and rows are not draggable', async (role) => {
