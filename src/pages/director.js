@@ -9,6 +9,7 @@ import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, mo
 import { Change, Coverage } from '../components/DirectorParts';
 import DirectorProducts from '../components/DirectorProducts';
 import DirectorDeliveries from '../components/DirectorDeliveries';
+import DirectorOverview from '../components/DirectorOverview';
 
 // G22 Director's View (owner, 29 Oct 2026) — superadmin only; read-only performance figures.
 // G22a = the shell (period picker, compare, coverage lines) + the sales team section. The server
@@ -113,7 +114,7 @@ const COLS = [
   ['Avg order', (s) => formatDollars(s.aov)],
   ['Units', (s) => s.units],
   ['Gross profit', (s) => formatDollars(s.gross_profit)],
-  ['Margin', (s) => formatPct(s.margin)],
+  ['Gross margin', (s) => formatPct(s.margin)],
   ['Delivery charged', (s) => formatDollars(s.delivery_charged)],
   ['Carrier cost', (s) => formatDollars(s.carrier_cost)],
   ['Delivery net', (s) => formatDollars(s.delivery_net)],
@@ -137,8 +138,8 @@ function SalesTeam({ data, compare, range }) {
     <section aria-labelledby="dv-sales" className="rounded-xl border bg-white p-4">
       <h2 id="dv-sales" className="text-lg font-bold">Sales team</h2>
       <div className="mt-2 space-y-1">
-        <Coverage>Sales value: {c.priced_lines} of {c.lines} lines use the price on the order; {c.estimated_lines} are estimated from the product list price{c.unpriced_lines ? `; ${c.unpriced_lines} have no price and count as $0` : ''}. Canceled items are excluded.</Coverage>
-        <Coverage>Profit: {c.costed_lines} of {c.lines} lines have a cost set — gross profit and margin cover those lines only (an unknown cost is never counted as $0).</Coverage>
+        <Coverage>Sales value: {c.priced_lines} of {c.lines} lines use the price on the order; {c.estimated_lines} are estimated from the product list price{c.unpriced_lines ? `; ${c.unpriced_lines} have no price and count as $0` : ''}. Cancelled items are excluded.</Coverage>
+        <Coverage>Profit: {c.costed_lines} of {c.lines} lines have a cost set — gross profit and gross margin cover those lines only (an unknown cost is never counted as $0). Cost is the lot's cost where recorded, otherwise the product average cost — refurbishment labour is not included.</Coverage>
         <Coverage>Completion: {c.completed_timed} of {c.completed} completed workorders have a completion record (days to complete and on-time use those). Outstanding is today&apos;s balance on open workorders created in the period.</Coverage>
         <Coverage>Deliveries: Customer Collect excluded; “free” means charged exactly $0; of {c.delivery_jobs} jobs, {c.jobs_no_cost} have no carrier cost entered (counted as $0) and {c.jobs_no_charge ?? 0} have no charge entered (not counted as free). The total invoice count is distinct across the team. Invoices are counted once per salesperson — one invoice number can appear on more than one workorder.</Coverage>
         <Coverage>E-commerce: the flag is set on {c.ecommerce} of {c.workorders} workorders, so it may not be reliable.</Coverage>
@@ -276,6 +277,7 @@ export default function DirectorPage({ now }) {
             <p className="text-xs text-gray-700">
               {formatWhen(period.from, true)} – {formatWhen(period.to, true)} · All money is AUD, GST-inclusive as stored, rounded to the dollar. Read-only — nothing here changes any record.
             </p>
+            <DirectorOverview period={period} compare={compare} onOpen={setSection} />
             <div role="tablist" aria-label="Director's View sections" className="flex gap-1 border-b border-gray-300">
               {SECTIONS.map((s) => (
                 <button

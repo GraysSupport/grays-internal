@@ -75,3 +75,11 @@ export function monthLabel(ym) {
   const [y, m] = String(ym).split('-').map(Number);
   return `${MONTHS[m - 1]} ${y}`;
 }
+
+// Workorder item condition codes → the names used on the website (owner, 30 Oct 2026).
+const CONDITION_NAMES = { CS: 'Clean and Serviced', CCG: 'Check, Clean and Go', AT: 'As Traded', RECO: 'Fully Reconditioned' };
+export function conditionLabel(code) {
+  const key = String(code ?? '').trim().toUpperCase();
+  if (!Object.hasOwn(CONDITION_NAMES, key)) return code;
+  return `${CONDITION_NAMES[key]} (${String(code).trim()})`;
+}
