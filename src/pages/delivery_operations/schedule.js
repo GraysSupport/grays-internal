@@ -1208,7 +1208,7 @@ function DeliverySchedulePage() {
                     <th className='col-state'>State</th>
                     <th className='col-items'>Items</th>
                     <th>Delivery Date</th>
-                    <th>Notes</th>
+                    {!readOnly && <th>Notes</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1223,7 +1223,7 @@ function DeliverySchedulePage() {
                         ))}
                       </td>
                       <td>{r.date}</td>
-                      <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
+                      {!readOnly && <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>}
                     </tr>
                   ))}
                 </tbody>

@@ -130,12 +130,13 @@ describe.each([
   test('cards do not link to pages a workshop login cannot open', async () => {
     renderAs(who);
     await waitFor(() => expect(cardValue('Active Workorders')).toBe('2'));
-    // Products and the Schedule are blocked for every workshop login (G17).
+    // Products (G17) and Collections (G24) are blocked for every workshop login.
     expect(card('Total Products')).not.toHaveClass('cursor-pointer');
-    expect(card('Deliveries Today (Booked)')).not.toHaveClass('cursor-pointer');
-    // Current Workorders + Collections are open to technicians / the workshop role, not the kiosk.
+    expect(card('Collections This Week')).not.toHaveClass('cursor-pointer');
+    // Current Workorders and — view-only since G24 — the Schedule are open to technicians and
+    // the workshop role, not the kiosk (its ops entry is /workshop).
     const opsLinked = who.id !== 'WK';
-    for (const label of ['Active Workorders', 'Collections This Week']) {
+    for (const label of ['Active Workorders', 'Deliveries Today (Booked)']) {
       if (opsLinked) expect(card(label)).toHaveClass('cursor-pointer');
       else expect(card(label)).not.toHaveClass('cursor-pointer');
     }

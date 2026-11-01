@@ -522,7 +522,7 @@ function CompletedDeliveriesPage() {
                           <td className="px-3 py-2 text-sm">
                             <div className="flex flex-col gap-1">
                               <span>{row.delivery_type || '—'}</span>
-                              <div className="flex flex-wrap gap-1">
+                              {!readOnly && <div className="flex flex-wrap gap-1">
                                 {row.free_delivery && (
                                   <span className="inline-block rounded bg-green-100 text-green-800 px-1.5 py-0.5 text-[10px] font-medium">FREE</span>
                                 )}
@@ -534,7 +534,7 @@ function CompletedDeliveriesPage() {
                                     install {fmtMoney(Number(row.installation_cost))}
                                   </span>
                                 )}
-                              </div>
+                              </div>}
                             </div>
                           </td>
 

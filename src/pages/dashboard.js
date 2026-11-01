@@ -269,9 +269,9 @@ export default function Dashboard() {
   // fake 0.
   const NOT_AVAILABLE = 'Not available';
   const shown = (source, value) => (!loaded ? '…' : failed.has(source) ? NOT_AVAILABLE : value);
-  // Links: workshop logins can't open Products, the Waitlist, the Schedule or To-Be-Booked
-  // (G17 blockWorkshop); they CAN open Current Workorders and Collections — except the WK
-  // kiosk, whose ops entry is /workshop.
+  // Links: workshop logins can't open Products, the Waitlist or Collections (G17/G24
+  // blockWorkshop); they CAN open Current Workorders and, view-only since G24, the Schedule and
+  // To-Be-Booked — except the WK kiosk, whose ops entry is /workshop.
   const isKiosk = String(user?.id || '').toUpperCase() === 'WK' || user?.email === 'workshop@graysfitness.com.au';
   const officeLink = (fn) => (isWorkshop ? null : fn);
   const opsLink = (fn) => (isKiosk ? null : fn);
@@ -356,11 +356,11 @@ export default function Dashboard() {
               {analyticsCard('Active Workorders', shown('workorder', activeWOs.length), '', opsLink(() => navigate('/delivery_operations')))}
               {analyticsCard('Past Target (Active WOs)', shown('workorder', pastTargetWOs.length), 'text-red-700', opsLink(() => navigate('/delivery_operations/?filter=past-target')))}
               {analyticsCard('Important Workorders', shown('workorder', importantWOs.length), 'text-purple-700', opsLink(() => navigate('/delivery_operations/?filter=important')))}
-              {analyticsCard('Deliveries Today (Booked)', shown('delivery', deliveriesToday.length), '', officeLink(() => navigate('/delivery_operations/schedule?when=today')))}
-              {analyticsCard('Deliveries This Week (Booked)', shown('delivery', deliveriesThisWeek.length), '', officeLink(() => navigate('/delivery_operations/schedule?when=this-week')))}
-              {analyticsCard('Customer Collect (Booked)', shown('delivery', customerCollectCount), '', officeLink(() => navigate('/delivery_operations/schedule?filter=customer-collect')))}
-              {analyticsCard('Collections This Week', shown('collections', collectionsThisWeek.length), '', opsLink(() => navigate('/delivery_operations/current-collections?when=this-week')))}
-              {analyticsCard('Collections Next Week', shown('collections', collectionsNextWeek.length), '', opsLink(() => navigate('/delivery_operations/current-collections?when=next-week')))}
+              {analyticsCard('Deliveries Today (Booked)', shown('delivery', deliveriesToday.length), '', opsLink(() => navigate('/delivery_operations/schedule?when=today')))}
+              {analyticsCard('Deliveries This Week (Booked)', shown('delivery', deliveriesThisWeek.length), '', opsLink(() => navigate('/delivery_operations/schedule?when=this-week')))}
+              {analyticsCard('Customer Collect (Booked)', shown('delivery', customerCollectCount), '', opsLink(() => navigate('/delivery_operations/schedule?filter=customer-collect')))}
+              {analyticsCard('Collections This Week', shown('collections', collectionsThisWeek.length), '', officeLink(() => navigate('/delivery_operations/current-collections?when=this-week')))}
+              {analyticsCard('Collections Next Week', shown('collections', collectionsNextWeek.length), '', officeLink(() => navigate('/delivery_operations/current-collections?when=next-week')))}
               {analyticsCard(`Workorders in ${today.getFullYear()}`, shown('workorder', totalWOsThisYear))}
             </div>
 

@@ -316,6 +316,28 @@ console.log('\ndeliveries:');
   }
 }
 
+console.log('\ncollections (G24 — not for workshop logins):');
+{
+  const collectionsHandler = (await import('../lib/handlers/collections.js')).default;
+  const col = async (req) => {
+    const client = fakeClient();
+    const res = fakeRes();
+    await collectionsHandler(req, res, [], { getClient: async () => client });
+    return { client, res };
+  };
+  const t = await col(reqAs({ id: 'ED', roles: ['technician'], query: { completed: 'false' } }));
+  check('technician collections list → 403', t.res.statusCode === 403 && /workshop/i.test(t.res.payload.error));
+  const k = await col(reqAs({ id: 'WK', roles: ['admin'], query: { id: '5', include: 'items' } }));
+  check('WK kiosk collection detail → 403', k.res.statusCode === 403);
+  const p = await col(reqAs({ id: 'ED', roles: ['technician'], method: 'POST', query: { resource: 'sync-lots', id: '5' } }));
+  check('technician sync-lots (stock + cost) → 403, nothing written', p.res.statusCode === 403 && writes(p.client).length === 0);
+  const a = await col(reqAs({ id: 'GA', roles: ['admin'], query: { resource: 'carriers' } }));
+  check('admin collections still answer', a.res.statusCode === 200);
+  const anon = await col({ method: 'GET', query: { resource: 'carriers' }, headers: {} });
+  check('no identity at all is unchanged (P7) — the dashboard counts still load', anon.res.statusCode === 200);
+  check('the client is released after a refusal', t.client.released === true);
+}
+
 console.log('\ncustomers:');
 {
   const c = fakeClient();

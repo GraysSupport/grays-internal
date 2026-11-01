@@ -5,6 +5,7 @@ import SchedulePage from '../delivery_operations/schedule';
 import CompletedDeliveriesPage from '../delivery_operations/completed-deliveries';
 import CurrentCollectionsPage from '../delivery_operations/current-collections';
 import CompletedCollectionsPage from '../delivery_operations/completed-collections';
+import CollectionDetailPage from '../delivery_operations/collections/[id]';
 import DeliveryTabs from '../../components/DeliveryTabs';
 
 // G24 (owner, 2 Nov 2026) — technicians may look at To Be Booked, the Delivery Schedule and
@@ -177,6 +178,48 @@ describe('Deliveries Completed — technician (view only)', () => {
   });
 });
 
+describe('view-only holds even when more arrives than expected (review)', () => {
+  test('the WK kiosk (an admin login) gets no board-notes editor', async () => {
+    login(WK);
+    const f = installFetch([AS_TECH('To Be Booked', 'Paid')]);
+    const base = f.getMockImplementation();
+    f.mockImplementation(async (url, opts) => (String(url).includes('resource=board-notes')
+      ? { ok: true, status: 200, json: async () => ({ available: true, body: 'Driver in Thursday 9am', version: 3 }) }
+      : base(url, opts)));
+    renderAt('/delivery_operations/to-be-booked', <ToBeBookedPage />);
+    expect(await screen.findByText('Driver in Thursday 9am')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit notes/i })).not.toBeInTheDocument();
+  });
+
+  test('Deliveries Completed draws no money even if the server sent full rows', async () => {
+    login(TECH);
+    installFetch([{ ...AS_ADMIN('Delivery Completed'), balance_status: 'Outstanding', free_delivery: true, cash_to_removalist: true, installation_cost: '80' }]);
+    renderAt('/delivery_operations/completed-deliveries', <CompletedDeliveriesPage />);
+    await screen.findByText('Dana Customer');
+    const table = screen.getByRole('table');
+    expectReadOnlyTable(table);
+    expect(within(table).queryByText('FREE')).not.toBeInTheDocument();
+    expect(within(table).queryByText('CASH')).not.toBeInTheDocument();
+    expect(table.textContent).not.toMatch(/1795|0400/);
+  });
+
+  test('To Be Booked and the Schedule draw no money even if the server sent full rows', async () => {
+    login(TECH);
+    installFetch([{ ...AS_ADMIN('To Be Booked'), balance_status: 'Outstanding' }]);
+    const { unmount } = renderAt('/delivery_operations/to-be-booked', <ToBeBookedPage />);
+    await screen.findByText('Dana Customer');
+    expectReadOnlyTable(screen.getByRole('table'));
+    expect(screen.getByRole('table').textContent).not.toMatch(/1795|0400/);
+    unmount();
+    installFetch([{ ...AS_ADMIN('Booked for Delivery'), balance_status: 'Outstanding' }]);
+    renderAt('/delivery_operations/schedule', <SchedulePage />);
+    await screen.findAllByText('Dana Customer');
+    for (const table of screen.getAllByRole('table')) {
+      expect(table.textContent).not.toMatch(/\$|1795|0400/);
+    }
+  });
+});
+
 describe('admins are unchanged', () => {
   test('To Be Booked keeps the money columns and the editors', async () => {
     login(ADMIN);
@@ -207,6 +250,18 @@ describe('collections — not for technicians', () => {
     login(TECH);
     const f = installFetch([]);
     renderAt(path, page);
+    expect(screen.getByText(/not available to workshop logins/i)).toBeInTheDocument();
+    expect(calls(f, /collections/)).toHaveLength(0);
+  });
+
+  test('a collection typed in by address: not available either (review)', () => {
+    login(TECH);
+    const f = installFetch([]);
+    render(
+      <MemoryRouter initialEntries={['/delivery_operations/collections/5']}>
+        <Routes><Route path="/delivery_operations/collections/:id" element={<CollectionDetailPage />} /></Routes>
+      </MemoryRouter>
+    );
     expect(screen.getByText(/not available to workshop logins/i)).toBeInTheDocument();
     expect(calls(f, /collections/)).toHaveLength(0);
   });
