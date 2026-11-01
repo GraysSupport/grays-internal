@@ -6,7 +6,9 @@ import { currentUserIsWorkshop } from '../utils/workshopAccess';
 
 export default function DeliveryTabs({ className = '' }) {
   const { pathname } = useLocation();
-  // G17: workshop logins (technician / workshop / WK) don't plan runs or see the booking + money tabs.
+  // G17: workshop logins (technician / workshop / WK) don't plan runs.
+  // G24 (owner, 2 Nov 2026): they now see To Be Booked, the Delivery Schedule and Deliveries
+  // Completed (view only, Paid / Outstanding instead of amounts) — but not the collections tabs.
   const isWorkshop = currentUserIsWorkshop();
   const canPlanRun = hasAnyRole(getRoles(), TEMP_RUN_ROLES) && !isWorkshop;
 
@@ -53,33 +55,29 @@ export default function DeliveryTabs({ className = '' }) {
             Current Operations
           </Link>
 
-          {!isWorkshop && (
-            <Link
-              to="/delivery_operations/to-be-booked"
-              className={tabCls(isActive.toBeBooked)}
-              aria-current={isActive.toBeBooked ? 'page' : undefined}
-            >
-              To Be Booked
-            </Link>
-          )}
-
-          {!isWorkshop && (
-            <Link
-              to="/delivery_operations/schedule"
-              className={tabCls(isActive.schedule)}
-              aria-current={isActive.schedule ? 'page' : undefined}
-            >
-              Delivery Schedule
-            </Link>
-          )}
+          <Link
+            to="/delivery_operations/to-be-booked"
+            className={tabCls(isActive.toBeBooked)}
+            aria-current={isActive.toBeBooked ? 'page' : undefined}
+          >
+            To Be Booked
+          </Link>
 
           <Link
+            to="/delivery_operations/schedule"
+            className={tabCls(isActive.schedule)}
+            aria-current={isActive.schedule ? 'page' : undefined}
+          >
+            Delivery Schedule
+          </Link>
+
+          {!isWorkshop && <Link
             to="/delivery_operations/current-collections"
             className={tabCls(isActive.currentCollections)}
             aria-current={isActive.currentCollections ? 'page' : undefined}
           >
             Current Collections
-          </Link>
+          </Link>}
 
           {/* G8 — planning only; never books anything (logistics + superadmin) */}
           {canPlanRun && (
@@ -109,23 +107,21 @@ export default function DeliveryTabs({ className = '' }) {
             Operations Completed
           </Link>
 
-          {!isWorkshop && (
-            <Link
-              to="/delivery_operations/completed-deliveries"
-              className={tabCls(isActive.completedDeliveries)}
-              aria-current={isActive.completedDeliveries ? 'page' : undefined}
-            >
-              Deliveries Completed
-            </Link>
-          )}
-
           <Link
+            to="/delivery_operations/completed-deliveries"
+            className={tabCls(isActive.completedDeliveries)}
+            aria-current={isActive.completedDeliveries ? 'page' : undefined}
+          >
+            Deliveries Completed
+          </Link>
+
+          {!isWorkshop && <Link
             to="/delivery_operations/completed-collections"
             className={tabCls(isActive.completedCollections)}
             aria-current={isActive.completedCollections ? 'page' : undefined}
           >
             Collections Completed
-          </Link>
+          </Link>}
 
           {/* Exit */}
           <div className="mx-2 h-6 w-px bg-gray-200" />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
+import { currentUserIsWorkshop } from '../utils/workshopAccess';
 
 // G7 (Nick, 28 Sep 2026) — one shared notes panel at the top of the To-Be-Booked tab for
 // "when drivers are coming in next". Everyone on the tab reads it; logistics / admin /
@@ -48,7 +49,9 @@ export default function DeliveryBoardNotes() {
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState(null); // the other person's note, when a save was refused
   const editingRef = useRef(false);
-  const canEdit = hasAnyRole(getRoles(), EDIT_ROLES);
+  // G24: workshop logins see To Be Booked view-only — the WK kiosk is an admin login, so the
+  // role alone would offer it an editor the server refuses.
+  const canEdit = hasAnyRole(getRoles(), EDIT_ROLES) && !currentUserIsWorkshop();
 
   useEffect(() => { editingRef.current = editing; }, [editing]);
 

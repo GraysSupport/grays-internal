@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 import { useNavigate } from 'react-router-dom';
 
 const PAGE_SIZE = 30; // tweak as you like
@@ -29,7 +30,7 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-export default function CompletedCollectionsPage() {
+function CompletedCollectionsPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -210,3 +211,6 @@ export default function CompletedCollectionsPage() {
     </div>
   );
 }
+
+// G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) don't need collections.
+export default blockWorkshop(CompletedCollectionsPage, 'Collections Completed');

@@ -7,6 +7,7 @@ import HomeButton from '../../../components/homebutton';
 import CreateProductModal from '../../../components/CreateProductModal';
 import { printLotLabels } from '../../../utils/lotLabels';
 import { downloadInwardRegisterXlsx } from '../../../utils/inwardRegisterXlsx';
+import { blockWorkshop } from '../../../components/WorkshopBlocked';
 
 const ensureArray = (x) => (Array.isArray(x) ? x : (x && typeof x === 'object' ? [x] : []));
 
@@ -30,7 +31,7 @@ function formatAUSDate(iso) {
 
 const isOther = (sku) => String(sku || '').toUpperCase() === 'OTHER';
 
-export default function CollectionDetailPage() {
+function CollectionDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
 
@@ -745,3 +746,6 @@ export default function CollectionDetailPage() {
     </>
   );
 }
+
+// G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) don't need collections.
+export default blockWorkshop(CollectionDetailPage, 'Collection');

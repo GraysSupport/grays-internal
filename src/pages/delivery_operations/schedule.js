@@ -9,7 +9,8 @@ import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
 import {
   RUN_ORDER_ROLES, compareStops, sameRun, moveStop, neighbourInRun, runOrderPayload, stopsInRun,
 } from '../../utils/runOrder';
-import { blockWorkshop } from '../../components/WorkshopBlocked';
+import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
+import { BalanceBadge, CarrierName, ViewOnlyNotice, fmtDay } from '../../components/DeliveryViewOnly';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 
@@ -99,6 +100,8 @@ function CompactMoneyInput({ value, onChange, onBlur, placeholder = '0.00', widt
 function DeliverySchedulePage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
+  // G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) see the schedule view-only.
+  const readOnly = useMemo(() => currentUserIsWorkshop(), []);
 
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -171,7 +174,8 @@ function DeliverySchedulePage() {
       setLoading(true);
       toast.loading('Loading schedule…', { id: 'sched-load' });
       try {
-        const res = await fetch('/api/delivery?include_removalists=1');
+        // Identity headers: the server hides money + contact details from workshop logins.
+        const res = await fetch('/api/delivery?include_removalists=1', { headers: identityHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || 'Failed to load deliveries');
 
@@ -182,13 +186,14 @@ function DeliverySchedulePage() {
         const booked = deliveries.filter(d => d.delivery_status === 'Booked for Delivery');
 
         // Fallback like the other page
-        const needWO = booked.some(d => d.items_text == null || d.outstanding_balance == null || d.items);
+        // (a workshop login has balance_status, never the balance — no reason to look it up)
+        const needWO = booked.some(d => d.items_text == null || (!readOnly && d.outstanding_balance == null) || d.items);
         let woMap = {};
         if (needWO) {
           const ids = [...new Set(booked.map(d => d.workorder_id).filter(Boolean))];
           await Promise.all(ids.map(async wid => {
             try {
-              const r = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`);
+              const r = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`, { headers: identityHeaders() });
               const j = await r.json();
               if (r.ok) woMap[wid] = j;
             } catch {}
@@ -203,8 +208,8 @@ function DeliverySchedulePage() {
           else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
           else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
-          const outstanding =
-            d.outstanding_balance != null ? Number(d.outstanding_balance)
+          const outstanding = readOnly ? null
+            : d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
           const removalistName =
@@ -227,7 +232,7 @@ function DeliverySchedulePage() {
     })();
 
     return () => { mounted = false; };
-  }, [navigate]);
+  }, [navigate, readOnly]);
 
   // G9: the saved stop order. Read separately (not in the big list query) so a database
   // without the run_order column simply answers `available: false`.
@@ -346,7 +351,7 @@ function DeliverySchedulePage() {
   // G9: reordering is offered only when the whole schedule is on screen. With a search or a
   // filter applied, some of a run's stops are hidden, and "move up" would mean something
   // different from what the user sees.
-  const reorderEnabled = canReorderRole && runOrderAvailable && filtered.length === rows.length;
+  const reorderEnabled = canReorderRole && !readOnly && runOrderAvailable && filtered.length === rows.length;
 
   // Move `fromId` to where `toId` sits — same carrier AND same day only (sameRun).
   //
@@ -770,11 +775,22 @@ function DeliverySchedulePage() {
     </select>
   );
 
+  // G24: the same columns as text — carrier, Paid / Outstanding, date, status.
+  const ViewOnlyCells = ({ row }) => (
+    <>
+      <td className="px-3 py-2 text-sm"><CarrierName name={row.removalist_name} /></td>
+      <td className="px-3 py-2 text-sm text-center"><BalanceBadge status={row.balance_status} /></td>
+      <td className="px-3 py-2 text-sm">{fmtDay(row.delivery_date)}</td>
+      <td className="px-3 py-2 text-sm">{row.delivery_status}</td>
+    </>
+  );
+
   // Renders a single date block; rows are CLICKABLE like To-Be-Booked
   const DateBlock = ({ dateKey, rowsForDate }) => {
     // G9: carrier, then saved stop order, then customer (unordered rows sort as before).
     const sorted = [...rowsForDate].sort(compareStops(runOrder));
-    const cols = reorderEnabled ? 14 : 13;
+    // G24: view-only drops the notes (the server withholds them) and every money column.
+    const cols = (reorderEnabled ? 14 : 13) - (readOnly ? 4 : 0);
 
     let lastCarrier = null;
 
@@ -794,10 +810,10 @@ function DeliverySchedulePage() {
                 <th className="px-3 py-2 w-64">Carrier</th>
                 <th className="px-3 py-2 w-16 text-center">Payment</th>
                 <th className="px-3 py-2 w-40">Delivery Date</th>
-                <th className="px-3 py-2 w-72">Notes</th>
-                <th className="px-3 py-2 w-20">Delivery Charged</th>
-                <th className="px-3 py-2 w-20">Delivery Quoted</th>
-                <th className="px-3 py-2 w-24">Margin</th>
+                {!readOnly && <th className="px-3 py-2 w-72">Notes</th>}
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Charged</th>}
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Quoted</th>}
+                {!readOnly && <th className="px-3 py-2 w-24">Margin</th>}
                 <th className="px-3 py-2 w-56">Status</th>
               </tr>
             </thead>
@@ -884,20 +900,24 @@ function DeliverySchedulePage() {
                       )}
                       <td className="px-3 py-2 text-sm font-mono">
                         {row.invoice_id || '—'}
-                        {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                        {row.workorder_id && !readOnly && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
                       </td>
                       <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                       <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
                       <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
-                      <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
-                      <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
-                      <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
-                      <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
-                      <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
-                      <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
-                      <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
-                      <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                      {readOnly ? <ViewOnlyCells row={row} /> : (
+                        <>
+                          <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
+                          <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
+                          <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
+                          <td className="px-3 py-2 text-sm"><NotesCell row={row} /></td>
+                          <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_charged" /></td>
+                          <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
+                          <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
+                          <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                        </>
+                      )}
                     </tr>
                   </Fragment>
                 );
@@ -927,19 +947,19 @@ function DeliverySchedulePage() {
                 <th className="px-3 py-2 w-64">Carrier</th>
                 <th className="px-3 py-2 w-16 text-center">Payment</th>
                 <th className="px-3 py-2 w-40">Delivery Date</th>
-                <th className="px-3 py-2 w-72">Notes</th>
-                <th className="px-3 py-2 w-20">Delivery Charged</th>
-                <th className="px-3 py-2 w-20">Delivery Quoted</th>
-                <th className="px-3 py-2 w-24">Margin</th>
+                {!readOnly && <th className="px-3 py-2 w-72">Notes</th>}
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Charged</th>}
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Quoted</th>}
+                {!readOnly && <th className="px-3 py-2 w-24">Margin</th>}
                 <th className="px-3 py-2 w-56">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && (
-                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                <tr><td colSpan={readOnly ? 9 : 13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
               )}
               {!loading && sorted.length === 0 && (
-                <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
+                <tr><td colSpan={readOnly ? 9 : 13} className="px-3 py-6 text-center text-sm">No Customer Collect deliveries.</td></tr>
               )}
               {!loading && sorted.map((row, idx) => {
                 const margin =
@@ -960,12 +980,13 @@ function DeliverySchedulePage() {
                   >
                     <td className="px-3 py-2 text-sm font-mono">
                       {row.invoice_id || '—'}
-                      {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                      {row.workorder_id && !readOnly && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
                     </td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_state || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">{row.items_text || '—'}</td>
+                    {readOnly ? <ViewOnlyCells row={row} /> : (<>
                     {/* EDITABLE carrier */}
                     <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
                     {/* EDITABLE payment */}
@@ -980,6 +1001,7 @@ function DeliverySchedulePage() {
                     <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
                     {/* EDITABLE status */}
                     <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                    </>)}
                   </tr>
                 );
               })}
@@ -1141,6 +1163,7 @@ function DeliverySchedulePage() {
               </div>
 
               <div className="space-y-8 p-4">
+                {readOnly && <ViewOnlyNotice />}
                 {customerCollectRows.length > 0 && (
                   <CustomerCollectBlock rowsCC={customerCollectRows} />
                 )}
@@ -1185,7 +1208,7 @@ function DeliverySchedulePage() {
                     <th className='col-state'>State</th>
                     <th className='col-items'>Items</th>
                     <th>Delivery Date</th>
-                    <th>Notes</th>
+                    {!readOnly && <th>Notes</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1200,7 +1223,7 @@ function DeliverySchedulePage() {
                         ))}
                       </td>
                       <td>{r.date}</td>
-                      <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>
+                      {!readOnly && <td style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -1213,5 +1236,5 @@ function DeliverySchedulePage() {
   );
 }
 
-// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
-export default blockWorkshop(DeliverySchedulePage, 'Delivery Schedule');
+// G17 blocked workshop logins here; G24 (owner, 2 Nov 2026) lets them in view-only (see readOnly).
+export default DeliverySchedulePage;

@@ -187,14 +187,18 @@ describe('lists, tabs and customers', () => {
     expect(screen.getByRole('columnheader', { name: 'Payment' })).toBeInTheDocument();
   });
 
-  test('delivery tabs: booking + money tabs hidden for workshop logins', () => {
+  // G24 (owner, 2 Nov 2026) reversed the G17 hiding of the delivery tabs — they are view-only
+  // now (see technicianDeliveries.test.js); the collections tabs are hidden instead.
+  test('delivery tabs: workshop logins get the delivery tabs, not collections or run planning', () => {
     login(TECH);
     renderAt('/delivery_operations', <DeliveryTabs />, '/delivery_operations');
     expect(screen.getByText('Current Operations')).toBeInTheDocument();
-    expect(screen.queryByText('To Be Booked')).not.toBeInTheDocument();
-    expect(screen.queryByText('Delivery Schedule')).not.toBeInTheDocument();
-    expect(screen.queryByText('Deliveries Completed')).not.toBeInTheDocument();
+    expect(screen.getByText('To Be Booked')).toBeInTheDocument();
+    expect(screen.getByText('Delivery Schedule')).toBeInTheDocument();
+    expect(screen.getByText('Deliveries Completed')).toBeInTheDocument();
     expect(screen.getByText('Operations Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Current Collections')).not.toBeInTheDocument();
+    expect(screen.queryByText('Collections Completed')).not.toBeInTheDocument();
   });
 
   test('waitlist page (customer email + phone): not available, and nothing is fetched', () => {

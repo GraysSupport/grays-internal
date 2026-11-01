@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import { carrierColor } from '../../utils/carrierColors';
-import { blockWorkshop } from '../../components/WorkshopBlocked';
+import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
+import { BalanceBadge, ViewOnlyNotice } from '../../components/DeliveryViewOnly';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
 const PAGE_SIZE = 50;
@@ -109,6 +110,8 @@ function MoneyCell({ row, field, savingIds, saveDelivery }) {
 function CompletedDeliveriesPage() {
   const navigate = useNavigate();
   const goWorkorder = useRowNav(navigate);
+  // G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) see this tab view-only.
+  const readOnly = useMemo(() => currentUserIsWorkshop(), []);
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -149,7 +152,8 @@ function CompletedDeliveriesPage() {
       setLoading(true);
       toast.loading('Loading deliveries…', { id: 'completed-load' });
       try {
-        const dRes = await fetch('/api/delivery?include_removalists=1');
+        // Identity headers: the server hides money + contact details from workshop logins.
+        const dRes = await fetch('/api/delivery?include_removalists=1', { headers: identityHeaders() });
         const dData = await dRes.json();
         if (!dRes.ok) throw new Error(dData?.error || 'Failed to load deliveries');
 
@@ -160,14 +164,15 @@ function CompletedDeliveriesPage() {
         const completed = rowsRaw.filter((d) => String(d.delivery_status || '') === 'Delivery Completed');
 
         // Enrich if items_text/outstanding missing
-        const needFallback = completed.some((d) => d.items_text == null || d.outstanding_balance == null || d.items);
+        // (a workshop login has balance_status, never the balance — no reason to look it up)
+        const needFallback = completed.some((d) => d.items_text == null || (!readOnly && d.outstanding_balance == null) || d.items);
         let woMap = {};
         if (needFallback) {
           const woIds = [...new Set(completed.map((d) => d.workorder_id).filter(Boolean))];
           await Promise.all(
             woIds.map(async (wid) => {
               try {
-                const wRes = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`);
+                const wRes = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`, { headers: identityHeaders() });
                 const wData = await wRes.json();
                 if (wRes.ok) woMap[wid] = wData;
               } catch {}
@@ -187,8 +192,8 @@ function CompletedDeliveriesPage() {
             itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
           }
 
-          const outstanding =
-            d.outstanding_balance != null ? Number(d.outstanding_balance)
+          const outstanding = readOnly ? null
+            : d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
           const removalistName =
@@ -223,7 +228,7 @@ function CompletedDeliveriesPage() {
     })();
 
   return () => { mounted = false; };
-  }, [navigate]);
+  }, [navigate, readOnly]);
 
   // SEARCH then paginate
   const searched = useMemo(() => {
@@ -438,6 +443,7 @@ function CompletedDeliveriesPage() {
 
             {/* Table */}
             <div className="p-4">
+              {readOnly && <ViewOnlyNotice />}
               <div className="overflow-x-auto rounded-lg border">
                 <table className="min-w-full table-fixed">
                   <thead className="bg-gray-100">
@@ -450,21 +456,21 @@ function CompletedDeliveriesPage() {
                       <th className="px-3 py-2 w-56">Carrier</th>
                       <th className="px-3 py-2 w-20 text-center">Payment</th>
                       <th className="px-3 py-2 w-36">Delivery Date</th>{/* read-only */}
-                      <th className="px-3 py-2 w-72">Notes</th>
-                      <th className="px-3 py-2 w-44">Type / Flags</th>
-                      <th className="px-3 py-2 w-24">Delivery Charged</th>
-                      <th className="px-3 py-2 w-24">Delivery Quoted</th>
-                      <th className="px-3 py-2 w-24">Margin</th>
+                      {!readOnly && <th className="px-3 py-2 w-72">Notes</th>}
+                      <th className="px-3 py-2 w-44">{readOnly ? 'Type' : 'Type / Flags'}</th>
+                      {!readOnly && <th className="px-3 py-2 w-24">Delivery Charged</th>}
+                      {!readOnly && <th className="px-3 py-2 w-24">Delivery Quoted</th>}
+                      {!readOnly && <th className="px-3 py-2 w-24">Margin</th>}
                       <th className="px-3 py-2 w-56">Status</th>
                     </tr>
                   </thead>
 
                   <tbody className="divide-y divide-gray-100">
                     {loading && (
-                      <tr><td colSpan={14} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
+                      <tr><td colSpan={readOnly ? 10 : 14} className="px-3 py-6 text-center text-sm">Loading…</td></tr>
                     )}
                     {!loading && paged.length === 0 && (
-                      <tr><td colSpan={14} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
+                      <tr><td colSpan={readOnly ? 10 : 14} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>
                     )}
 
                     {paged.map((row, idx) => {
@@ -506,15 +512,17 @@ function CompletedDeliveriesPage() {
                               })()
                             ) : '—'}
                           </td>
-                          <td className="px-3 py-2 text-sm text-center"><PaymentBadge outstanding={row.outstanding_balance} /></td>
+                          <td className="px-3 py-2 text-sm text-center">
+                            {readOnly ? <BalanceBadge status={row.balance_status} /> : <PaymentBadge outstanding={row.outstanding_balance} />}
+                          </td>
                           <td className="px-3 py-2 text-sm">{formatDate(row.delivery_date) || '—'}</td>
-                          <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>
+                          {!readOnly && <td className="px-3 py-2 text-sm" {...stopRowNav}><NotesCell row={row} /></td>}
 
                           {/* G2: delivery type + flags (read-only here) */}
                           <td className="px-3 py-2 text-sm">
                             <div className="flex flex-col gap-1">
                               <span>{row.delivery_type || '—'}</span>
-                              <div className="flex flex-wrap gap-1">
+                              {!readOnly && <div className="flex flex-wrap gap-1">
                                 {row.free_delivery && (
                                   <span className="inline-block rounded bg-green-100 text-green-800 px-1.5 py-0.5 text-[10px] font-medium">FREE</span>
                                 )}
@@ -526,10 +534,13 @@ function CompletedDeliveriesPage() {
                                     install {fmtMoney(Number(row.installation_cost))}
                                   </span>
                                 )}
-                              </div>
+                              </div>}
                             </div>
                           </td>
 
+                          {readOnly ? (
+                            <td className="px-3 py-2 text-sm">{row.delivery_status}</td>
+                          ) : (<>
                           {/* ✅ EDITABLE: Delivery Charged */}
                           <td className="px-3 py-2 text-sm" {...stopRowNav}>
                             <MoneyCell
@@ -552,6 +563,7 @@ function CompletedDeliveriesPage() {
 
                           <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
                           <td className="px-3 py-2 text-sm" {...stopRowNav}><StatusCell row={row} /></td>
+                          </>)}
                         </tr>
                       );
                     })}
@@ -571,5 +583,5 @@ function CompletedDeliveriesPage() {
   );
 }
 
-// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
-export default blockWorkshop(CompletedDeliveriesPage, 'Deliveries Completed');
+// G17 blocked workshop logins here; G24 (owner, 2 Nov 2026) lets them in view-only (see readOnly).
+export default CompletedDeliveriesPage;

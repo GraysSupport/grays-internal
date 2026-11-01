@@ -7,7 +7,8 @@ import { carrierColor } from '../../utils/carrierColors';
 import DeliveryBoardNotes from '../../components/DeliveryBoardNotes';
 import { DispatchEvidenceButton } from '../../components/DispatchEvidencePanel';
 import { authHeaders, getRoles, hasAnyRole } from '../../utils/auth';
-import { blockWorkshop } from '../../components/WorkshopBlocked';
+import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
+import { BalanceBadge, CarrierName, ViewOnlyNotice, fmtDay } from '../../components/DeliveryViewOnly';
 
 // ⛔ TEMPORARY LOCKDOWN (Nick, 20 Jul 2026): only these roles are offered the
 // delivery-booked customer SMS. Must stay in step with BOOKING_SMS_ROLES in lib/rbac.js —
@@ -211,6 +212,8 @@ function ToBeBookedDeliveriesPage() {
   const stateParam = (urlParams.get('state') || '').toUpperCase(); // <-- NEW: deep-link state filter
 
   const goWorkorder = useRowNav(navigate);
+  // G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) see this tab view-only.
+  const readOnly = useMemo(() => currentUserIsWorkshop(), []);
 
   const [loading, setLoading] = useState(true);
   const [deliveries, setDeliveries] = useState([]);
@@ -251,7 +254,8 @@ function ToBeBookedDeliveriesPage() {
       setLoading(true);
       toast.loading('Loading deliveries…', { id: 'deliv-load' });
       try {
-        const dRes = await fetch('/api/delivery?include_removalists=1');
+        // Identity headers: the server hides money + contact details from workshop logins.
+        const dRes = await fetch('/api/delivery?include_removalists=1', { headers: identityHeaders() });
         const dData = await dRes.json();
         if (!dRes.ok) throw new Error(dData?.error || 'Failed to load deliveries');
 
@@ -260,15 +264,16 @@ function ToBeBookedDeliveriesPage() {
 
         const raw = rowsRaw.filter((d) => String(d.delivery_status || '') === 'To Be Booked');
 
-        // Enrich if items_text/outstanding missing
-        const needFallback = raw.some((d) => d.items_text == null || d.outstanding_balance == null || d.items);
+        // Enrich if items_text/outstanding missing (a workshop login never gets the balance —
+        // it has balance_status instead — so that alone is no reason to look the workorders up)
+        const needFallback = raw.some((d) => d.items_text == null || (!readOnly && d.outstanding_balance == null) || d.items);
         let woMap = {};
         if (needFallback) {
           const woIds = [...new Set(raw.map((d) => d.workorder_id).filter(Boolean))];
           await Promise.all(
             woIds.map(async (wid) => {
               try {
-                const wRes = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`);
+                const wRes = await fetch(`/api/workorder?id=${encodeURIComponent(wid)}`, { headers: identityHeaders() });
                 const wData = await wRes.json();
                 if (wRes.ok) woMap[wid] = wData;
               } catch {}
@@ -284,8 +289,8 @@ function ToBeBookedDeliveriesPage() {
           else if (Array.isArray(d.items) && d.items.length) itemsText = itemsTextFromWorkorderItems(d.items);
           else if (typeof d.items_text === 'string') itemsText = d.items_text.replace(/\b(\d+)(?:\.0+)\b/g, '$1');
 
-          const outstanding =
-            d.outstanding_balance != null ? Number(d.outstanding_balance)
+          const outstanding = readOnly ? null
+            : d.outstanding_balance != null ? Number(d.outstanding_balance)
             : wo ? Number(wo.outstanding_balance || 0) : null;
 
           const removalistName =
@@ -316,7 +321,7 @@ function ToBeBookedDeliveriesPage() {
     };
     load();
     return () => { mounted = false; };
-  }, [navigate]);
+  }, [navigate, readOnly]);
 
   // Text search
   const filtered = useMemo(() => {
@@ -812,6 +817,8 @@ function ToBeBookedDeliveriesPage() {
   // Section renderer
   const renderSection = (code) => {
     const rows = (groupByState.get(code) || []).map(r => ({ ...r, delivery_date: asYMD(r.delivery_date) }));
+    // G24: view-only drops the notes (the server withholds them) and every money column.
+    const cols = readOnly ? 9 : 13;
     return (
       <section key={code} className="rounded-xl border bg-white">
         <div className="p-3 flex items-center justify-between">
@@ -829,17 +836,17 @@ function ToBeBookedDeliveriesPage() {
                 <th className="px-3 py-2 w-80">Carrier</th>
                 <th className="px-3 py-2 w-16 text-center">Payment</th>
                 <th className="px-3 py-2 w-40">Delivery Date</th>
-                <th className="px-3 py-2 w-72">Notes</th>
-                <th className="px-3 py-2 w-52">Type / Flags</th>
-                <th className="px-3 py-2 w-20">Delivery Charged</th>
-                <th className="px-3 py-2 w-20">Delivery Quoted</th>
-                <th className="px-3 py-2 w-24">Margin</th>
+                {!readOnly && <th className="px-3 py-2 w-72">Notes</th>}
+                <th className="px-3 py-2 w-52">{readOnly ? 'Type' : 'Type / Flags'}</th>
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Charged</th>}
+                {!readOnly && <th className="px-3 py-2 w-20">Delivery Quoted</th>}
+                {!readOnly && <th className="px-3 py-2 w-24">Margin</th>}
                 <th className="px-3 py-2 w-64">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading && <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">Loading…</td></tr>}
-              {!loading && rows.length === 0 && <tr><td colSpan={13} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>}
+              {loading && <tr><td colSpan={cols} className="px-3 py-6 text-center text-sm">Loading…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={cols} className="px-3 py-6 text-center text-sm">No deliveries.</td></tr>}
               {rows.map((row, idx) => {
                 const margin =
                   (row.delivery_charged == null ? 0 : Number(row.delivery_charged)) -
@@ -856,13 +863,23 @@ function ToBeBookedDeliveriesPage() {
                   >
                     <td className="px-3 py-2 text-sm font-mono">
                       {row.invoice_id || '—'}
-                      {row.workorder_id && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
+                      {row.workorder_id && !readOnly && <div><DispatchEvidenceButton workorderId={row.workorder_id} invoiceId={row.invoice_id} /></div>}
                     </td>
                     <td className="px-3 py-2 text-sm truncate">{row.customer_name || '—'}</td>
                     <td className="px-3 py-2 text-sm">{row.delivery_suburb || '—'}</td>
                     <td className="px-3 py-2 text-sm whitespace-pre-wrap break-words leading-6">
                       {row.items_text || '—'}
                     </td>
+                    {readOnly ? (
+                      <>
+                        <td className="px-3 py-2 text-sm"><CarrierName name={row.removalist_name} /></td>
+                        <td className="px-3 py-2 text-sm text-center"><BalanceBadge status={row.balance_status} /></td>
+                        <td className="px-3 py-2 text-sm">{fmtDay(row.delivery_date)}</td>
+                        <td className="px-3 py-2 text-sm">{row.delivery_type || '—'}</td>
+                        <td className="px-3 py-2 text-sm">{row.delivery_status}</td>
+                      </>
+                    ) : (
+                    <>
                     <td className="px-3 py-2 text-sm"><CarrierCell row={row} /></td>
                     <td className="px-3 py-2 text-sm text-center"><PaymentCell row={row} /></td>
                     <td className="px-3 py-2 text-sm"><DateCell row={row} /></td>
@@ -872,6 +889,8 @@ function ToBeBookedDeliveriesPage() {
                     <td className="px-3 py-2 text-sm"><MoneyCell row={row} field="delivery_quoted" /></td>
                     <td className="px-3 py-2 text-sm">{fmtMoney(margin)}</td>
                     <td className="px-3 py-2 text-sm"><StatusCell row={row} /></td>
+                    </>
+                    )}
                   </tr>
                 );
               })}
@@ -924,6 +943,7 @@ function ToBeBookedDeliveriesPage() {
 
       <div className="grid grid-cols-12 gap-6 py-6 px-4 flex-1">
         <main className="col-span-12">
+          {readOnly && <ViewOnlyNotice />}
           {/* G7: shared "when are drivers coming in next" notes (hidden until migrated). */}
           <DeliveryBoardNotes />
           <div className="rounded-xl border bg-white">
@@ -966,5 +986,5 @@ function ToBeBookedDeliveriesPage() {
   );
 }
 
-// G17 (Nick, 19 Oct 2026): not for workshop logins (technician / workshop / WK) — see WorkshopBlocked.
-export default blockWorkshop(ToBeBookedDeliveriesPage, 'To Be Booked');
+// G17 blocked workshop logins here; G24 (owner, 2 Nov 2026) lets them in view-only (see readOnly).
+export default ToBeBookedDeliveriesPage;

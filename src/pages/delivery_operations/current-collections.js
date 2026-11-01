@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CollectionModal from '../../components/CollectionModal';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -24,7 +25,7 @@ const makeRowClick = (navigate) => (id) => (e) => {
   navigate(`/delivery_operations/collections/${id}`);
 };
 
-export default function CurrentCollectionsPage() {
+function CurrentCollectionsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -206,3 +207,6 @@ export default function CurrentCollectionsPage() {
     </div>
   );
 }
+
+// G24 (owner, 2 Nov 2026): workshop logins (technician / workshop / WK) don't need collections.
+export default blockWorkshop(CurrentCollectionsPage, 'Current Collections');

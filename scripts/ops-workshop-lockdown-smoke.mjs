@@ -299,10 +299,43 @@ console.log('\ndeliveries:');
   check('single delivery for WK: no money or contact', one.res.statusCode === 200 && leaked(one.res.payload).length === 0);
   const admin = await dl(reqAs({ id: 'GA', roles: ['admin'] }), { deliveries: [D] });
   check('admin delivery list unchanged', admin.res.payload[0].outstanding_balance === '0' && admin.res.payload[0].delivery_charged === '150');
+  // G24 (owner, 2 Nov 2026): technicians see the delivery tabs, with the balance as Paid /
+  // Outstanding only — never the amount.
+  check('G24: a paid delivery says Paid to a technician', list.res.payload[0].balance_status === 'Paid');
+  const owing = await dl(reqAs({ id: 'ED', roles: ['technician'] }), { deliveries: [{ ...D, outstanding_balance: '1795.00' }] });
+  check('G24: an owing delivery says Outstanding — and no amount anywhere', owing.res.payload[0].balance_status === 'Outstanding' && !JSON.stringify(owing.res.payload).includes('1795') && leaked(owing.res.payload).length === 0);
+  const noWo = await dl(reqAs({ id: 'ED', roles: ['technician'] }), { deliveries: [{ ...D, workorder_id: null, outstanding_balance: null }] });
+  check('G24: no workorder balance → no payment status (not a false "Paid")', noWo.res.payload[0].balance_status === null);
+  check('G24: an overpaid (negative) balance is Paid', access.redactDelivery({ outstanding_balance: '-5.00' }).balance_status === 'Paid');
+  check('G24: a sub-cent float remainder counts as Paid', access.redactDelivery({ outstanding_balance: 0.004 }).balance_status === 'Paid');
+  check('G24: the WK kiosk gets the status too', one.res.payload.balance_status === 'Paid');
+  check('G24: admins get no balance_status (they see the amount)', !('balance_status' in admin.res.payload[0]));
   for (const method of ['POST', 'PUT', 'DELETE']) {
     const r = await dl(reqAs({ id: 'ED', roles: ['technician'], method, query: { id: '9' }, body: { delivery_status: 'Delivery Completed' } }), { deliveries: [D] });
     check(`technician ${method} on a delivery → 403, nothing written`, r.res.statusCode === 403 && writes(r.client).length === 0);
   }
+}
+
+console.log('\ncollections (G24 — not for workshop logins):');
+{
+  const collectionsHandler = (await import('../lib/handlers/collections.js')).default;
+  const col = async (req) => {
+    const client = fakeClient();
+    const res = fakeRes();
+    await collectionsHandler(req, res, [], { getClient: async () => client });
+    return { client, res };
+  };
+  const t = await col(reqAs({ id: 'ED', roles: ['technician'], query: { completed: 'false' } }));
+  check('technician collections list → 403', t.res.statusCode === 403 && /workshop/i.test(t.res.payload.error));
+  const k = await col(reqAs({ id: 'WK', roles: ['admin'], query: { id: '5', include: 'items' } }));
+  check('WK kiosk collection detail → 403', k.res.statusCode === 403);
+  const p = await col(reqAs({ id: 'ED', roles: ['technician'], method: 'POST', query: { resource: 'sync-lots', id: '5' } }));
+  check('technician sync-lots (stock + cost) → 403, nothing written', p.res.statusCode === 403 && writes(p.client).length === 0);
+  const a = await col(reqAs({ id: 'GA', roles: ['admin'], query: { resource: 'carriers' } }));
+  check('admin collections still answer', a.res.statusCode === 200);
+  const anon = await col({ method: 'GET', query: { resource: 'carriers' }, headers: {} });
+  check('no identity at all is unchanged (P7) — the dashboard counts still load', anon.res.statusCode === 200);
+  check('the client is released after a refusal', t.client.released === true);
 }
 
 console.log('\ncustomers:');
