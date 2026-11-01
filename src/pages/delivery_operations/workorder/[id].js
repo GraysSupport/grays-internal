@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
 import { WorkorderEvidence } from '../../../components/DispatchEvidencePanel';
+import WorkorderCancel from '../../../components/WorkorderCancel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
 /**
@@ -47,7 +48,7 @@ function LotSlots({ item, actorId }) {
     return d;
   }, [actorId]);
 
-  const assigned = (lots || []).filter((l) => l.workorder_items_id === wiId && (l.status === 'Assigned' || l.status === 'Sold'));
+  const assigned = (lots || []).filter((l) => l.workorder_items_id === wiId && l.status === 'Assigned');
   const available = (lots || []).filter((l) => l.status === 'In Stock');
 
   const assign = async (lotId) => {
@@ -424,7 +425,7 @@ export default function WorkorderDetailPage() {
         const sr = await fetch(`/api/lots?sku=${encodeURIComponent(it.product_id)}&workorder_items_id=${it.workorder_items_id}`);
         const sl = sr.ok ? await sr.json() : [];
         if (lot.workorder_items_id === it.workorder_items_id) { showScanResult('warn', 'Already scanned in', `${lot.lot_number} is already on this workorder.`); return; }
-        const assignedCount = sl.filter((l) => l.workorder_items_id === it.workorder_items_id && (l.status === 'Assigned' || l.status === 'Sold')).length;
+        const assignedCount = sl.filter((l) => l.workorder_items_id === it.workorder_items_id && l.status === 'Assigned').length;
         if (assignedCount < Number(it.quantity || 0)) { target = it; break; }
       }
       if (!target) { showScanResult('warn', 'No free slot', `All ${lot.product_sku} units on this workorder already have a lot assigned.`); return; }
@@ -697,7 +698,8 @@ export default function WorkorderDetailPage() {
           item_sn: it.item_sn ?? null,
         })),
       } : {
-        status: woStatus || wo.status,
+        // G23: only a real change is sent — a page opened before someone cancelled must not undo it.
+        ...(woStatus && woStatus !== wo.status ? { status: woStatus } : {}),
         notes,
         delivery_charged: deliveryCharged === '' ? null : Number(deliveryCharged),
         delivery_type: deliveryType,
@@ -848,6 +850,17 @@ export default function WorkorderDetailPage() {
       </header>
 
       <main className="max-w-6xl mx-auto p-4">
+        {/* G23: cancel / reopen (superadmin, admin, logistics, sales); a banner when cancelled. */}
+        <WorkorderCancel
+          workorderId={id}
+          status={wo.status}
+          onChanged={(data) => {
+            setWo(data);
+            setItems((data.items || []).filter((it) => it.status !== 'Canceled'));
+            setWoStatus(data.status || '');
+            setActivity(data.activity || []);
+          }}
+        />
         {/* Top summary */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
           {isWorkshop ? (

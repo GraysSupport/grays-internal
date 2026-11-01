@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import DeliveryTabs from '../../components/DeliveryTabs';
+import { carrierColor } from '../../utils/carrierColors';
 import { blockWorkshop } from '../../components/WorkshopBlocked';
 
 const ALL_STATUSES = ['To Be Booked', 'Booked for Delivery', 'Delivery Completed'];
@@ -22,36 +23,6 @@ const stopRowNav = {
   onMouseDown: (e) => e.stopPropagation(),
   onKeyDown: (e) => e.stopPropagation(),
 };
-
-const CARRIER_COLOR_RULES = [
-  { like: 'moving soon', color: '#F4B084' },
-  { like: 'dtl', color: '#BDD7EE' },
-  { like: 'coastal', color: '#FDCDFE' }, // Coastal Breeze
-  { like: 'bnl', color: '#92D050' },
-  { like: 'bass strait', color: '#FEFF43' },
-  { like: 'rjd', color: '#FFFF00' },     // fixed hex: #FFFF00
-  { like: 'iron armour', color: '#CCCCFF' },
-  { like: 'chris watkins', color: '#6767ff' },
-  { like: 'ej shaws', color: '#ff5555' },
-  { like: 'a grade', color: '#e9ff63' },
-  { like: 'slingshot', color: '#92d050' },
-  { like: 'sa removals', color: '#66ccff' },
-  { like: 'first transport', color: '#99ffcc' },
-  { like: 'big post', color: '#99ffcc' },
-  { like: 'allied', color: '#99ffcc' },
-  { like: 'customer collect', color: '#9ec2e3' },
-  { like: 'eastside', color: '#9efe9c' },
-  { like: 'thompson', color: '#ff9999' },
-  { like: 'brs', color: '#d0cece' },
-  { like: 'grays', color: '#bfd6ebff' },
-];
-
-// Resolve a background color based on LIKE/substring match
-function carrierColor(name) {
-  const s = (name || '').toLowerCase();
-  const rule = CARRIER_COLOR_RULES.find(r => s.includes(r.like));
-  return rule?.color || null;
-}
 
 // fmt helpers
 function fmtMoney(n) {

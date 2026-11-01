@@ -12,7 +12,7 @@ function money(n) {
 }
 
 const STATUS_CLS = {
-  Sold: 'bg-green-100 text-green-800',
+  'Written Off': 'bg-red-100 text-red-800', // G23: was Sold (owner, 30 Oct 2026)
   Assigned: 'bg-blue-100 text-blue-800',
   Void: 'bg-gray-200 text-gray-700',
   'In Stock': 'bg-amber-100 text-amber-800',

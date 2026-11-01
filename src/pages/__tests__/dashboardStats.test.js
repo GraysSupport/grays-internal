@@ -37,6 +37,8 @@ const DATA = {
     { workorder_id: 1, status: 'Work Ordered', estimated_completion: PAST, important_flag: true, date_created: new Date().toISOString() },
     { workorder_id: 2, status: 'Work Ordered', estimated_completion: FUTURE, important_flag: false, date_created: new Date().toISOString() },
     { workorder_id: 3, status: 'Completed', estimated_completion: PAST, important_flag: true, date_created: new Date().toISOString() },
+    // G23: a cancelled workorder counts nowhere (not active, not past target, not important).
+    { workorder_id: 4, status: 'Cancelled', estimated_completion: PAST, important_flag: true, date_created: new Date().toISOString() },
   ],
   delivery: [
     { delivery_id: 1, delivery_status: 'To Be Booked', delivery_state: 'VIC' },
