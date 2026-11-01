@@ -81,6 +81,17 @@ function makeClient({ failOn = null } = {}) {
         if (/AS dj_month/i.test(sql)) return { rows: [{ dj_month: '2025-07', jobs: '10', jobs_both: '6', cost: '5000.00', charged: '4000.00' }] };
       }
       if (/AS excluded_collects/i.test(sql)) return { rows: [{ excluded_collects: '84' }] };
+      // G22d — overview tiles.
+      if (/AS pipeline_value/i.test(sql)) return { rows: [{ workorders: '43', lines: '60', estimated_lines: '20', unpriced_lines: '1', pipeline_value: '310450.50', in_workshop_now: '10' }] };
+      if (/AS owed_open/i.test(sql)) return { rows: [{ owed_workorders: '26', owed: '255748.40', owed_open_workorders: '20', owed_open: '208325.00', credit_workorders: '2' }] };
+      if (/AS items_completed/i.test(sql)) {
+        const prev = params[0] === '2024-07-01';
+        return { rows: [prev ? { items_completed: '50', items_timed: '20', avg_workshop_days: '12.0' } : { items_completed: '100', items_timed: '40', avg_workshop_days: '10.3' }] };
+      }
+      if (/AS new_customers/i.test(sql)) return { rows: [{ customers: '200', individual: '120', business: '70', new_customers: '150', history_from: '2025-05-09T00:00:00Z' }] };
+      if (/AS wo_state/i.test(sql)) return { rows: [{ wo_state: 'VIC', workorders: '100', sales: '400000.00' }, { wo_state: null, workorders: '2', sales: '0' }] };
+      if (/AS fw_ready/i.test(sql)) return { rows: [{ fw_ready: !failOn || !failOn.test('free_weight_variants') }] };
+      if (/AS fw_value_cost/i.test(sql)) return { rows: [{ fw_units: '40', fw_units_costed: '30', fw_value_cost: '1795.00' }] };
       // G22b — products, earnings and profit.
       if (/GROUP BY lines\.sku/i.test(sql)) {
         const prev = params[0] === '2024-07-01';
@@ -327,6 +338,51 @@ console.log('G22c director — deliveries & removalists');
   check('metro card bases are labelled as metro, with a regional caveat', b.states.find((s) => s.state === 'ACT').regional_caveat === false
     && shapeDeliveriesFor('SA').card_zone === 'Adelaide (metro)' && shapeDeliveriesFor('SA').regional_caveat === true);
   check('a delivery with no state is labelled', shapeDeliveriesFor(null).state === 'No state set');
+}
+
+console.log('G22d director — overview tiles');
+{
+  for (const [label, as] of [['admin', token('GA', ['admin'])], ['WK kiosk', token('WK', ['admin'])], ['technician', token('TE', ['technician'])]]) {
+    const c = makeClient();
+    const r = await call(c, { as, query: { ...FY, resource: 'overview' } });
+    check(`overview: ${label} → 403, no query run`, r.statusCode === 403 && c.calls.length === 0);
+  }
+  const c = makeClient();
+  const r = await call(c, { query: { ...FY, resource: 'overview', compare: 'year' } });
+  check('overview → 200, cached privately', r.statusCode === 200 && r.headers['Cache-Control'] === 'private, max-age=300');
+  check('overview read-only: READ ONLY transaction, SELECT/WITH only, COMMIT', /^BEGIN TRANSACTION READ ONLY$/i.test(c.calls[0].sql)
+    && /^COMMIT$/i.test(c.calls.at(-1).sql) && c.calls.slice(1, -1).every((q) => /^(SELECT|WITH)\b/i.test(q.sql)));
+  const o = r.body;
+  check('sales tile = team total, with the previous figure', o.sales.value === 25000 && o.sales.previous === 10000);
+  check('sales coverage: priced / estimated / unpriced lines', o.sales.lines === 20 && o.sales.priced_lines === 8 && o.sales.estimated_lines === 12);
+  check('gross profit only over costed lines, with coverage', o.profit.gross_profit === 7500 && o.profit.costed_lines === 5 && o.profit.lines === 20 && o.profit.margin === 0.75);
+  check('on-time % from completed workorders with a completion record', o.on_time.pct === 0.75 && o.on_time.on_time === 6 && o.on_time.eligible === 8);
+  check('open-order pipeline = live lines on Work Ordered workorders (today)', o.pipeline.value === 310450.5 && o.pipeline.workorders === 43 && o.pipeline.estimated_lines === 20 && o.pipeline.unpriced_lines === 1);
+  const pipeSql = c.calls.find((q) => /AS pipeline_value/i.test(q.sql)).sql;
+  check('pipeline excludes cancelled items and only counts open workorders', /status = 'Work Ordered'/i.test(pipeSql) && /IS DISTINCT FROM 'Canceled'/i.test(pipeSql));
+  check('money still owed: all and on open workorders; credits counted, not netted', o.owed.total === 255748.4 && o.owed.workorders === 26 && o.owed.open_total === 208325 && o.owed.credit_workorders === 2);
+  const owedSql = c.calls.find((q) => /AS owed_open/i.test(q.sql)).sql;
+  check('owed ignores a cancelled workorder, safe before migration 0012 (text compare)', /status::text IS DISTINCT FROM 'Cancelled'/i.test(owedSql));
+  check('delivery net margin = comparable jobs only, with previous', o.deliveries.net === -200 && o.deliveries.jobs_both === 16 && o.deliveries.jobs === 22 && typeof o.deliveries.previous === 'number');
+  check('workshop: items completed (vs previous), in workshop now, average days', o.workshop.items_completed === 100 && o.workshop.previous === 50 && o.workshop.in_workshop_now === 10 && o.workshop.avg_days === 10.3 && o.workshop.items_timed === 40);
+  check('stock value at cost with unit coverage', o.stock.value_cost === 106323.54 && o.stock.units === 4228 && o.stock.units_costed === 217);
+  check('Brand New Free Weights stock value shown separately', o.stock.free_weights.available === true && o.stock.free_weights.value_cost === 1795 && o.stock.free_weights.units === 40 && o.stock.free_weights.units_costed === 30);
+  check('customers: individual / business / not set; new vs returning', o.customers.total === 200 && o.customers.individual === 120 && o.customers.business === 70
+    && o.customers.not_set === 10 && o.customers.new === 150 && o.customers.returning === 50 && o.customers.history_from === '2025-05-09');
+  check('sales by delivery state, a missing state labelled', o.states[0].state === 'VIC' && o.states[0].sales === 400000 && o.states[1].state === 'Not set');
+  const wsSql = c.calls.filter((q) => /AS items_completed/i.test(q.sql));
+  check('in-workshop-now is a snapshot of items on open workorders, read once (not per period)', /AS in_workshop_now/i.test(pipeSql)
+    && /status = 'Work Ordered'/i.test(pipeSql) && wsSql.length === 2 && wsSql.every((q) => !/in_workshop_now/i.test(q.sql)));
+  check('previous period echoed', o.previous.mode === 'year' && o.previous.range.from === '2024-07-01');
+
+  const nc = makeClient();
+  const nr = await call(nc, { query: { ...FY, resource: 'overview' } });
+  check('no compare → no previous figures', nr.statusCode === 200 && nr.body.previous === null && nr.body.sales.previous === null && nr.body.workshop.previous === null);
+
+  const fc = makeClient({ failOn: /free_weight_variants/ });
+  const fr = await call(fc, { query: { ...FY, resource: 'overview' } });
+  check('free-weights tables absent → tile says so, nothing else breaks, table never queried', fr.statusCode === 200
+    && fr.body.stock.free_weights.available === false && !fc.calls.some((q) => /FROM free_weight_variants/i.test(q.sql)));
 }
 
 console.log('G22a director — drill-down');

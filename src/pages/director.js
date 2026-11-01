@@ -9,6 +9,7 @@ import { periodPresets, formatDollars, formatPct, changeBadge, monthsBetween, mo
 import { Change, Coverage } from '../components/DirectorParts';
 import DirectorProducts from '../components/DirectorProducts';
 import DirectorDeliveries from '../components/DirectorDeliveries';
+import DirectorOverview from '../components/DirectorOverview';
 
 // G22 Director's View (owner, 29 Oct 2026) — superadmin only; read-only performance figures.
 // G22a = the shell (period picker, compare, coverage lines) + the sales team section. The server
@@ -276,6 +277,7 @@ export default function DirectorPage({ now }) {
             <p className="text-xs text-gray-700">
               {formatWhen(period.from, true)} – {formatWhen(period.to, true)} · All money is AUD, GST-inclusive as stored, rounded to the dollar. Read-only — nothing here changes any record.
             </p>
+            <DirectorOverview period={period} compare={compare} onOpen={setSection} />
             <div role="tablist" aria-label="Director's View sections" className="flex gap-1 border-b border-gray-300">
               {SECTIONS.map((s) => (
                 <button
