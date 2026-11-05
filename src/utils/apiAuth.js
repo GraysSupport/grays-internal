@@ -97,6 +97,9 @@ export function refreshTokenIfDue({ fetchImpl } = {}) {
       if (!res.ok) return;
       const body = await res.json();
       if (!body?.token) return;
+      // Signed out — or someone else signed in on this PC — while the renewal was in flight:
+      // never write the old login back over that.
+      if (localStorage.getItem('token') !== token) return;
       localStorage.setItem('token', body.token);
       if (Array.isArray(body.roles) && user) localStorage.setItem('user', JSON.stringify({ ...user, roles: body.roles }));
     } catch {

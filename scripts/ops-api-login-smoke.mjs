@@ -24,7 +24,7 @@ const login = await import('../lib/apiLogin.js');
 const router = (await import('../api/[...path].js')).default;
 const {
   LOGIN_REQUIRED_ROOTS, isPublicApiRequest, apiLoginGate, loginLifetimeFor, signLoginToken,
-  refreshLogin, KIOSK_LOGIN_LIFETIME, LOGIN_LIFETIME,
+  refreshLogin, KIOSK_LOGIN_LIFETIME, LOGIN_LIFETIME, MAX_LOGIN_AGE_SECONDS,
 } = login;
 
 let passed = 0;
@@ -174,6 +174,27 @@ const USERS = { GA: { email: 'ga@x', access: 'admin', roles: ['admin', 'sales'] 
   const out = await refreshLogin(req({ method: 'POST', headers: { authorization: `Bearer ${token('WK', ['admin'], { expiresIn: '12h' })}` } }), c);
   check('the WK kiosk does not renew (one shift) → 403', out.status === 403);
   check('… without touching the database', c.calls.length === 0);
+}
+
+console.log('P7 — renewal has an absolute limit (review #3)');
+{
+  const t = signLoginToken({ id: 'GA', email: 'ga@x', roles: ['admin'] });
+  const p = jwt.verify(t, process.env.JWT_SECRET);
+  check('a login records when the person signed in (auth_time)', Number.isInteger(p.auth_time) && Math.abs(p.auth_time - p.iat) <= 1);
+  const out = await refreshLogin(req({ method: 'POST', headers: { authorization: `Bearer ${t}` } }), fakeClient(USERS));
+  const p2 = jwt.verify(out.body.token, process.env.JWT_SECRET);
+  check('a renewal keeps the original sign-in time', p2.auth_time === p.auth_time);
+  const old = Math.floor(Date.now() / 1000) - (MAX_LOGIN_AGE_SECONDS + 60);
+  const stale = jwt.sign({ id: 'GA', email: 'ga@x', roles: ['admin'], auth_time: old }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const c = fakeClient(USERS);
+  const out2 = await refreshLogin(req({ method: 'POST', headers: { authorization: `Bearer ${stale}` } }), c);
+  check('a login older than the limit does not renew → 401', out2.status === 401);
+  check('… without touching the database', c.calls.length === 0);
+  check('the limit is 12 h (one long working day)', MAX_LOGIN_AGE_SECONDS === 12 * 3600);
+  const legacy = jwt.sign({ id: 'GA', email: 'ga@x', roles: ['admin'] }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const out3 = await refreshLogin(req({ method: 'POST', headers: { authorization: `Bearer ${legacy}` } }), fakeClient(USERS));
+  const p3 = jwt.verify(out3.body.token, process.env.JWT_SECRET);
+  check('a pre-P7 token (no auth_time) renews once, counting from its own issue time', out3.status === 200 && Math.abs(p3.auth_time - jwt.decode(legacy).iat) <= 1);
 }
 
 console.log('P7 — wiring');

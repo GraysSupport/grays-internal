@@ -71,6 +71,30 @@ test('a login close to expiry is renewed once and stored', async () => {
   expect(JSON.parse(localStorage.getItem('user')).roles).toEqual(['admin', 'sales']);
 });
 
+test('signing out during a renewal does not bring the old login back', async () => {
+  signIn(tokenExp(5 * 60));
+  let finish;
+  const fetchImpl = jest.fn(() => new Promise((r) => { finish = r; }));
+  const p = refreshTokenIfDue({ fetchImpl });
+  localStorage.clear(); // signed out while the renewal was in flight
+  finish(new Response(JSON.stringify({ token: 'fresh', roles: ['admin'] }), { status: 200 }));
+  await p;
+  expect(localStorage.getItem('token')).toBeNull();
+  expect(localStorage.getItem('user')).toBeNull();
+});
+
+test('a renewal never overwrites the next person who signed in on a shared PC', async () => {
+  signIn(tokenExp(5 * 60));
+  let finish;
+  const fetchImpl = jest.fn(() => new Promise((r) => { finish = r; }));
+  const p = refreshTokenIfDue({ fetchImpl });
+  signIn('tok-of-B', { id: 'NB', email: 'nb@x', access: 'staff' });
+  finish(new Response(JSON.stringify({ token: 'fresh-for-A', roles: ['admin'] }), { status: 200 }));
+  await p;
+  expect(localStorage.getItem('token')).toBe('tok-of-B');
+  expect(JSON.parse(localStorage.getItem('user')).id).toBe('NB');
+});
+
 test('a login with plenty of time left is not renewed', async () => {
   signIn(tokenExp(50 * 60));
   const fetchImpl = jest.fn();
