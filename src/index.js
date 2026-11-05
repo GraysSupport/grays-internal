@@ -4,6 +4,10 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
 import * as serviceWorkerRegistration from './serviceWorkerRegistration';
+import { installApiAuth } from './utils/apiAuth';
+
+// P7: every /api call carries the login, active logins renew, a dead login returns to sign-in.
+installApiAuth(window);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

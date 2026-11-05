@@ -1,6 +1,5 @@
 // /api/[...path].js
 import { compare, hash } from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { getClientWithTimezone } from '../lib/db.js';
 import { getRolesForUser, syncUserRoles, sanitizeRoles, primaryRole, legacyAccessFor, requireRoles } from '../lib/rbac.js';
 import { usersSelectList, buildUserUpdate, registerUser } from '../lib/usersAdmin.js';
@@ -22,6 +21,7 @@ import { handleFreeWeights } from '../lib/freeWeights.js';
 import { buildJourney } from '../lib/customerJourney.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
 import { isPodiumEnabled, podiumDisabled } from '../lib/featureFlags.js';
+import { apiLoginGate, signLoginToken, refreshLogin } from '../lib/apiLogin.js';
 
 /** Robust path segmentation that works on Vercel + Next.js local */
 function segs(req) {
@@ -47,6 +47,11 @@ export default async function handler(req, res) {
   const parts = segs(req);
   const [root, sub] = parts;
   try {
+    // P7: workorder / delivery / customers / waitlist / lots need a valid login (the public
+    // /scan lot lookup excepted). Refused here, before any database work.
+    const login = apiLoginGate(root, req);
+    if (!login.ok) return res.status(login.status).json({ error: login.error });
+
     switch (root) {
       case undefined:
         return res.status(200).json({ ok: true, message: 'API root' });
@@ -456,9 +461,8 @@ async function handleAuth(req, res, action) {
       // is absent). Carry it in the JWT so the server can authorize on it later.
       const roles = await getRolesForUser(client, user.id, user.access);
 
-      const token = jwt.sign({ id: user.id, email: user.email, roles }, process.env.JWT_SECRET, {
-        expiresIn: '1h',
-      });
+      // P7: 1 h, except the WK workshop kiosk (one shift, 12 h) — lib/apiLogin.js.
+      const token = signLoginToken({ id: user.id, email: user.email, roles });
 
       await client.query(
         'INSERT INTO access_log (user_id, description) VALUES ($1,$2)',
@@ -474,6 +478,13 @@ async function handleAuth(req, res, action) {
         access: user.access, // primary role, unchanged (backward-compat)
         roles,               // F0b: full role set
       });
+    }
+
+    // P7: renew a live login while someone is working (the WK kiosk does not renew).
+    if (action === 'refresh') {
+      if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+      const out = await refreshLogin(req, client);
+      return res.status(out.status).json(out.body);
     }
 
     if (action === 'register') {

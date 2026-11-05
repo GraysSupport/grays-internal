@@ -44,6 +44,7 @@ import LotTrackerPage from './pages/lot-tracker';
 import TechChecklistPage from './pages/tech-checklist';
 import DirectorPage from './pages/director';
 import { isPodiumEnabled } from './utils/featureFlags';
+import { refreshTokenIfDue } from './utils/apiAuth';
 
 // 28 Oct 2026: Podium screens are hidden until REACT_APP_FEATURE_PODIUM=true. While hidden,
 // old bookmarks to them land on the dashboard instead of a blank page.
@@ -64,7 +65,10 @@ function App() {
       const expiry = parseInt(localStorage.getItem('sessionExpiry'), 10);
       if (!expiry || Date.now() > expiry) {
         logout();
+        return;
       }
+      // P7: someone is still working — renew the 1 h login before it runs out (no-op otherwise).
+      refreshTokenIfDue();
     };
 
     const logout = async () => {
