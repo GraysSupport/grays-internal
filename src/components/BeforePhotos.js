@@ -52,10 +52,10 @@ export function BeforePhotosPanel({ lotId, workorderItemId, ...rest }) {
 
 /**
  * "Before photos (n)" → pop-up. Hidden while not set up / not migrated. `onlyIfAny`: hide it
- * unless photos already exist (an item that has since been given a lot keeps showing its old
- * item-level photos, but new ones go on the lot).
+ * unless photos already exist; `readOnly`: view only (an item whose every unit now has a lot keeps
+ * showing its old item-level photos, but new ones go on the lots).
  */
-export function BeforePhotosButton({ lotId, workorderItemId, name, onChanged, className, onlyIfAny = false }) {
+export function BeforePhotosButton({ lotId, workorderItemId, name, onChanged, className, onlyIfAny = false, readOnly = false }) {
   const [info, setInfo] = useState(null);
   const alive = useRef(true);
   const ref = refOf({ lotId, workorderItemId });
@@ -87,7 +87,7 @@ export function BeforePhotosButton({ lotId, workorderItemId, name, onChanged, cl
       buttonLabel={`${label} — ${what}`}
       dialogLabel={`Before refurbishment — ${what}`}
       title={`Before refurbishment — ${what}`}
-      renderPanel={(setBusy) => <BeforePhotosPanel lotId={lotId} workorderItemId={workorderItemId} onBusyChange={setBusy} onChanged={changed} inDialog />}
+      renderPanel={(setBusy) => <BeforePhotosPanel lotId={lotId} workorderItemId={workorderItemId} onBusyChange={setBusy} onChanged={changed} readOnly={readOnly} inDialog />}
     />
   );
 }

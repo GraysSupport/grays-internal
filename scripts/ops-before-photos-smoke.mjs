@@ -500,6 +500,8 @@ for (const who of ['technician', 'workshop', 'logistics', 'admin', 'superadmin',
 
   check('OTHER / custom lines are refused', (await upload({ body: { ...body, workorder_items_id: 2002 }, auth: AUTH.admin, client, graph })).statusCode === 400);
   check('unknown item → 404', (await upload({ body: { ...body, workorder_items_id: 9999 }, auth: AUTH.admin, client, graph })).statusCode === 404);
+  check('both lot and item → 400', (await upload({ body: { ...body, lot_id: 56 }, auth: AUTH.admin, client, graph })).statusCode === 400);
+  check('no folder yet → complete 400', (await call({ method: 'POST', resource: 'before-complete', body: { workorder_items_id: 2003, drive_item_id: 'i1' }, auth: AUTH.admin, client, graph })).statusCode === 400);
   check('neither lot nor item → 400', (await upload({ body: { file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph })).statusCode === 400);
 }
 {
@@ -509,6 +511,42 @@ for (const who of ['technician', 'workshop', 'logistics', 'admin', 'superadmin',
   client.state.dispatchFolders.push({ workorder_id: 731, workorder_items_id: 2005, drive_item_id: 'stale-item', name: 'x' });
   const r = await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph });
   check('item photos: a deleted dispatch folder is re-made', r.statusCode === 200 && client.state.dispatchForgot === 1 && client.state.itemFolders.length === 1);
+}
+
+{
+  // Review 2: a LOT photo must never count as an item photo, and the item's own photos (taken
+  // before it had a lot) show on the lot once the lot is assigned to that item.
+  const client = makeClient(); const graph = makeGraph();
+  await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph });
+  putFile(graph, 'item-ph', client.state.itemFolders[0].drive_item_id);
+  await call({ method: 'POST', resource: 'before-complete', body: { workorder_items_id: 2005, drive_item_id: 'item-ph' }, auth: AUTH.admin, client, graph });
+  client.state.lots[57] = { lot_id: 57, lot_number: 'L00057', product_sku: 'LF-95X', status: 'Assigned', workorder_items_id: 2005 };
+  await upload({ body: session(57), auth: AUTH.admin, client, graph });
+  putFile(graph, 'lot-ph', client.state.folders.find((f) => f.lot_id === 57).drive_item_id);
+  await call({ method: 'POST', resource: 'before-complete', body: { lot_id: 57, drive_item_id: 'lot-ph' }, auth: AUTH.admin, client, graph });
+  const itemList = await call({ resource: 'before-list', query: { workorder_items_id: '2005' }, auth: AUTH.admin, client, graph });
+  check('a lot photo on item 2005 is NOT an item photo', itemList.body.files.map((f) => f.web_url).join() === 'https://sp/item-ph', JSON.stringify(itemList.body.files));
+  const lotList = await call({ resource: 'before-list', query: { lot_id: '57' }, auth: AUTH.admin, client, graph });
+  check('the lot shows its own photo AND the item photo taken before it had a lot',
+    lotList.body.files.map((f) => `${f.web_url}:${f.source}`).sort().join() === 'https://sp/item-ph:item,https://sp/lot-ph:lot', JSON.stringify(lotList.body.files));
+  check('… with thumbnails from both folders', lotList.body.files.every((f) => f.thumbnail_url));
+  const other = await call({ resource: 'before-list', query: { lot_id: '55' }, auth: AUTH.admin, client, graph });
+  check('an In Stock lot shows no item photos', other.body.files.length === 0);
+}
+{
+  // The item folder itself deleted in SharePoint → forgotten and made again.
+  const client = makeClient(); const graph = makeGraph();
+  await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph });
+  const gone = client.state.itemFolders[0].drive_item_id;
+  const g2 = makeGraph({ failSessionOnce: true }); Object.assign(g2.folders, graph.folders); delete g2.folders[gone];
+  const r = await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph: g2 });
+  check('a deleted item folder (404 on upload) is forgotten and re-made', r.statusCode === 200 && client.state.itemFolders.length === 1 && client.state.itemFolders[0].drive_item_id !== gone);
+}
+{
+  const client = makeClient({ missing: true }); const graph = makeGraph();
+  const l = await call({ resource: 'before-list', query: { workorder_items_id: '2005' }, auth: AUTH.admin, client, graph });
+  check('item: tables missing → list available:false', l.statusCode === 200 && l.body.available === false);
+  check('item: tables missing → upload 503', (await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph })).statusCode === 503);
 }
 
 // --- not migrated yet (prod until the owner migrates at merge) ---

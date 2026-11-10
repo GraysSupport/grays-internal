@@ -71,13 +71,15 @@ function LotSlots({ item, actorId, onChanged }) {
         Lot numbers <span className="font-normal text-gray-500">({assigned.length}/{qty} assigned)</span>
       </div>
       {/* G27 (owner, 10 Nov 2026): old stock has no lot number, so before photos go on the item.
-          Offered while no lot is assigned; once one is, only shown if item photos already exist. */}
+          Offered while any unit has no lot; once every unit has one, view-only and only if item
+          photos already exist (new photos then go on the lots). */}
       {lots !== null && (
         <div className="mb-2">
           <BeforePhotosButton
             workorderItemId={wiId}
             name={item.product_name || item.product_id || `item ${wiId}`}
-            onlyIfAny={assigned.length > 0}
+            onlyIfAny={qty > 0 && assigned.length >= qty}
+            readOnly={qty > 0 && assigned.length >= qty}
             onChanged={onChanged}
           />
         </div>

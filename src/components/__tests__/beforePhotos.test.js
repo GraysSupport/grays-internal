@@ -186,3 +186,21 @@ describe('BeforePhotosButton', () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe('beforeAdapter ownership of saved uploads', () => {
+  test('a lot panel never claims an item upload, and an item panel never claims a lot upload', () => {
+    // eslint-disable-next-line global-require
+    const { beforeAdapter } = require('../BeforePhotos');
+    const lot = beforeAdapter({ lotId: 55 });
+    const item = beforeAdapter({ workorderItemId: 2005 });
+    const lotEntry = { kind: 'before', lot_id: 55 };
+    const itemEntry = { kind: 'before', workorder_items_id: 2005 };
+    const dispatchEntry = { workorder_id: 731, workorder_items_id: 2005 };
+    expect(lot.owns(lotEntry)).toBe(true);
+    expect(lot.owns(itemEntry)).toBe(false);
+    expect(item.owns(itemEntry)).toBe(true);
+    expect(item.owns(lotEntry)).toBe(false);
+    expect(item.owns(dispatchEntry)).toBe(false);
+    expect(item.target()).toEqual({ workorder_items_id: 2005 });
+  });
+});
