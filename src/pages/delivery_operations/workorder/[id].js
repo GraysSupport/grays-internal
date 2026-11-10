@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
 import { WorkorderEvidence } from '../../../components/DispatchEvidencePanel';
+import { BeforePhotosButton } from '../../../components/BeforePhotos';
 import WorkorderCancel from '../../../components/WorkorderCancel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
@@ -14,7 +15,7 @@ import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '
  * and, until `quantity` lots are assigned, a SKU-filtered dropdown of In-Stock
  * lots to assign. Renders nothing for items with no lots (e.g. custom lines).
  */
-function LotSlots({ item, actorId }) {
+function LotSlots({ item, actorId, onChanged }) {
   const [lots, setLots] = useState(null);
   const wiId = item.workorder_items_id;
   const sku = item.product_id;
@@ -80,6 +81,8 @@ function LotSlots({ item, actorId }) {
             onBlur={(e) => saveSerial(l.lot_id, e.target.value)}
             onClick={(e) => e.stopPropagation()}
           />
+          {/* G27 (owner, 10 Nov 2026): photos of this machine before refurbishment. */}
+          <BeforePhotosButton lotId={l.lot_id} lotNumber={l.lot_number} onChanged={onChanged} />
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); unassign(l.lot_id); }}
@@ -1120,7 +1123,7 @@ export default function WorkorderDetailPage() {
                                 {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial).
                                     Shown for real products only — custom/OTHER lines don't carry lots. */}
                                 {!it.is_custom && it.product_id !== 'OTHER' && (
-                                  <LotSlots item={it} actorId={userId} />
+                                  <LotSlots item={it} actorId={userId} onChanged={reloadActivity} />
                                 )}
                               </div>
                             </td>

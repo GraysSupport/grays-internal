@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 import DispatchEvidencePanel from '../components/DispatchEvidencePanel';
+import { BeforePhotosPanel } from '../components/BeforePhotos';
 import { authHeaders, getRoles, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { LOT_TRACKER_ROLES, looksLikeLotNumber, formatWhen } from '../utils/lotTracker';
@@ -181,6 +182,10 @@ function Journey({ journey }) {
           </dl>
         )}
       </section>
+
+      {/* G27 (owner, 10 Nov 2026): photos of this machine before refurbishment — view + upload,
+          In Stock lots included (they are filed in "In-stock lots" until the lot is tagged). */}
+      {lot.lot_id != null && <BeforePhotosPanel key={`before-${lot.lot_id}`} lotId={lot.lot_id} />}
 
       {/* G18 (owner, 28 Oct 2026): the dispatch evidence uploaded for THIS machine's workorder item.
           Read-only; hidden when there is none (no "no evidence yet" badge — owner decision 4). */}

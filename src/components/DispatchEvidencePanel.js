@@ -14,7 +14,7 @@
 // drops, it is recorded the next time this user opens any evidence panel. Retry after a failed
 // record only records — it never sends the file again. Closing the dialog cancels uploads.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ExternalLink, Film, FolderOpen, Image as ImageIcon, RotateCw, Trash2, X } from 'lucide-react';
@@ -59,9 +59,35 @@ async function api(resource, { method = 'GET', body, query = {} } = {}) {
 }
 
 // By name the size goes too: SharePoint renames on a clash, so the server checks it is this file.
-const completeBody = (woId, itemId, { driveItemId, fileName, size }) => ({
-  workorder_id: woId, workorder_items_id: itemId, ...(driveItemId ? { drive_item_id: driveItemId } : { file_name: fileName, size }),
-});
+const refBody = ({ driveItemId, fileName, size }) => (driveItemId ? { drive_item_id: driveItemId } : { file_name: fileName, size });
+
+// G27 (owner, 10 Nov 2026): the same panel serves dispatch evidence (per workorder item) and
+// before-refurbishment photos (per lot). An adapter says which API resources, request fields and
+// words to use; everything else — chunked resumable uploads, the saved-uploads queue, thumbnails,
+// delete — is shared. Saved uploads carry `kind` (missing = dispatch, as saved before G27).
+const PENDING_KINDS = {
+  dispatch: { complete: 'complete', target: (p) => ({ workorder_id: Number(p.workorder_id), workorder_items_id: Number(p.workorder_items_id) }) },
+  before: { complete: 'before-complete', target: (p) => ({ lot_id: Number(p.lot_id) }) },
+};
+const pendingKind = (p) => PENDING_KINDS[p.kind] || PENDING_KINDS.dispatch;
+
+/** Dispatch evidence for one workorder (G18). */
+export function dispatchAdapter(workorderId) {
+  const woId = Number(workorderId);
+  return {
+    id: `wo:${woId}`,
+    kind: 'dispatch',
+    resources: { list: 'list', session: 'upload-session', file: 'file' },
+    listQuery: { workorder_id: String(woId) },
+    items: (d) => (d.items || []).map((i) => ({ key: i.workorder_items_id, label: i.label, files: i.files || [], folder_url: i.folder_url || null })),
+    target: (key) => ({ workorder_id: woId, workorder_items_id: key }),
+    owns: (p) => (p.kind || 'dispatch') === 'dispatch' && Number(p.workorder_id) === woId,
+    title: 'Dispatch evidence',
+    hint: 'Photos and videos of each item before it leaves. Up to 300 MB per file.',
+    notSetUp: "Dispatch evidence isn't set up yet.",
+    empty: 'No items on this order need dispatch evidence.',
+  };
+}
 
 // One "record the saved uploads" pass at a time per browser (StrictMode / two panels).
 let flushing = null;
@@ -84,9 +110,13 @@ export function EvidenceFolderLink({ info }) {
 
 let nextKey = 1;
 
-export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyChange, itemId, readOnly = false, inDialog = false }) {
+export default function DispatchEvidencePanel({ workorderId, ...rest }) {
+  const adapter = useMemo(() => dispatchAdapter(workorderId), [workorderId]);
+  return <EvidencePanel adapter={adapter} {...rest} />;
+}
+
+export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOnly = false, inDialog = false }) {
   const navigate = useNavigate();
-  const woId = Number(workorderId);
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -111,7 +141,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
 
   const load = useCallback(async () => {
     try {
-      const d = await api('list', { query: { workorder_id: String(woId) } });
+      const d = await api(adapter.resources.list, { query: adapter.listQuery });
       if (!mounted.current) return null;
       setData(d);
       setLoadError(null);
@@ -121,9 +151,9 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       if (mounted.current) setLoadError(e.message);
       return null;
     }
-  }, [woId, expire]);
+  }, [adapter, expire]);
 
-  // Record this user's saved uploads (any workorder) — only where they could upload in the
+  // Record this user's saved uploads (any workorder or lot) — only where they could upload in the
   // first place, so a viewer on a shared tablet never touches someone else's.
   const flushPending = useCallback(async () => {
     const me = getStoredUser()?.id;
@@ -133,13 +163,14 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
     let here = false;
     for (const p of mine) {
       try {
-        await api('complete', {
+        const k = pendingKind(p);
+        await api(k.complete, {
           method: 'POST',
-          body: completeBody(Number(p.workorder_id), Number(p.workorder_items_id), { driveItemId: p.drive_item_id, fileName: p.file_name, size: p.size }),
+          body: { ...k.target(p), ...refBody({ driveItemId: p.drive_item_id, fileName: p.file_name, size: p.size }) },
         });
         removePending(pendingKey(p));
         recorded += 1;
-        if (Number(p.workorder_id) === woId) here = true;
+        if (adapter.owns(p)) here = true;
       } catch (e) {
         if (e.status === 401) { expire(); return; }
         if (e.status === 400 || e.status === 404) removePending(pendingKey(p)); // will never succeed
@@ -150,7 +181,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       setNotice(`${recorded} upload${recorded === 1 ? '' : 's'} saved before your login expired — recorded now.`);
       if (here) { await load(); onChanged?.(); }
     }
-  }, [woId, expire, load, onChanged]);
+  }, [adapter, expire, load, onChanged]);
 
   useEffect(() => {
     mounted.current = true;
@@ -177,7 +208,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [woId]);
+  }, [adapter.id]);
 
   const busy = jobs.current.some((j) => j.status === 'uploading' || j.status === 'queued');
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
@@ -213,9 +244,9 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
         }
         if (!item) {
           if (!job.session || !fresh) {
-            const s = await api('upload-session', {
+            const s = await api(adapter.resources.session, {
               method: 'POST',
-              body: { workorder_id: woId, workorder_items_id: job.itemId, file_name: job.file.name, size: job.file.size },
+              body: { ...adapter.target(job.itemId), file_name: job.file.name, size: job.file.size },
             });
             job.session = { url: s.upload_url, expiresAt: s.expires_at, fileName: s.file_name, chunk: s.chunk_bytes };
             job.finalSent = false;
@@ -227,11 +258,12 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       update(job, { status: 'recording', progress: 1 });
       const ref = { driveItemId: job.driveItemId, fileName: job.maybeName, size: job.file.size };
       const entry = {
-        workorder_id: woId, workorder_items_id: job.itemId, user_id: getStoredUser()?.id || null,
-        ...(ref.driveItemId ? { drive_item_id: ref.driveItemId } : { file_name: ref.fileName, size: ref.size }),
+        ...(adapter.kind === 'dispatch' ? {} : { kind: adapter.kind }),
+        ...adapter.target(job.itemId), user_id: getStoredUser()?.id || null,
+        ...refBody(ref),
       };
       addPending(entry);
-      await api('complete', { method: 'POST', body: completeBody(woId, job.itemId, ref) });
+      await api(pendingKind(entry).complete, { method: 'POST', body: { ...adapter.target(job.itemId), ...refBody(ref) } });
       removePending(pendingKey(entry));
       update(job, { status: 'done' });
       return 'done';
@@ -253,7 +285,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
       update(job, { status: 'error', error: e.message, canRetry: !removedByServer });
       return 'error';
     }
-  }, [woId, update, expire]);
+  }, [adapter, update, expire]);
 
   const enqueue = useCallback((job) => {
     queue.current = queue.current.then(async () => {
@@ -282,7 +314,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
     if (!window.confirm(`Delete ${f.file_name}? It goes to the SharePoint recycle bin.`)) return;
     setDeleting(f.id);
     try {
-      await api('file', { method: 'DELETE', query: { id: String(f.id) } });
+      await api(adapter.resources.file, { method: 'DELETE', query: { id: String(f.id) } });
       await load();
       onChanged?.();
     } catch (e) {
@@ -305,7 +337,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
     if (loadError) {
       return (
         <div className={inDialog ? 'py-6 text-center' : 'mt-4'}>
-          <p className="text-sm text-red-700">Dispatch evidence: {loadError}</p>
+          <p className="text-sm text-red-700">{adapter.title}: {loadError}</p>
           <button type="button" onClick={load} className="mt-2 inline-flex min-h-[44px] items-center gap-1 rounded border px-3 text-sm hover:bg-gray-50">
             <RotateCw size={14} aria-hidden="true" /> Try again
           </button>
@@ -314,18 +346,18 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
     }
     return say('Loading…');
   }
-  if (!data.configured || !data.available) return say("Dispatch evidence isn't set up yet.");
-  const items = (data.items || []).filter((i) => itemId == null || i.workorder_items_id === Number(itemId));
-  if (readOnly && !items.some((i) => i.files.length)) return null; // Lot Tracker: nothing to show
-  if (!items.length) return say('No items on this order need dispatch evidence.');
+  if (!data.configured || !data.available) return say(adapter.notSetUp);
+  const items = adapter.items(data).filter((i) => itemId == null || i.key === Number(itemId));
+  if (readOnly && !items.some((i) => i.files.length)) return null; // read-only: nothing to show
+  if (!items.length) return say(adapter.empty);
   const canUpload = data.can_upload && !readOnly;
   const canDelete = data.can_delete && !readOnly;
 
   return (
-    <section aria-label="Dispatch evidence" className={inDialog ? 'mt-3' : 'mt-6 rounded-xl border bg-white p-3'}>
+    <section aria-label={adapter.title} className={inDialog ? 'mt-3' : 'mt-6 rounded-xl border bg-white p-3'}>
       {!inDialog && (
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-semibold">Dispatch evidence</h2>
+          <h2 className="font-semibold">{adapter.title}</h2>
           {data.folder_url && !readOnly && (
             <a href={data.folder_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-gray-700 underline">
               Open folder in SharePoint <ExternalLink size={14} aria-hidden="true" />
@@ -333,15 +365,15 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
           )}
         </div>
       )}
-      {canUpload && <p className="mb-3 text-sm text-gray-600">Photos and videos of each item before it leaves. Up to 300 MB per file.</p>}
+      {canUpload && <p className="mb-3 text-sm text-gray-600">{adapter.hint}</p>}
       {notice && <p className="mb-2 rounded border border-green-200 bg-green-50 p-2 text-sm text-green-800" role="status">{notice}</p>}
       {loadError && <p className="mb-2 text-sm text-red-700">{loadError}</p>}
 
       <ul className="space-y-3">
         {items.map((item) => {
-          const mine = jobs.current.filter((j) => j.itemId === item.workorder_items_id && j.status !== 'done');
+          const mine = jobs.current.filter((j) => j.itemId === item.key && j.status !== 'done');
           return (
-            <li key={item.workorder_items_id} className={readOnly ? '' : 'rounded-lg border p-3'}>
+            <li key={item.key} className={readOnly ? '' : 'rounded-lg border p-3'}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 {!readOnly && <div className="font-medium">{item.label}</div>}
                 {readOnly && item.folder_url && (
@@ -361,7 +393,7 @@ export default function DispatchEvidencePanel({ workorderId, onChanged, onBusyCh
                       multiple
                       className="sr-only"
                       aria-label={`Add photos or videos for ${item.label}`}
-                      onChange={onPick(item.workorder_items_id)}
+                      onChange={onPick(item.key)}
                     />
                   </label>
                 )}
@@ -486,13 +518,27 @@ export function WorkorderEvidence({ workorderId, invoiceId, onChanged }) {
 }
 
 export function DispatchEvidenceButton({ workorderId, invoiceId, onChanged, label = 'Evidence', className }) {
+  const name = invoiceId || `WO ${workorderId}`;
+  return (
+    <EvidenceDialogButton
+      label={label}
+      className={className}
+      buttonLabel={`Dispatch evidence for invoice ${name}`}
+      dialogLabel={`Dispatch evidence — invoice ${name}`}
+      title={`Dispatch evidence — ${name}`}
+      renderPanel={(setBusy) => <DispatchEvidencePanel workorderId={workorderId} onBusyChange={setBusy} onChanged={onChanged} inDialog />}
+    />
+  );
+}
+
+/** A button that opens an evidence panel in a modal dialog (shared by G18 and G27). */
+export function EvidenceDialogButton({ label, className, buttonLabel, dialogLabel, title, renderPanel }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const opener = useRef(null);
   const closeBtn = useRef(null);
   const dialog = useRef(null);
   const stop = (e) => e.stopPropagation();
-  const name = invoiceId || `WO ${workorderId}`;
 
   const close = useCallback(() => {
     if (busy && !window.confirm('Uploads are still running — close anyway? They will be cancelled.')) return;
@@ -537,7 +583,7 @@ export function DispatchEvidenceButton({ workorderId, invoiceId, onChanged, labe
       <button
         ref={opener}
         type="button"
-        aria-label={`Dispatch evidence for invoice ${name}`}
+        aria-label={buttonLabel}
         onClick={(e) => { stop(e); setOpen(true); }}
         onKeyDown={stop}
         className={`no-row-nav ${className || 'mt-1 inline-flex min-h-[44px] items-center gap-1 rounded border px-3 font-sans text-xs text-gray-700 hover:bg-gray-50'}`}
@@ -551,14 +597,14 @@ export function DispatchEvidenceButton({ workorderId, invoiceId, onChanged, labe
           onClick={stop}
           onKeyDown={trap}
         >
-          <div ref={dialog} role="dialog" aria-modal="true" aria-label={`Dispatch evidence — invoice ${name}`} className="w-full max-w-3xl rounded-lg bg-white p-4 shadow-xl">
+          <div ref={dialog} role="dialog" aria-modal="true" aria-label={dialogLabel} className="w-full max-w-3xl rounded-lg bg-white p-4 shadow-xl">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">Dispatch evidence — {name}</h2>
+              <h2 className="text-lg font-semibold">{title}</h2>
               <button ref={closeBtn} type="button" aria-label="Close" onClick={close} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded hover:bg-gray-100">
                 <X size={20} aria-hidden="true" />
               </button>
             </div>
-            <DispatchEvidencePanel workorderId={workorderId} onBusyChange={setBusy} onChanged={onChanged} inDialog />
+            {renderPanel(setBusy)}
           </div>
         </div>,
         document.body
