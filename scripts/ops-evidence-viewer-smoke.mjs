@@ -122,6 +122,16 @@ check('POST → 405', (await call({ resource: 'view', id: 12, auth: AUTH.staff, 
   const r = await call({ resource: 'before-view', id: 7, auth: AUTH.wk });
   check('a before-photo HEIC opens as the large JPEG preview', r.statusCode === 200 && r.body.kind === 'image' && r.body.url === 'https://thumb/b-heic', JSON.stringify(r.body));
 }
+{
+  // Review: a HEIC with no preview yet, or a video with no download link, never falls back to a
+  // file the browser cannot show.
+  ITEMS['b-heic'] = { ...ITEMS['b-heic'], large: null };
+  const r = await call({ resource: 'before-view', id: 7, auth: AUTH.wk });
+  check('HEIC with no preview yet → 404 with a plain message (not the raw HEIC)', r.statusCode === 404 && /not ready yet/.test(r.body.error), JSON.stringify(r.body));
+  ITEMS['d-video'] = { ...ITEMS['d-video'], downloadUrl: null };
+  const v = await call({ resource: 'view', id: 13, auth: AUTH.staff });
+  check('video with no download link → 404 (never the JPEG preview)', v.statusCode === 404);
+}
 check('unknown / deleted file → 404', (await call({ resource: 'view', id: 99, auth: AUTH.staff })).statusCode === 404);
 check('file gone from SharePoint → 404', (await call({ resource: 'view', id: 14, auth: AUTH.staff })).statusCode === 404);
 check('bad id → 400', (await call({ resource: 'before-view', id: 'abc', auth: AUTH.staff })).statusCode === 400);
