@@ -25,6 +25,18 @@ Decisions 1 + 2 conflict for an In Stock lot (no workorder folder yet). Resoluti
 - Photos are keyed to the lot in the DB, so they follow the machine. One folder per lot (an
   item with qty 3 has 3 lot folders).
 
+## Addition — old stock without lot numbers (owner, 10 Nov 2026, while testing)
+"Some old stock doesn't have them [lot numbers]." Before photos can name a **workorder item**
+instead of a lot (`workorder_items_id` in place of `lot_id` on every `before-*` call; both → 400).
+- Folder: `<invoice> - WO <id>/<item> - item <id>/Before refurbishment` — never moves.
+- Workorder page: a "Before photos" button on the item while any unit has no lot; once every unit
+  has a lot it is view-only and shown only if item photos exist.
+- A lot's list also shows the photos taken on its item before the lot was assigned (`source:
+  'item'`), so the Tech Checklist / Lot Tracker still show them. Custom / OTHER lines excluded.
+- Data: `lot_photos.lot_id` nullable (NULL = item photo), new `item_photo_folders`
+  (workorder_items_id PK). 0013 was edited in place because it was on Neon dev only; dev got the
+  additive delta by hand (a database that already recorded 0013 does not re-run it).
+
 ## Data — migration `0013_lot_photos` (Neon DEV only; additive, `_down` paired)
 - `lot_photo_folders` — `lot_id` PK, `drive_item_id`, `name`, `web_url`,
   `workorder_items_id` (where the folder currently sits; NULL = In-stock lots area),
