@@ -27,7 +27,7 @@ export function beforeAdapter(subject) {
   return {
     id: isLot ? `lot:${ref.lot_id}` : `item:${ref.workorder_items_id}`,
     kind: 'before',
-    resources: { list: 'before-list', session: 'before-upload-session', file: 'before-file' },
+    resources: { list: 'before-list', session: 'before-upload-session', file: 'before-file', view: 'before-view' },
     listQuery: Object.fromEntries(Object.entries(ref).map(([k, v]) => [k, String(v)])),
     items: (d) => {
       if (d.lot) return [{ key: d.lot.lot_id, label: `Lot ${d.lot.lot_number}`, files: d.files || [], folder_url: d.folder_url || null }];
