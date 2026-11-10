@@ -21,6 +21,13 @@ jest.mock('../../components/DispatchEvidencePanel', () => function FakeEvidence(
   return <div data-testid="dispatch-evidence">{`evidence ${workorderId}/${itemId}${readOnly ? ' read-only' : ''}`}</div>;
 });
 
+// G27: the before-photos panel has its own tests (components/__tests__/beforePhotos.test.js).
+jest.mock('../../components/BeforePhotos', () => ({
+  BeforePhotosPanel: function FakeBefore({ lotId, readOnly }) {
+    return <div data-testid="before-photos">{`before ${lotId}${readOnly ? ' read-only' : ''}`}</div>;
+  },
+}));
+
 const JOURNEY = {
   lot: { lot_number: 'L00001', status: 'Assigned', serial_number: 'SN-12345', created_at: '2026-07-10T02:00:00.000Z', created_by: 'GS', created_by_name: 'Nick Enrique Wijaya' },
   product: { sku: '2609', name: 'Life Fitness 95T Treadmill', brand: 'Life Fitness' },
@@ -210,6 +217,13 @@ describe('the journey', () => {
     installFetch();
     renderPage('/lot-tracker?lot=L00001');
     expect(await screen.findByTestId('dispatch-evidence')).toHaveTextContent('evidence 883/2001 read-only');
+  });
+
+  test('before-refurbishment photos: shown with upload for any lot, In Stock included (G27)', async () => {
+    login(['admin']);
+    installFetch({ journey: [200, { ...JOURNEY, lot: { ...JOURNEY.lot, lot_id: 42, status: 'In Stock' }, assignment: null, workshop: null }] });
+    renderPage('/lot-tracker?lot=L00001');
+    expect(await screen.findByTestId('before-photos')).toHaveTextContent(/^before 42$/);
   });
 
   test('no evidence block for a lot that is not on a workorder', async () => {

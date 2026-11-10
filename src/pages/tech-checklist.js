@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
+import { BeforePhotosPanel } from '../components/BeforePhotos';
 import { authHeaders, getRoles, getStoredUser, hasAnyRole } from '../utils/auth';
 import { endExpiredSession } from '../utils/session';
 import { formatWhen } from '../utils/lotTracker';
@@ -436,6 +437,9 @@ export default function TechChecklistPage() {
         {!loading && found && (
           <div className="mt-6 space-y-4">
             <OrderCard view={view} me={me} />
+            {/* G27 (owner, 10 Nov 2026): how the machine looked before it was taken apart.
+                View only here; hidden when there are none. */}
+            {view.lot.lot_id != null && <BeforePhotosPanel key={`before-${view.lot.lot_id}`} lotId={view.lot.lot_id} readOnly />}
             {view.available ? (
               <Checklist key={`${view.lot.lot_number}`} view={view} onSaved={acceptSaved} request={request} />
             ) : (

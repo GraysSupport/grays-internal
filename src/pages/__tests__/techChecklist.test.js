@@ -15,6 +15,13 @@ jest.mock('../../components/CameraBarcodeScanner', () => function FakeCamera({ o
   );
 });
 
+// G27: the before-photos panel has its own tests (components/__tests__/beforePhotos.test.js).
+jest.mock('../../components/BeforePhotos', () => ({
+  BeforePhotosPanel: function FakeBefore({ lotId, readOnly }) {
+    return <div data-testid="before-photos">{`before ${lotId}${readOnly ? ' read-only' : ''}`}</div>;
+  },
+}));
+
 const VIEW = {
   available: true,
   lot: { lot_id: 42, lot_number: 'L00042', status: 'Assigned', serial_number: null, product_sku: 'LF-95X', product_name: 'Life Fitness 95X Elliptical', product_brand: 'Life Fitness' },
@@ -111,6 +118,15 @@ describe('TechChecklistPage', () => {
     expect(within(order).getByText('Altona North, VIC')).toBeInTheDocument();
     expect(within(order).getByText('Eden')).toBeInTheDocument();
     expect(screen.queryByText(/assigned to eden, not you/i)).not.toBeInTheDocument();
+  });
+
+  test('shows the before-refurbishment photos for the lot, view only (G27)', async () => {
+    login();
+    installFetch();
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Scan with the camera' }));
+    fireEvent.click(screen.getByText('fake-scan'));
+    expect(await screen.findByTestId('before-photos')).toHaveTextContent('before 42 read-only');
   });
 
   test('serials are pre-filled from the workorder', async () => {

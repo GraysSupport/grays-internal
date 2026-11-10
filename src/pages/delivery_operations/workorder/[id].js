@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import CreateCustomerModal from '../../../components/CreateCustomerModal';
 import ScanResultModal from '../../../components/ScanResultModal';
 import { WorkorderEvidence } from '../../../components/DispatchEvidencePanel';
+import { BeforePhotosButton } from '../../../components/BeforePhotos';
 import WorkorderCancel from '../../../components/WorkorderCancel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 
@@ -14,7 +15,7 @@ import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '
  * and, until `quantity` lots are assigned, a SKU-filtered dropdown of In-Stock
  * lots to assign. Renders nothing for items with no lots (e.g. custom lines).
  */
-function LotSlots({ item, actorId }) {
+function LotSlots({ item, actorId, onChanged }) {
   const [lots, setLots] = useState(null);
   const wiId = item.workorder_items_id;
   const sku = item.product_id;
@@ -69,6 +70,20 @@ function LotSlots({ item, actorId }) {
       <div className="text-sm font-medium mb-2">
         Lot numbers <span className="font-normal text-gray-500">({assigned.length}/{qty} assigned)</span>
       </div>
+      {/* G27 (owner, 10 Nov 2026): old stock has no lot number, so before photos go on the item.
+          Offered while any unit has no lot; once every unit has one, view-only and only if item
+          photos already exist (new photos then go on the lots). */}
+      {lots !== null && (
+        <div className="mb-2">
+          <BeforePhotosButton
+            workorderItemId={wiId}
+            name={item.product_name || item.product_id || `item ${wiId}`}
+            onlyIfAny={qty > 0 && assigned.length >= qty}
+            readOnly={qty > 0 && assigned.length >= qty}
+            onChanged={onChanged}
+          />
+        </div>
+      )}
       {assigned.map((l) => (
         <div key={l.lot_id} className="flex items-center gap-2 mb-1">
           <span className="font-mono text-sm w-20">{l.lot_number}</span>
@@ -80,6 +95,8 @@ function LotSlots({ item, actorId }) {
             onBlur={(e) => saveSerial(l.lot_id, e.target.value)}
             onClick={(e) => e.stopPropagation()}
           />
+          {/* G27 (owner, 10 Nov 2026): photos of this machine before refurbishment. */}
+          <BeforePhotosButton lotId={l.lot_id} name={`lot ${l.lot_number}`} onChanged={onChanged} />
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); unassign(l.lot_id); }}
@@ -1120,7 +1137,7 @@ export default function WorkorderDetailPage() {
                                 {/* G3: per-unit lot slots (assign lots by SKU; per-lot serial).
                                     Shown for real products only — custom/OTHER lines don't carry lots. */}
                                 {!it.is_custom && it.product_id !== 'OTHER' && (
-                                  <LotSlots item={it} actorId={userId} />
+                                  <LotSlots item={it} actorId={userId} onChanged={reloadActivity} />
                                 )}
                               </div>
                             </td>

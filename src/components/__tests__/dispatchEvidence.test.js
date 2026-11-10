@@ -558,3 +558,46 @@ describe('DispatchEvidenceButton (delivery rows)', () => {
     expect(callsTo(fetchMock, 'complete')).toHaveLength(0);
   });
 });
+
+describe('G27: dispatch evidence alongside before photos', () => {
+  test('a saved before-photo upload is recorded through before-complete from a dispatch panel too', async () => {
+    login();
+    addPending({ kind: 'before', lot_id: 55, user_id: 'LG', drive_item_id: 'drive-before' });
+    const f = installFetch();
+    renderPanel();
+    await waitFor(() => expect(callsTo(f, 'before-complete')).toHaveLength(1));
+    expect(JSON.parse(callsTo(f, 'before-complete')[0][1].body)).toEqual({ lot_id: 55, drive_item_id: 'drive-before' });
+    expect(callsTo(f, 'complete')).toHaveLength(0);
+  });
+
+  test('a dispatch upload saved before recording carries no kind (old code still reads it)', async () => {
+    login();
+    let seen = null;
+    const f = installFetch({ complete: () => { seen = readPending(); return [200, { recorded: true }]; } });
+    renderPanel();
+    await screen.findByLabelText(`Add photos or videos for ${ELLIPTICAL}`);
+    pick(ELLIPTICAL, [jpg()]);
+    await waitFor(() => expect(callsTo(f, 'complete')).toHaveLength(1));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toHaveProperty('kind');
+    expect(seen[0]).toMatchObject({ workorder_id: 731, workorder_items_id: 2003, drive_item_id: 'drive-1' });
+  });
+});
+
+describe('evidence pop-up fits the screen (owner, 10 Nov 2026)', () => {
+  test('the dialog is capped to the screen height and its body scrolls; the title + close stay outside the scroll', async () => {
+    login();
+    installFetch();
+    render(<MemoryRouter><DispatchEvidenceButton workorderId={731} invoiceId="19623" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Dispatch evidence for invoice 19623' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Dispatch evidence — invoice 19623' });
+    expect(dialog.className).toMatch(/max-h-\[calc\(100vh-2rem\)\]/);
+    expect(dialog.className).toMatch(/flex-col/);
+    const body = within(dialog).getByTestId('evidence-dialog-body');
+    expect(body.className).toMatch(/overflow-y-auto/);
+    expect(body.className).toMatch(/min-h-0/);
+    expect(within(body).queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(within(body).queryByRole('heading', { name: 'Dispatch evidence — 19623' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+});

@@ -179,30 +179,49 @@ export const PENDING_DAYS = 7;
 /** One id per file: the drive item id, or `name:<file_name>` when only the name is known. */
 export const pendingKey = (p) => p.drive_item_id || `name:${p.file_name}`;
 
-export function readPending() {
+// G27: before-refurbishment photos (kind 'before') are kept under their OWN key, so a tab still
+// running the pre-G27 bundle (or main after a revert) never sees one and drops it as a bad
+// dispatch entry (review, 10 Nov 2026). Dispatch entries stay where they always were.
+const BEFORE_PENDING_KEY = 'grays.beforePhotos.pending';
+const storageKey = (kind) => (kind === 'before' ? BEFORE_PENDING_KEY : PENDING_KEY);
+
+function readKey(key) {
   try {
-    const v = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]');
+    const v = JSON.parse(localStorage.getItem(key) || '[]');
     return Array.isArray(v) ? v : [];
   } catch {
     return [];
   }
 }
-function writePending(list) {
-  try { localStorage.setItem(PENDING_KEY, JSON.stringify(list)); } catch { /* storage full / blocked */ }
+/** Every saved upload, both kinds. */
+export function readPending() {
+  return [...readKey(PENDING_KEY), ...readKey(BEFORE_PENDING_KEY)];
+}
+function writeKey(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* storage full / blocked */ }
 }
 export function addPending(entry) {
   const key = pendingKey(entry);
-  writePending([...readPending().filter((p) => pendingKey(p) !== key), { saved_at: Date.now(), ...entry }]);
+  const store = storageKey(entry.kind);
+  writeKey(store, [...readKey(store).filter((p) => pendingKey(p) !== key), { saved_at: Date.now(), ...entry }]);
 }
 export function removePending(key) {
-  writePending(readPending().filter((p) => pendingKey(p) !== key));
+  for (const store of [PENDING_KEY, BEFORE_PENDING_KEY]) {
+    const list = readKey(store);
+    const kept = list.filter((p) => pendingKey(p) !== key);
+    if (kept.length !== list.length) writeKey(store, kept);
+  }
 }
 /** This user's entries still worth trying; quietly drops anyone's that are too old. */
 export function pendingFor(userId, now = Date.now()) {
   const cutoff = now - PENDING_DAYS * 24 * 60 * 60 * 1000;
-  const all = readPending();
-  const fresh = all.filter((p) => !(Number(p.saved_at) < cutoff));
-  if (fresh.length !== all.length) writePending(fresh);
+  const fresh = [];
+  for (const store of [PENDING_KEY, BEFORE_PENDING_KEY]) {
+    const all = readKey(store);
+    const keep = all.filter((p) => !(Number(p.saved_at) < cutoff));
+    if (keep.length !== all.length) writeKey(store, keep);
+    fresh.push(...keep);
+  }
   const me = String(userId || '').toUpperCase();
   return me ? fresh.filter((p) => String(p.user_id || '').toUpperCase() === me) : [];
 }
