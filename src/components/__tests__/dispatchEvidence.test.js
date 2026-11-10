@@ -583,3 +583,21 @@ describe('G27: dispatch evidence alongside before photos', () => {
     expect(seen[0]).toMatchObject({ workorder_id: 731, workorder_items_id: 2003, drive_item_id: 'drive-1' });
   });
 });
+
+describe('evidence pop-up fits the screen (owner, 10 Nov 2026)', () => {
+  test('the dialog is capped to the screen height and its body scrolls; the title + close stay outside the scroll', async () => {
+    login();
+    installFetch();
+    render(<MemoryRouter><DispatchEvidenceButton workorderId={731} invoiceId="19623" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Dispatch evidence for invoice 19623' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Dispatch evidence — invoice 19623' });
+    expect(dialog.className).toMatch(/max-h-\[calc\(100vh-2rem\)\]/);
+    expect(dialog.className).toMatch(/flex-col/);
+    const body = within(dialog).getByTestId('evidence-dialog-body');
+    expect(body.className).toMatch(/overflow-y-auto/);
+    expect(body.className).toMatch(/min-h-0/);
+    expect(within(body).queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(within(body).queryByRole('heading', { name: 'Dispatch evidence — 19623' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+});

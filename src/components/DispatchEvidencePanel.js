@@ -597,18 +597,30 @@ export function EvidenceDialogButton({ label, className, buttonLabel, dialogLabe
       {open && createPortal(
         // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
         <div
-          className="no-row-nav fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+          className="no-row-nav fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
           onClick={stop}
           onKeyDown={trap}
         >
-          <div ref={dialog} role="dialog" aria-modal="true" aria-label={dialogLabel} className="w-full max-w-3xl rounded-lg bg-white p-4 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
+          {/* Never taller than the screen (owner, 10 Nov 2026: a long workorder overflowed and the
+              title + close button went off the top): the header stays put, the items scroll
+              inside the box. dvh = the visible height on phones (address bar); vh is the fallback. */}
+          <div
+            ref={dialog}
+            role="dialog"
+            aria-modal="true"
+            aria-label={dialogLabel}
+            className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
+            style={{ maxHeight: 'calc(100dvh - 2rem)' }}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2">
               <h2 className="text-lg font-semibold">{title}</h2>
               <button ref={closeBtn} type="button" aria-label="Close" onClick={close} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded hover:bg-gray-100">
                 <X size={20} aria-hidden="true" />
               </button>
             </div>
-            {renderPanel(setBusy)}
+            <div data-testid="evidence-dialog-body" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+              {renderPanel(setBusy)}
+            </div>
           </div>
         </div>,
         document.body
