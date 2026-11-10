@@ -70,6 +70,18 @@ function LotSlots({ item, actorId, onChanged }) {
       <div className="text-sm font-medium mb-2">
         Lot numbers <span className="font-normal text-gray-500">({assigned.length}/{qty} assigned)</span>
       </div>
+      {/* G27 (owner, 10 Nov 2026): old stock has no lot number, so before photos go on the item.
+          Offered while no lot is assigned; once one is, only shown if item photos already exist. */}
+      {lots !== null && (
+        <div className="mb-2">
+          <BeforePhotosButton
+            workorderItemId={wiId}
+            name={item.product_name || item.product_id || `item ${wiId}`}
+            onlyIfAny={assigned.length > 0}
+            onChanged={onChanged}
+          />
+        </div>
+      )}
       {assigned.map((l) => (
         <div key={l.lot_id} className="flex items-center gap-2 mb-1">
           <span className="font-mono text-sm w-20">{l.lot_number}</span>
@@ -82,7 +94,7 @@ function LotSlots({ item, actorId, onChanged }) {
             onClick={(e) => e.stopPropagation()}
           />
           {/* G27 (owner, 10 Nov 2026): photos of this machine before refurbishment. */}
-          <BeforePhotosButton lotId={l.lot_id} lotNumber={l.lot_number} onChanged={onChanged} />
+          <BeforePhotosButton lotId={l.lot_id} name={`lot ${l.lot_number}`} onChanged={onChanged} />
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); unassign(l.lot_id); }}

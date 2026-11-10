@@ -92,6 +92,9 @@ const WO = { workorder_id: 731, invoice_id: '19623' };
 const ITEMS = [
   { workorder_items_id: 2001, workorder_id: 731, product_id: 'TM-95T', product_name: 'Life Fitness 95T Treadmill', is_custom: false, custom_description: null },
   { workorder_items_id: 2003, workorder_id: 731, product_id: 'TM-95T', product_name: 'Life Fitness 95T Treadmill', is_custom: false, custom_description: null },
+  // Old stock: a real product sold before lot numbers existed (no lot assigned).
+  { workorder_items_id: 2005, workorder_id: 731, product_id: 'LF-95X', product_name: 'Life Fitness 95X Elliptical', is_custom: false, custom_description: null },
+  { workorder_items_id: 2002, workorder_id: 731, product_id: 'OTHER', product_name: 'Custom / Misc Item', is_custom: true, custom_description: 'Install kit' },
 ];
 const LOTS = () => ({
   55: { lot_id: 55, lot_number: 'L00055', product_sku: 'TM-95T', status: 'In Stock', workorder_items_id: null },
@@ -99,7 +102,7 @@ const LOTS = () => ({
 });
 
 function makeClient({ missing = false, lots = LOTS() } = {}) {
-  const state = { lots, folders: [], photos: [], logs: [], dispatchFolders: [], nextId: 1 };
+  const state = { lots, folders: [], itemFolders: [], photos: [], logs: [], dispatchFolders: [], nextId: 1 };
   const calls = [];
   return {
     state, calls,
@@ -107,7 +110,7 @@ function makeClient({ missing = false, lots = LOTS() } = {}) {
       calls.push({ text, params });
       const sql = text.replace(/\s+/g, ' ').trim();
       if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [] };
-      if (/lot_photo/.test(sql) && missing) throw Object.assign(new Error('relation "lot_photos" does not exist'), { code: '42P01' });
+      if (/lot_photo|item_photo/.test(sql) && missing) throw Object.assign(new Error('relation "lot_photos" does not exist'), { code: '42P01' });
       if (/^SELECT/i.test(sql) && /FROM product_lots pl/.test(sql) && /pl\.lot_id = \$1/.test(sql)) {
         const l = state.lots[Number(params[0])];
         if (!l) return { rows: [] };
@@ -133,6 +136,27 @@ function makeClient({ missing = false, lots = LOTS() } = {}) {
         state.dispatchForgot = (state.dispatchForgot || 0) + 1;
         return { rows: [] };
       }
+      if (/^SELECT workorder_id FROM workorder_items WHERE workorder_items_id = \$1$/.test(sql)) {
+        const i = ITEMS.find((x) => x.workorder_items_id === Number(params[0]));
+        return { rows: i ? [{ workorder_id: i.workorder_id }] : [] };
+      }
+      if (/^SELECT/i.test(sql) && /FROM item_photo_folders/.test(sql)) {
+        return { rows: state.itemFolders.filter((f) => f.workorder_items_id === Number(params[0])) };
+      }
+      if (/^INSERT INTO item_photo_folders/i.test(sql)) {
+        const [workorder_items_id, workorder_id, drive_item_id, name, web_url] = params;
+        if (!state.itemFolders.some((f) => f.workorder_items_id === Number(workorder_items_id))) {
+          state.itemFolders.push({ workorder_items_id: Number(workorder_items_id), workorder_id: Number(workorder_id), drive_item_id, name, web_url });
+        }
+        return { rows: [] };
+      }
+      if (/^DELETE FROM item_photo_folders/i.test(sql)) {
+        state.itemFolders = state.itemFolders.filter((f) => f.workorder_items_id !== Number(params[0]));
+        return { rows: [] };
+      }
+      if (/^SELECT/i.test(sql) && /FROM lot_photos p/.test(sql) && /p\.lot_id IS NULL AND p\.workorder_items_id = \$1/.test(sql)) {
+        return { rows: state.photos.filter((p) => p.lot_id == null && Number(p.workorder_items_id) === Number(params[0]) && !p.deleted_at).map((p) => ({ ...p, uploaded_by_name: USERS[p.uploaded_by] || null })) };
+      }
       if (/^SELECT/i.test(sql) && /FROM lot_photo_folders/.test(sql)) {
         return { rows: state.folders.filter((f) => f.lot_id === Number(params[0])) };
       }
@@ -156,7 +180,7 @@ function makeClient({ missing = false, lots = LOTS() } = {}) {
       if (/^INSERT INTO lot_photos/i.test(sql)) {
         const [lot_id, workorder_items_id, drive_item_id, file_name, mime_type, size_bytes, web_url, uploaded_by] = params;
         if (state.photos.some((p) => p.drive_item_id === drive_item_id)) return { rows: [] };
-        const row = { id: state.nextId++, lot_id: Number(lot_id), workorder_items_id, drive_item_id, file_name, mime_type, size_bytes, web_url, uploaded_by, uploaded_at: new Date('2026-11-10T01:00:00Z'), deleted_at: null };
+        const row = { id: state.nextId++, lot_id: lot_id == null ? null : Number(lot_id), workorder_items_id, drive_item_id, file_name, mime_type, size_bytes, web_url, uploaded_by, uploaded_at: new Date('2026-11-10T01:00:00Z'), deleted_at: null };
         state.photos.push(row);
         return { rows: [{ id: row.id }] };
       }
@@ -438,6 +462,53 @@ for (const who of ['technician', 'workshop', 'logistics', 'admin', 'superadmin',
   check('superadmin delete → recycle bin + soft delete', d.statusCode === 200 && !graph.store.f1 && client.state.photos[0].deleted_at && client.state.photos[0].deleted_by === 'NE');
   check('delete adds a log line on the lot\'s workorder', /^Before photo removed — lot L00056 — /.test(client.state.logs.at(-1)[3]));
   check('deleting again → 404', (await call({ method: 'DELETE', resource: 'before-file', query: { id: String(id) }, auth: AUTH.superadmin, client, graph })).statusCode === 404);
+}
+
+// --- old stock without lot numbers: photos per workorder item (owner, 10 Nov 2026) ---
+{
+  const client = makeClient(); const graph = makeGraph();
+  const body = { workorder_items_id: 2005, file_name: 'front.jpg', size: 4_000_000 };
+  check('item photos: staff cannot upload → 403', (await upload({ body, auth: AUTH.staff, client, graph })).statusCode === 403);
+  const r = await upload({ body, auth: AUTH.workshop, client, graph });
+  const itemFolder = client.state.dispatchFolders.find((d) => d.workorder_items_id === 2005);
+  const f = client.state.itemFolders[0];
+  check('an item without a lot gets "Before refurbishment" inside its dispatch-evidence folder',
+    r.statusCode === 200 && itemFolder?.name === 'LF-95X Life Fitness 95X Elliptical - item 2005' && f?.name === 'Before refurbishment' && graph.folders[f.drive_item_id].parent === itemFolder.drive_item_id,
+    JSON.stringify({ r: r.body, f, itemFolder }));
+  check('… and no lot folder is made', client.state.folders.length === 0);
+  const mark = graph.calls.length;
+  await upload({ body, auth: AUTH.workshop, client, graph });
+  check('… a second upload reuses it (no folder calls)', !graph.calls.slice(mark).some((c) => ['ensureFolder', 'moveItem'].includes(c[0])));
+
+  putFile(graph, 'i1', f.drive_item_id);
+  const c = await call({ method: 'POST', resource: 'before-complete', body: { workorder_items_id: 2005, drive_item_id: 'i1' }, auth: AUTH.workshop, client, graph });
+  const row = client.state.photos.find((p) => p.drive_item_id === 'i1');
+  check('item photo recorded with no lot and its item', c.statusCode === 200 && row.lot_id === null && Number(row.workorder_items_id) === 2005, JSON.stringify(row));
+  check('… and logged on the workorder with the item name',
+    client.state.logs.some((l) => l[0] === 731 && l[1] === 2005 && /^Before photo added — LF-95X Life Fitness 95X Elliptical — /.test(l[3])), JSON.stringify(client.state.logs));
+  putFile(graph, 'i-wrong', 'some-other-folder');
+  check('a file outside the item folder is refused', (await call({ method: 'POST', resource: 'before-complete', body: { workorder_items_id: 2005, drive_item_id: 'i-wrong' }, auth: AUTH.workshop, client, graph })).statusCode === 400);
+
+  const l = await call({ resource: 'before-list', query: { workorder_items_id: '2005' }, auth: AUTH.staff, client, graph });
+  check('item list: its photos, the item, no lot', l.statusCode === 200 && l.body.files.length === 1 && l.body.lot === null && l.body.item.label === 'LF-95X Life Fitness 95X Elliptical' && l.body.item.workorder_id === 731, JSON.stringify(l.body));
+  const lotList = await call({ resource: 'before-list', query: { lot_id: '56' }, auth: AUTH.staff, client, graph });
+  check('item photos never show on a lot', lotList.body.files.length === 0 && lotList.body.item === null);
+
+  const id = row.id;
+  const d = await call({ method: 'DELETE', resource: 'before-file', query: { id: String(id) }, auth: AUTH.superadmin, client, graph });
+  check('superadmin deletes an item photo + log line', d.statusCode === 200 && /^Before photo removed — LF-95X/.test(client.state.logs.at(-1)[3]));
+
+  check('OTHER / custom lines are refused', (await upload({ body: { ...body, workorder_items_id: 2002 }, auth: AUTH.admin, client, graph })).statusCode === 400);
+  check('unknown item → 404', (await upload({ body: { ...body, workorder_items_id: 9999 }, auth: AUTH.admin, client, graph })).statusCode === 404);
+  check('neither lot nor item → 400', (await upload({ body: { file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph })).statusCode === 400);
+}
+{
+  // A G18 item folder deleted by hand → stale ids dropped, folder made again (once).
+  const client = makeClient(); const graph = makeGraph();
+  client.state.dispatchFolders.push({ workorder_id: 731, workorder_items_id: null, drive_item_id: 'stale-wo', name: '19623 - WO 731' });
+  client.state.dispatchFolders.push({ workorder_id: 731, workorder_items_id: 2005, drive_item_id: 'stale-item', name: 'x' });
+  const r = await upload({ body: { workorder_items_id: 2005, file_name: 'a.jpg', size: 10 }, auth: AUTH.admin, client, graph });
+  check('item photos: a deleted dispatch folder is re-made', r.statusCode === 200 && client.state.dispatchForgot === 1 && client.state.itemFolders.length === 1);
 }
 
 // --- not migrated yet (prod until the owner migrates at merge) ---

@@ -84,7 +84,7 @@ describe('BeforePhotosPanel', () => {
   test('the lot-row count asks for count_only (no move, no thumbnails)', async () => {
     login();
     const f = installFetch();
-    ui(<BeforePhotosButton lotId={55} lotNumber="L00055" />);
+    ui(<BeforePhotosButton lotId={55} name="lot L00055" />);
     await screen.findByRole('button', { name: 'Before photos (1) — lot L00055' });
     expect(new URL(callsTo(f, 'before-list')[0][0], 'http://x').searchParams.get('count_only')).toBe('1');
   });
@@ -125,11 +125,52 @@ describe('BeforePhotosPanel', () => {
   });
 });
 
+describe('before photos for an item without a lot (old stock, owner 10 Nov 2026)', () => {
+  const ITEM_LIST = {
+    ...LIST, lot: null, item: { workorder_items_id: 2005, workorder_id: 731, label: 'LF-95X Life Fitness 95X Elliptical' }, files: [],
+  };
+
+  test('uploads name the workorder item, never a lot', async () => {
+    login();
+    const f = installFetch({ 'before-list': [200, ITEM_LIST] });
+    ui(<BeforePhotosPanel workorderItemId={2005} />);
+    fireEvent.change(await screen.findByLabelText('Add photos or videos for LF-95X Life Fitness 95X Elliptical'), { target: { files: [jpg()] } });
+    await waitFor(() => expect(callsTo(f, 'before-complete')).toHaveLength(1));
+    expect(new URL(callsTo(f, 'before-list')[0][0], 'http://x').searchParams.get('workorder_items_id')).toBe('2005');
+    expect(JSON.parse(callsTo(f, 'before-upload-session')[0][1].body)).toEqual({ workorder_items_id: 2005, file_name: 'back.jpg', size: 1000 });
+    expect(JSON.parse(callsTo(f, 'before-complete')[0][1].body)).toEqual({ workorder_items_id: 2005, drive_item_id: 'drive-9' });
+  });
+
+  test('a saved item upload is recorded by item', async () => {
+    login();
+    addPending({ kind: 'before', workorder_items_id: 2005, user_id: 'ED', drive_item_id: 'drive-item' });
+    const f = installFetch({ 'before-list': [200, ITEM_LIST] });
+    ui(<BeforePhotosPanel workorderItemId={2005} />);
+    await waitFor(() => expect(callsTo(f, 'before-complete')).toHaveLength(1));
+    expect(JSON.parse(callsTo(f, 'before-complete')[0][1].body)).toEqual({ workorder_items_id: 2005, drive_item_id: 'drive-item' });
+  });
+
+  test('onlyIfAny hides the item button when there are no item photos', async () => {
+    login();
+    const f = installFetch({ 'before-list': [200, ITEM_LIST] });
+    const { container } = ui(<BeforePhotosButton workorderItemId={2005} name="Elliptical" onlyIfAny />);
+    await waitFor(() => expect(callsTo(f, 'before-list')).toHaveLength(1));
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  test('the item button shows otherwise', async () => {
+    login();
+    installFetch({ 'before-list': [200, ITEM_LIST] });
+    ui(<BeforePhotosButton workorderItemId={2005} name="Elliptical" />);
+    expect(await screen.findByRole('button', { name: 'Before photos — Elliptical' })).toBeInTheDocument();
+  });
+});
+
 describe('BeforePhotosButton', () => {
   test('shows the count and opens the photos in a dialog', async () => {
     login();
     installFetch();
-    ui(<BeforePhotosButton lotId={55} lotNumber="L00055" />);
+    ui(<BeforePhotosButton lotId={55} name="lot L00055" />);
     const btn = await screen.findByRole('button', { name: 'Before photos (1) — lot L00055' });
     expect(btn).toHaveTextContent('Before photos (1)');
     fireEvent.click(btn);
@@ -140,7 +181,7 @@ describe('BeforePhotosButton', () => {
   test('hidden while Microsoft is not connected or the tables are missing', async () => {
     login();
     const f = installFetch({ 'before-list': [200, { ...LIST, configured: false }] });
-    const { container } = ui(<BeforePhotosButton lotId={55} lotNumber="L00055" />);
+    const { container } = ui(<BeforePhotosButton lotId={55} name="lot L00055" />);
     await waitFor(() => expect(callsTo(f, 'before-list')).toHaveLength(1));
     expect(container).toBeEmptyDOMElement();
   });

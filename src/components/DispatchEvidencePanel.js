@@ -67,7 +67,11 @@ const refBody = ({ driveItemId, fileName, size }) => (driveItemId ? { drive_item
 // delete — is shared. Saved uploads carry `kind` (missing = dispatch, as saved before G27).
 const PENDING_KINDS = {
   dispatch: { complete: 'complete', target: (p) => ({ workorder_id: Number(p.workorder_id), workorder_items_id: Number(p.workorder_items_id) }) },
-  before: { complete: 'before-complete', target: (p) => ({ lot_id: Number(p.lot_id) }) },
+  before: {
+    complete: 'before-complete',
+    // A lot, or (old stock without lot numbers) a workorder item.
+    target: (p) => (p.lot_id != null ? { lot_id: Number(p.lot_id) } : { workorder_items_id: Number(p.workorder_items_id) }),
+  },
 };
 const pendingKind = (p) => PENDING_KINDS[p.kind] || PENDING_KINDS.dispatch;
 
