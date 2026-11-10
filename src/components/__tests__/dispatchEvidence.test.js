@@ -558,3 +558,28 @@ describe('DispatchEvidenceButton (delivery rows)', () => {
     expect(callsTo(fetchMock, 'complete')).toHaveLength(0);
   });
 });
+
+describe('G27: dispatch evidence alongside before photos', () => {
+  test('a saved before-photo upload is recorded through before-complete from a dispatch panel too', async () => {
+    login();
+    addPending({ kind: 'before', lot_id: 55, user_id: 'LG', drive_item_id: 'drive-before' });
+    const f = installFetch();
+    renderPanel();
+    await waitFor(() => expect(callsTo(f, 'before-complete')).toHaveLength(1));
+    expect(JSON.parse(callsTo(f, 'before-complete')[0][1].body)).toEqual({ lot_id: 55, drive_item_id: 'drive-before' });
+    expect(callsTo(f, 'complete')).toHaveLength(0);
+  });
+
+  test('a dispatch upload saved before recording carries no kind (old code still reads it)', async () => {
+    login();
+    let seen = null;
+    const f = installFetch({ complete: () => { seen = readPending(); return [200, { recorded: true }]; } });
+    renderPanel();
+    await screen.findByLabelText(`Add photos or videos for ${ELLIPTICAL}`);
+    pick(ELLIPTICAL, [jpg()]);
+    await waitFor(() => expect(callsTo(f, 'complete')).toHaveLength(1));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toHaveProperty('kind');
+    expect(seen[0]).toMatchObject({ workorder_id: 731, workorder_items_id: 2003, drive_item_id: 'drive-1' });
+  });
+});

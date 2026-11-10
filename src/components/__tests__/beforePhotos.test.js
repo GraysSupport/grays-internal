@@ -73,6 +73,22 @@ describe('BeforePhotosPanel', () => {
     expect(readPending()).toHaveLength(0); // recorded → no longer pending
   });
 
+  test('a saved before-photo upload is kept apart from dispatch entries (a pre-G27 tab never sees it)', () => {
+    addPending({ kind: 'before', lot_id: 55, user_id: 'ED', drive_item_id: 'drive-b' });
+    addPending({ workorder_id: 731, workorder_items_id: 2001, user_id: 'ED', drive_item_id: 'drive-d' });
+    expect(JSON.parse(localStorage.getItem('grays.dispatchEvidence.pending')).map((p) => p.drive_item_id)).toEqual(['drive-d']);
+    expect(JSON.parse(localStorage.getItem('grays.beforePhotos.pending')).map((p) => p.drive_item_id)).toEqual(['drive-b']);
+    expect(readPending()).toHaveLength(2);
+  });
+
+  test('the lot-row count asks for count_only (no move, no thumbnails)', async () => {
+    login();
+    const f = installFetch();
+    ui(<BeforePhotosButton lotId={55} lotNumber="L00055" />);
+    await screen.findByRole('button', { name: 'Before photos (1) — lot L00055' });
+    expect(new URL(callsTo(f, 'before-list')[0][0], 'http://x').searchParams.get('count_only')).toBe('1');
+  });
+
   test('read-only (Tech Checklist) shows photos without an upload button', async () => {
     login();
     installFetch();
@@ -114,7 +130,7 @@ describe('BeforePhotosButton', () => {
     login();
     installFetch();
     ui(<BeforePhotosButton lotId={55} lotNumber="L00055" />);
-    const btn = await screen.findByRole('button', { name: 'Before photos for lot L00055' });
+    const btn = await screen.findByRole('button', { name: 'Before photos (1) — lot L00055' });
     expect(btn).toHaveTextContent('Before photos (1)');
     fireEvent.click(btn);
     expect(await screen.findByRole('dialog', { name: 'Before refurbishment — lot L00055' })).toBeInTheDocument();

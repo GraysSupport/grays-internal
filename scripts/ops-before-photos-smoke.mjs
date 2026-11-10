@@ -128,6 +128,11 @@ function makeClient({ missing = false, lots = LOTS() } = {}) {
         state.dispatchFolders.push({ workorder_id: Number(workorder_id), workorder_items_id: workorder_items_id == null ? null : Number(workorder_items_id), drive_item_id, name, web_url });
         return { rows: [] };
       }
+      if (/^DELETE FROM dispatch_evidence_folders WHERE workorder_id = \$1$/i.test(sql)) {
+        state.dispatchFolders = state.dispatchFolders.filter((f) => f.workorder_id !== Number(params[0]));
+        state.dispatchForgot = (state.dispatchForgot || 0) + 1;
+        return { rows: [] };
+      }
       if (/^SELECT/i.test(sql) && /FROM lot_photo_folders/.test(sql)) {
         return { rows: state.folders.filter((f) => f.lot_id === Number(params[0])) };
       }
@@ -187,6 +192,7 @@ function makeGraph({ failSessionOnce = false, failMove = null } = {}) {
     async rootFolder() { calls.push(['rootFolder']); return { id: 'root-folder', driveId: 'drive-1' }; },
     async ensureFolder(parentId, name) {
       calls.push(['ensureFolder', parentId, name]);
+      if (parentId !== 'root-folder' && !folders[parentId]) throw new GraphError('parent gone', { status: 404, code: 'itemNotFound' });
       const have = Object.entries(folders).find(([, f]) => f.parent === parentId && f.name === name);
       if (have) return { id: have[0], name, webUrl: `https://sp/${have[0]}` };
       n += 1; const id = `folder-${n}`;
@@ -197,6 +203,7 @@ function makeGraph({ failSessionOnce = false, failMove = null } = {}) {
       calls.push(['moveItem', id, parentId, name]);
       if (failMove) throw failMove;
       if (!folders[id]) throw new GraphError('gone', { status: 404, code: 'itemNotFound' });
+      if (parentId !== 'root-folder' && !folders[parentId]) throw new GraphError('parent gone', { status: 404, code: 'itemNotFound' });
       Object.assign(folders[id], { parent: parentId, name });
       return { id, name, webUrl: `https://sp/${id}-moved` };
     },
@@ -207,6 +214,7 @@ function makeGraph({ failSessionOnce = false, failMove = null } = {}) {
     },
     async getItem(id) {
       calls.push(['getItem', id]);
+      if (folders[id]) return { id, name: folders[id].name, folder: {}, parentReference: { id: folders[id].parent } };
       if (!store[id]) throw new GraphError('gone', { status: 404, code: 'itemNotFound' });
       return store[id];
     },
@@ -351,6 +359,32 @@ for (const who of ['technician', 'workshop', 'logistics', 'admin', 'superadmin',
   check('a deleted lot folder (404 on move) is recreated in the right place', r.statusCode === 200 && c2.state.folders[0].workorder_items_id === 2001 && c2.state.folders[0].name === 'Before refurbishment - Lot L00055');
 }
 
+{
+  // Review #1: the DESTINATION was deleted by hand (the item's G18 folder) — the lot folder and
+  // its photos must NOT be forgotten; stale G18 ids are dropped and the move retried once.
+  const client = makeClient(); const graph = makeGraph();
+  await upload({ body: session(55), auth: AUTH.admin, client, graph });
+  const lotFolder = client.state.folders[0].drive_item_id;
+  // A stale stored item folder for item 2001 (gone from SharePoint).
+  client.state.dispatchFolders.push({ workorder_id: 731, workorder_items_id: null, drive_item_id: 'stale-wo', name: '19623 - WO 731' });
+  client.state.dispatchFolders.push({ workorder_id: 731, workorder_items_id: 2001, drive_item_id: 'stale-item', name: 'TM-95T Life Fitness 95T Treadmill - item 2001' });
+  client.state.lots[55] = { ...client.state.lots[55], status: 'Assigned', workorder_items_id: 2001 };
+  const l = await call({ resource: 'before-list', query: { lot_id: '55' }, auth: AUTH.staff, client, graph });
+  check('destination gone → list still 200', l.statusCode === 200);
+  check('… the lot folder is kept (same id) and moved into a freshly made item folder',
+    client.state.folders.length === 1 && client.state.folders[0].drive_item_id === lotFolder && client.state.folders[0].workorder_items_id === 2001, JSON.stringify(client.state.folders));
+  check('… the stale G18 folder ids were forgotten once', client.state.dispatchForgot === 1 && !client.state.dispatchFolders.some((d) => d.drive_item_id.startsWith('stale')));
+}
+{
+  // Review #8: count_only for the lot-row button — no move, no thumbnails.
+  const client = makeClient(); const graph = makeGraph();
+  await upload({ body: session(55), auth: AUTH.admin, client, graph });
+  client.state.lots[55] = { ...client.state.lots[55], status: 'Assigned', workorder_items_id: 2001 };
+  const mark = graph.calls.length;
+  const c = await call({ resource: 'before-list', query: { lot_id: '55', count_only: '1' }, auth: AUTH.admin, client, graph });
+  check('count_only answers the files without any Graph calls', c.statusCode === 200 && Array.isArray(c.body.files) && graph.calls.length === mark);
+}
+
 // --- complete ---
 {
   const client = makeClient(); const graph = makeGraph();
@@ -372,7 +406,7 @@ for (const who of ['technician', 'workshop', 'logistics', 'admin', 'superadmin',
   check('…and is never deleted (not ours)', !!graph.store.elsewhere);
   putFile(graph, 'big', folderId, { size: 300 * 1024 * 1024 + 5 });
   const big = await complete({ lot_id: 56, drive_item_id: 'big' });
-  check('an over-limit upload is refused and removed', big.statusCode === 400 && !graph.store.big);
+  check('an over-limit file is refused and NEVER deleted (could be one placed by hand)', big.statusCode === 400 && !!graph.store.big && !graph.calls.some((c) => c[0] === 'deleteItem'));
   putFile(graph, 'named', folderId, { name: '2026-11-10 12-01-00 side.jpg', size: 1234 });
   const byName = await complete({ lot_id: 56, file_name: '2026-11-10 12-01-00 side.jpg', size: 1234 });
   check('lost final reply → recorded by name + size', byName.statusCode === 200 && client.state.photos.some((p) => p.drive_item_id === 'named'));

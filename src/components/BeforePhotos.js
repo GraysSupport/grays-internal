@@ -40,7 +40,8 @@ export function BeforePhotosButton({ lotId, lotNumber, onChanged, className }) {
   const alive = useRef(true);
   const reload = useCallback(async () => {
     try {
-      const r = await fetch(`/api/evidence?${new URLSearchParams({ resource: 'before-list', lot_id: String(lotId) })}`, { headers: authHeaders() });
+      // count_only: just the number — no folder move, no thumbnails (one call per lot row).
+      const r = await fetch(`/api/evidence?${new URLSearchParams({ resource: 'before-list', lot_id: String(lotId), count_only: '1' })}`, { headers: authHeaders() });
       const j = await r.json().catch(() => null);
       if (alive.current && r.ok) setInfo(j);
     } catch { /* the pop-up says why when it is opened */ }
@@ -53,11 +54,12 @@ export function BeforePhotosButton({ lotId, lotNumber, onChanged, className }) {
 
   if (!info?.configured || !info?.available) return null;
   const changed = () => { reload(); onChanged?.(); };
+  const label = beforePhotosLabel(info.files?.length);
   return (
     <EvidenceDialogButton
-      label={beforePhotosLabel(info.files?.length)}
+      label={label}
       className={className || 'inline-flex min-h-[44px] items-center gap-1 rounded border px-3 text-xs text-gray-700 hover:bg-gray-50'}
-      buttonLabel={`Before photos for lot ${lotNumber}`}
+      buttonLabel={`${label} — lot ${lotNumber}`}
       dialogLabel={`Before refurbishment — lot ${lotNumber}`}
       title={`Before refurbishment — lot ${lotNumber}`}
       renderPanel={(setBusy) => <BeforePhotosPanel lotId={lotId} onBusyChange={setBusy} onChanged={changed} inDialog />}
