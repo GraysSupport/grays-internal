@@ -66,7 +66,7 @@ let body = buildWooUpdate({ action: 'decrease', after: 5 }, now);
 check('decrease only sets stock_quantity', JSON.stringify(body) === JSON.stringify({ stock_quantity: 5 }), JSON.stringify(body));
 body = buildWooUpdate({ action: 'soldout', after: 0 }, now);
 check('sold out sets stock 0', body.stock_quantity === 0);
-check('sold out backdates publish date one year (Melbourne time)', body.date_created === '2025-11-17T14:00:00', body.date_created);
+check('sold out backdates publish date one year (sent as GMT)', body.date_created_gmt === '2025-11-17T03:00:00', body.date_created_gmt);
 const meta = Object.fromEntries(body.meta_data.map((m) => [m.key, m.value]));
 check('sold out turns Add to Cart off', meta.add_to_cart_button === '0');
 check('sold out turns Enquire off', meta.enquire_button === '0');
@@ -94,10 +94,18 @@ function fakeDb({ salesperson = 'JS', outboxExists = true } = {}) {
       }
       if (/^SELECT salesperson FROM workorder/i.test(t)) return { rows: [{ salesperson }], rowCount: 1 };
       if (/^SELECT .* FROM woo_stock_outbox WHERE workorder_id = \$1 AND status IN/i.test(t)) {
+        if (client.failSelect) throw new Error('select blip');
         const rows = outbox.filter((r) => r.workorder_id === params[0] && ['pending', 'failed'].includes(r.status));
         return { rows, rowCount: rows.length };
       }
+      if (/^UPDATE woo_stock_outbox SET status = 'sending'/i.test(t)) {
+        const r = outbox.find((x) => x.id === params[0] && ['pending', 'failed'].includes(x.status));
+        if (!r) return { rows: [], rowCount: 0 };
+        r.status = 'sending';
+        return { rows: [{ id: r.id }], rowCount: 1 };
+      }
       if (/^UPDATE woo_stock_outbox SET/i.test(t)) {
+        if (client.failMarkSent && params[1] === 'sent') throw new Error('db blip');
         const r = outbox.find((x) => x.id === params[0]);
         r.status = params[1]; r.result = params[2]; r.last_error = params[3]; r.attempts += 1;
         return { rows: [], rowCount: 1 };
@@ -153,10 +161,10 @@ console.log('after-commit sync (mock WooCommerce)');
 }
 {
   const db = fakeDb();
-  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }], { failUpdates: true });
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }], { failLookups: true });
   await queueWooStock(db, { workorderId: 9, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
   const s = await syncWorkorderWebsiteStock(db, 9, { woo, env: ON, now });
-  check('website error → row failed with reason, nothing thrown', db.outbox[0].status === 'failed' && /timed out/i.test(db.outbox[0].last_error) && s.failed === 1);
+  check('website unreachable before any change → row failed (safe to retry), nothing thrown', db.outbox[0].status === 'failed' && /not reachable/i.test(db.outbox[0].last_error) && s.failed === 1);
   check('failure leaves E-Commerce flag unticked for GS', db.ecommerce === false);
   const again = await syncWorkorderWebsiteStock(db, 9, { woo: createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]), env: ON, now });
   check('a retry picks the failed row up and succeeds', again.sent === 1 && db.ecommerce === true);
@@ -188,6 +196,58 @@ console.log('after-commit sync (mock WooCommerce)');
   const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]);
   const s = await syncWorkorderWebsiteStock(db, 13, { woo, env: {}, now });
   check('feature OFF → sync does nothing', s.skipped === true && woo.writes === 0);
+}
+
+console.log('no double-send (review fixes)');
+{
+  const db = fakeDb();
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }], { failUpdates: true });
+  await queueWooStock(db, { workorderId: 20, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await syncWorkorderWebsiteStock(db, 20, { woo, env: ON, now });
+  check('website times out DURING the update → needs a human, never auto-retried', db.outbox[0].status === 'needs_human' && /didn't confirm/i.test(db.outbox[0].last_error), db.outbox[0].status);
+}
+{
+  const db = fakeDb();
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }], { updateError: 'Website returned 400: Invalid parameter' });
+  await queueWooStock(db, { workorderId: 21, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await syncWorkorderWebsiteStock(db, 21, { woo, env: ON, now });
+  check('website REFUSES the update (4xx) → failed, safe to retry', db.outbox[0].status === 'failed');
+}
+{
+  const db = fakeDb();
+  db.failMarkSent = true;
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]);
+  await queueWooStock(db, { workorderId: 22, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await syncWorkorderWebsiteStock(db, 22, { woo, env: ON, now });
+  db.failMarkSent = false;
+  await syncWorkorderWebsiteStock(db, 22, { woo, env: ON, now });
+  check('sent but bookkeeping failed → NOT sent again on retry', woo.writes === 1 && woo.products.get(101).stock_quantity === 5, `writes=${woo.writes}`);
+}
+{
+  const db = fakeDb();
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]);
+  await queueWooStock(db, { workorderId: 23, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await Promise.all([syncWorkorderWebsiteStock(db, 23, { woo, env: ON, now }), syncWorkorderWebsiteStock(db, 23, { woo, env: ON, now })]);
+  check('two syncs at once (save + retry) → the row is sent once', woo.writes === 1, `writes=${woo.writes}`);
+}
+{
+  const db = fakeDb();
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]);
+  await queueWooStock(db, { workorderId: 24, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await syncWorkorderWebsiteStock(db, 24, { woo, env: ON, now, budgetMs: 0 });
+  check('time budget used up → row left pending for the retry, request not held', db.outbox[0].status === 'pending' && woo.writes === 0);
+}
+{
+  const db = fakeDb();
+  db.failSelect = true;
+  let threw = false;
+  try { await syncWorkorderWebsiteStock(db, 25, { woo: createMockWoo([]), env: ON, now }); } catch { threw = true; }
+  check('database error after the commit never throws', threw === false);
+}
+{
+  const db = fakeDb();
+  const n = await queueWooStock(db, { workorderId: 26, items: [{ product_id: 'FW-93', quantity: 2.5 }] }, { env: ON });
+  check('decimal quantity (per-kg) is queued without error', n === 1 && db.outbox[0].qty === 2.5);
 }
 
 console.log('live adapter');
