@@ -601,3 +601,19 @@ describe('evidence pop-up fits the screen (owner, 10 Nov 2026)', () => {
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument();
   });
 });
+
+describe('G28: photos open in the portal, not SharePoint (owner, 10 Nov 2026)', () => {
+  test('clicking a thumbnail opens the viewer from a view link; no SharePoint link on the tile', async () => {
+    login();
+    const f = installFetch({ view: [200, { kind: 'image', url: 'https://dl/11', file_name: FILE_11.file_name }] });
+    renderPanel();
+    const tile = await screen.findByRole('button', { name: `View ${FILE_11.file_name}` });
+    expect(tile.closest('a')).toBeNull();
+    fireEvent.click(tile);
+    const viewer = await screen.findByRole('dialog', { name: FILE_11.file_name });
+    expect(await within(viewer).findByRole('img', { name: FILE_11.file_name })).toHaveAttribute('src', 'https://dl/11');
+    expect(new URL(callsTo(f, 'view')[0][0], 'http://x').searchParams.get('id')).toBe('11');
+    fireEvent.click(within(viewer).getByRole('button', { name: 'Close photo' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: FILE_11.file_name })).toBeNull());
+  });
+});

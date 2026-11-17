@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ExternalLink, Film, FolderOpen, Image as ImageIcon, RotateCw, Trash2, X } from 'lucide-react';
 import { authHeaders, getStoredUser } from '../utils/auth';
+import EvidenceViewer from './EvidenceViewer';
 import { endExpiredSession, keepSessionAlive } from '../utils/session';
 import {
   MAX_FILE_BYTES, isAllowedFileName, uploadInChunks, addPending, removePending, pendingFor, pendingKey, formatBytes,
@@ -81,7 +82,7 @@ export function dispatchAdapter(workorderId) {
   return {
     id: `wo:${woId}`,
     kind: 'dispatch',
-    resources: { list: 'list', session: 'upload-session', file: 'file' },
+    resources: { list: 'list', session: 'upload-session', file: 'file', view: 'view' },
     listQuery: { workorder_id: String(woId) },
     items: (d) => (d.items || []).map((i) => ({ key: i.workorder_items_id, label: i.label, files: i.files || [], folder_url: i.folder_url || null })),
     target: (key) => ({ workorder_id: woId, workorder_items_id: key }),
@@ -125,6 +126,7 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
   const [loadError, setLoadError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null); // G28: { files, index } open in EvidenceViewer
   const [, setTick] = useState(0);
   const jobs = useRef([]); // live upload jobs (mutable: Retry must see what already happened)
   const queue = useRef(Promise.resolve());
@@ -329,6 +331,16 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
     }
   };
 
+  // G28: a short-lived Microsoft link for one file, asked for when it is opened.
+  const fetchLink = useCallback(async (f) => {
+    try {
+      return await api(adapter.resources.view, { query: { id: String(f.id) } });
+    } catch (e) {
+      if (e.status === 401) { setViewing(null); expire(); }
+      throw e;
+    }
+  }, [adapter, expire]);
+
   // Graph thumbnail links are short-lived: if one has gone stale, fetch fresh ones once.
   const onThumbError = () => {
     if (thumbsReloaded.current) return;
@@ -405,9 +417,15 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
 
               {item.files.length > 0 && (
                 <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-                  {item.files.map((f) => (
+                  {item.files.map((f, i) => (
                     <li key={f.id} className="text-xs text-gray-600">
-                      <a href={f.web_url || undefined} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded border bg-gray-50">
+                      {/* G28 (owner, 10 Nov 2026): opens in the portal's viewer, not SharePoint. */}
+                      <button
+                        type="button"
+                        aria-label={`View ${f.file_name}`}
+                        onClick={() => setViewing({ files: item.files, index: i })}
+                        className="block aspect-square w-full overflow-hidden rounded border bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                      >
                         {f.thumbnail_url ? (
                           <img src={f.thumbnail_url} alt={f.file_name} className="h-full w-full object-cover" loading="lazy" onError={onThumbError} />
                         ) : (
@@ -415,7 +433,7 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
                             {isVideo(f.file_name, f.mime_type) ? <Film size={28} aria-hidden="true" /> : <ImageIcon size={28} aria-hidden="true" />}
                           </span>
                         )}
-                      </a>
+                      </button>
                       <div className="mt-1 flex items-start justify-between gap-1">
                         <span>{f.uploaded_by_name || f.uploaded_by || '—'} · {when(f.uploaded_at)}{isVideo(f.file_name, f.mime_type) ? ' · video' : ''}</span>
                         {canDelete && (
@@ -424,7 +442,7 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
                             aria-label={`Delete ${f.file_name}`}
                             disabled={deleting === f.id}
                             onClick={() => remove(f)}
-                            className="-m-2 rounded p-2 text-gray-500 hover:bg-gray-100 hover:text-red-700 disabled:opacity-50"
+                            className="-m-2 rounded p-2 text-gray-600 hover:bg-gray-100 hover:text-red-700 disabled:opacity-50"
                           >
                             <Trash2 size={16} aria-hidden="true" />
                           </button>
@@ -476,6 +494,9 @@ export function EvidencePanel({ adapter, onChanged, onBusyChange, itemId, readOn
           );
         })}
       </ul>
+      {viewing && (
+        <EvidenceViewer files={viewing.files} index={viewing.index} fetchLink={fetchLink} onClose={() => setViewing(null)} />
+      )}
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { BeforePhotosPanel, BeforePhotosButton } from '../BeforePhotos';
 import { addPending, readPending } from '../../utils/dispatchEvidence';
@@ -202,5 +202,18 @@ describe('beforeAdapter ownership of saved uploads', () => {
     expect(item.owns(lotEntry)).toBe(false);
     expect(item.owns(dispatchEntry)).toBe(false);
     expect(item.target()).toEqual({ workorder_items_id: 2005 });
+  });
+});
+
+describe('G28: before photos open in the portal viewer', () => {
+  test('a before photo opens through before-view', async () => {
+    login();
+    const f = installFetch({ 'before-view': [200, { kind: 'image', url: 'https://dl/7', file_name: PHOTO.file_name }] });
+    ui(<BeforePhotosPanel lotId={55} readOnly />);
+    fireEvent.click(await screen.findByRole('button', { name: `View ${PHOTO.file_name}` }));
+    const viewer = await screen.findByRole('dialog', { name: PHOTO.file_name });
+    expect(await within(viewer).findByRole('img', { name: PHOTO.file_name })).toHaveAttribute('src', 'https://dl/7');
+    await waitFor(() => expect(callsTo(f, 'before-view')).toHaveLength(1));
+    expect(new URL(callsTo(f, 'before-view')[0][0], 'http://x').searchParams.get('id')).toBe('7');
   });
 });
