@@ -8,6 +8,7 @@ import { WorkorderEvidence } from '../../../components/DispatchEvidencePanel';
 import { BeforePhotosButton } from '../../../components/BeforePhotos';
 import WorkorderCancel from '../../../components/WorkorderCancel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
+import { activityLine } from '../../../utils/activityLine'; // G25
 
 /**
  * G3: per-unit lot slots for a workorder item.
@@ -1298,20 +1299,21 @@ export default function WorkorderDetailPage() {
             <div className="font-semibold mb-2 text-center">Activity Log</div>
             <div className="h-72 overflow-y-auto border rounded p-2 text-sm font-mono bg-gray-50">
               {activity.length ? activity.map((l) => {
-                const isNote = l.event_type === 'NOTE_ADDED' && (l.notes_log || '').trim();
-                if (isNote) {
+                const row = activityLine(l);
+                if (row.note) {
                   return (
                     <div key={l.id}>
-                      {`${l.ts}   NOTE_ADDED - ${l.user_id}`}{" "}
-                      <span className="italic text-gray-700">"{l.notes_log}"</span>
+                      {row.text}{" "}
+                      <span className="italic text-gray-700">"{row.note}"</span>
                     </div>
                   );
                 }
-
-                const base = l.workorder_items_id
-                  ? `${l.ts}   ${l.product_name ?? '(Item)'} — ${l.event_type}${l.current_item_status ? `: ${l.current_item_status}` : ''} - ${l.user_id}`
-                  : `${l.ts}   ${l.event_type} - ${l.user_id}`;
-                return <div key={l.id}>{base}</div>;
+                // G25: website-stock lines GS must act on stand out.
+                return (
+                  <div key={l.id} className={row.tone === 'warn' ? 'text-amber-800 bg-amber-50' : undefined}>
+                    {row.text}
+                  </div>
+                );
               }) : <div className="text-gray-500">No activity yet.</div>}
             </div>
           </div>
