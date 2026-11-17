@@ -334,4 +334,44 @@ console.log('workorder handler wiring');
   check('feature OFF: no outbox write and no website call', !c4.log.some((s) => /woo_stock_outbox/i.test(s)) && synced4.length === 0);
 }
 
+console.log('who sees website-stock notes (owner, 17 Nov 2026: superadmin, GS and the marketing lead only)');
+{
+  const { default: handler } = await import('../lib/handlers/workorder.js');
+  const { default: jwt } = await import('jsonwebtoken');
+  const { canSeeWebsiteStockLog } = await import('../lib/wooStock.js');
+  const { __JOURNEY_SQL } = await import('../lib/customerJourney.js');
+  process.env.JWT_SECRET = process.env.JWT_SECRET || 'smoke-secret';
+  const tok = (id, roles) => `Bearer ${jwt.sign({ id, roles }, process.env.JWT_SECRET)}`;
+  const logs = [
+    { id: 1, event_type: 'WORKORDER_CREATED', notes_log: null },
+    { id: 2, event_type: 'WEBSITE_STOCK_SYNC', notes_log: 'Website stock updated automatically: FW-129 3 → 2' },
+    { id: 3, event_type: 'NOTE_ADDED', notes_log: 'Call first' },
+  ];
+  const getClient = () => ({
+    async query(sql) {
+      const t = String(sql).replace(/\s+/g, ' ').trim();
+      if (/WITH base AS/i.test(t)) return { rows: [{ workorder_id: 755, status: 'Work Ordered' }], rowCount: 1 };
+      if (/FROM workorder_logs l/i.test(t)) return { rows: logs.map((l) => ({ ...l })), rowCount: logs.length };
+      if (/SELECT access FROM users/i.test(t)) return { rows: [{ access: 'admin' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  });
+  const view = async (authorization) => {
+    const r = { statusCode: null, payload: null };
+    r.status = (c) => { r.statusCode = c; return r; }; r.json = (p) => { r.payload = p; return r; }; r.end = () => r; r.setHeader = () => {};
+    await handler({ method: 'GET', query: { id: 755 }, headers: authorization ? { authorization } : {} }, r, [], { getClient: async () => getClient(), env: {} });
+    return (r.payload?.activity || []).map((l) => l.event_type);
+  };
+  check('a superadmin sees the website-stock notes', (await view(tok('JG', ['superadmin']))).includes('WEBSITE_STOCK_SYNC'));
+  check('GS sees them', (await view(tok('GS', ['superadmin', 'sales']))).includes('WEBSITE_STOCK_SYNC'));
+  check('the marketing lead (GM, admin) sees them', (await view(tok('GM', ['admin']))).includes('WEBSITE_STOCK_SYNC'));
+  const other = await view(tok('KM', ['admin', 'sales']));
+  check('another admin/sales login does NOT get them', !other.includes('WEBSITE_STOCK_SYNC') && other.includes('NOTE_ADDED') && other.includes('WORKORDER_CREATED'), other.join(','));
+  check('no login → not shown', !(await view(null)).includes('WEBSITE_STOCK_SYNC'));
+  check('a forged X-User-Id header does not unlock them', !canSeeWebsiteStockLog(null, {}) );
+  check('extra viewers can be set by env', canSeeWebsiteStockLog({ id: 'KM', roles: ['admin'] }, { WOO_STOCK_LOG_VIEWERS: 'KM' }));
+  check('the customer journey timeline never includes them', /WEBSITE_STOCK_SYNC/.test(__JOURNEY_SQL));
+}
+
 console.log(`\n✅ woo-stock smoke: ${passed} checks passed`);
