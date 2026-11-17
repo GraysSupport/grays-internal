@@ -158,7 +158,9 @@ describe('workorder page — admin (unchanged)', () => {
     openWorkorder();
     await screen.findByText(/Invoice #19422/);
     expect(screen.getByRole('button', { name: '+ Add Product' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    // Owner, 17 Nov 2026: no Remove column — an admin removes an item by setting it to Canceled.
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument();
     expect(screen.getByText(/Payment Status/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Notes')).not.toHaveAttribute('readonly');
     const options = within(screen.getByDisplayValue('In Workshop')).getAllByRole('option').map((o) => o.textContent);

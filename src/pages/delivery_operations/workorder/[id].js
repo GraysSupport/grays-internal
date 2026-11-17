@@ -9,6 +9,7 @@ import { BeforePhotosButton } from '../../../components/BeforePhotos';
 import WorkorderCancel from '../../../components/WorkorderCancel';
 import { currentUserIsWorkshop, identityHeaders, WORKSHOP_ITEM_STATUSES } from '../../../utils/workshopAccess';
 import { activityLine } from '../../../utils/activityLine'; // G25
+import WebsiteStockPanel from '../../../components/WebsiteStockPanel'; // G25 increment 2
 
 /**
  * G3: per-unit lot slots for a workorder item.
@@ -338,7 +339,6 @@ export default function WorkorderDetailPage() {
   const [pendingNewItems, setPendingNewItems] = useState([]);
 
   // deleting existing rows
-  const [toDelete, setToDelete] = useState([]);
 
   // workorder status (for top-level WO)
   const [woStatus, setWoStatus] = useState('');
@@ -634,12 +634,6 @@ export default function WorkorderDetailPage() {
     setPendingNewItems((arr) => arr.filter((r) => r.tempId !== tempId));
   };
 
-  const toggleDelete = (workorder_items_id) => {
-    setToDelete((arr) => arr.includes(workorder_items_id)
-      ? arr.filter((x) => x !== workorder_items_id)
-      : [...arr, workorder_items_id]
-    );
-  };
 
   const markEcommerceChecked = async () => {
     if (!wo || !isGS) return;
@@ -758,8 +752,7 @@ export default function WorkorderDetailPage() {
             selling_price: it.selling_price !== '' && it.selling_price != null ? Number(it.selling_price) : null
           } : {}),
         })),
-
-        delete_item_ids: toDelete
+        // 17 Nov 2026 (owner): no Remove button — an item is removed by setting its status to Canceled.
       };
 
       const r = await fetch(`/api/workorder?id=${encodeURIComponent(wo.workorder_id)}`, {
@@ -788,9 +781,8 @@ export default function WorkorderDetailPage() {
       setImportant(!!data.important_flag);
       setWoStatus(data.status || woStatus);
 
-      // Clear queued adds/deletes
+      // Clear queued adds
       setPendingNewItems([]);
-      setToDelete([]);
 
       toast.success('Saved!', { id: toastId });
     } catch (e) {
@@ -820,8 +812,7 @@ export default function WorkorderDetailPage() {
   }
 
   const pendingAdds = pendingNewItems.length;
-  const pendingDeletes = toDelete.length;
-  const colCount = 7 + (isSuperadmin ? 1 : 0); // Qty, SKU, Name, Condition, Tech, Status, Actions (+ Selling Price)
+  const colCount = 6 + (isSuperadmin ? 1 : 0); // Qty, SKU, Name, Condition, Tech, Status (+ Selling Price)
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -878,6 +869,13 @@ export default function WorkorderDetailPage() {
             setWoStatus(data.status || '');
             setActivity(data.activity || []);
           }}
+        />
+        {/* G25 increment 2: website stock per item + Retry (superadmin / GS / marketing lead only). */}
+        <WebsiteStockPanel
+          workorderId={id}
+          rows={wo.website_stock}
+          items={items}
+          onChanged={async () => { await reloadWO(); await reloadActivity(); }}
         />
         {/* Top summary */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
@@ -1034,7 +1032,6 @@ export default function WorkorderDetailPage() {
                   {isSuperadmin && (
                     <th className="px-4 py-3 w-40">Selling Price</th>
                   )}
-                  <th className="px-4 py-3 w-28">Actions</th>
                 </tr>
               </thead>
 
@@ -1044,12 +1041,11 @@ export default function WorkorderDetailPage() {
                   .filter(it => it.status !== 'Canceled')
                   .map((it, idx) => {
                     const isExpanded = expandedId === it.workorder_items_id;
-                    const isRemoved = toDelete.includes(it.workorder_items_id);
 
                     return (
                       <Fragment key={it.workorder_items_id}>
                         <tr
-                          className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} ${isRemoved ? 'opacity-60 line-through' : ''} cursor-pointer`}
+                          className={`${idx % 2 ? 'bg-gray-50' : 'bg-white'} cursor-pointer`}
                           onClick={() => setExpandedId(isExpanded ? null : it.workorder_items_id)}
                           title="Click row to edit Serial Number"
                         >
@@ -1102,19 +1098,6 @@ export default function WorkorderDetailPage() {
                               />
                             </td>
                           )}
-
-                          <td className="px-4 py-3 text-sm" onClick={stop}>
-                            {!isWorkshop && (
-                            <button
-                              type="button"
-                              className={`rounded border px-2 py-1 text-xs hover:bg-gray-50 ${isRemoved ? 'bg-red-50 border-red-200 text-red-700' : ''}`}
-                              onClick={() => toggleDelete(it.workorder_items_id)}
-                              title="Marks item as Canceled on Save"
-                            >
-                              {isRemoved ? 'Undo' : 'Remove'}
-                            </button>
-                            )}
-                          </td>
                         </tr>
 
                         {/* Inline expandable panel for Serial Number */}
@@ -1249,7 +1232,20 @@ export default function WorkorderDetailPage() {
                         </select>
                       </td>
 
-                      <td className="px-4 py-3 text-sm text-gray-500">Not in Workshop</td>
+                      {/* Unsaved new row: "Discard" undoes the "Add item" (nothing saved yet). */}
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Not in Workshop</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePendingRow(row.tempId)}
+                            className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                            title="Discard this unsaved row"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      </td>
 
                       {isSuperadmin && (
                         <td className="px-4 py-3 text-sm" onClick={stop}>
@@ -1264,15 +1260,6 @@ export default function WorkorderDetailPage() {
                           />
                         </td>
                       )}
-
-                      <td className="px-4 py-3 text-sm">
-                        <button
-                          onClick={() => handleRemovePendingRow(row.tempId)}
-                          className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
-                        >
-                          Remove
-                        </button>
-                      </td>
                     </tr>
                   );
                 })}
@@ -1286,10 +1273,9 @@ export default function WorkorderDetailPage() {
         </div>
 
         {/* Pending changes hint */}
-        {(pendingAdds || pendingDeletes) ? (
+        {pendingAdds ? (
           <div className="mt-3 text-sm text-gray-700">
-            {pendingAdds ? <span className="mr-4">• {pendingAdds} item(s) queued to add</span> : null}
-            {pendingDeletes ? <span>• {pendingDeletes} item(s) marked for remove</span> : null}
+            <span className="mr-4">• {pendingAdds} item(s) queued to add</span>
           </div>
         ) : null}
 

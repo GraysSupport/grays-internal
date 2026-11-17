@@ -19,6 +19,7 @@ import evidenceHandler from '../lib/handlers/evidence.js';
 import { handleDirector } from '../lib/director.js';
 import { handleFreeWeights } from '../lib/freeWeights.js';
 import { buildJourney } from '../lib/customerJourney.js';
+import { handleWebsiteStockCron } from '../lib/wooStockRetry.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
 import { isPodiumEnabled, podiumDisabled } from '../lib/featureFlags.js';
 import { apiLoginGate, signLoginToken, refreshLogin } from '../lib/apiLogin.js';
@@ -141,6 +142,11 @@ export default async function handler(req, res) {
       // G22 Director's View — superadmin only, read-only. Query-form routes (?resource=).
       case 'director':
         return handleDirectorRoute(req, res);
+      // G25 increment 2: Vercel Cron (vercel.json) → daily website-stock retry. Not behind the
+      // staff login — it carries its own CRON_SECRET and is refused without one.
+      case 'cron':
+        if (sub === 'website-stock') return handleWebsiteStockCron(req, res, { getClient: getClientWithTimezone });
+        return res.status(404).json({ error: 'Not found' });
 
       default:
         return res.status(404).json({ error: 'Not found' });

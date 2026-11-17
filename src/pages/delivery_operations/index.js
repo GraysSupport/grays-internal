@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
+import { websiteStockSummary } from '../../utils/websiteStock'; // G25 increment 2
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -554,6 +555,7 @@ export default function ActiveWorkordersPage() {
                       <th className="px-3 py-2">Customer</th>
                       <th className="px-3 py-2 w-20">State</th>
                       <th className="px-3 py-2 w-28">Target</th>
+                      <th className="px-3 py-2">Website</th>
                       <th className="px-3 py-2 w-24">Open</th>
                     </tr>
                   </thead>
@@ -564,6 +566,10 @@ export default function ActiveWorkordersPage() {
                         <td className="px-3 py-2 text-sm">{w.customer_name ?? '—'}</td>
                         <td className="px-3 py-2 text-sm">{w.delivery_state ?? '—'}</td>
                         <td className="px-3 py-2 text-sm">{formatDate(w.estimated_completion)}</td>
+                        {/* G25 increment 2: why this one still needs GS (server sends it to GS/superadmin only). */}
+                        <td className={`px-3 py-2 text-xs ${websiteStockSummary(w.website_stock).tone === 'warn' ? 'text-amber-800' : 'text-gray-600'}`}>
+                          {Array.isArray(w.website_stock) ? websiteStockSummary(w.website_stock).text : '—'}
+                        </td>
                         <td className="px-3 py-2 text-sm">
                           <button
                             className="rounded-md bg-gray-900 px-3 py-1 text-white text-sm hover:bg-black/90"

@@ -144,14 +144,14 @@ function fakeRes() {
 }
 
 // The first response (the PUT's own answer) is what counts; the closing GET re-read writes again.
-async function put(db, who, body, { claimId } = {}) {
+async function put(db, who, body, { claimId, deps = {} } = {}) {
   const [id, roles] = who || [];
   const headers = id ? { 'x-user-id': claimId || id, authorization: token(id, roles) } : { 'x-user-id': 'GA' };
   const res = fakeRes();
   let first = null;
   const status = res.status;
   res.status = (c) => { if (first === null) first = c; return status(c); };
-  await handler({ method: 'PUT', query: { id: '41' }, body, headers }, res, [], { getClient: async () => db });
+  await handler({ method: 'PUT', query: { id: '41' }, body, headers }, res, [], { getClient: async () => db, ...deps });
   return { code: first ?? 200, body: res.payload };
 }
 const item = (db, n) => db.state.items.find((i) => i.workorder_items_id === n);
@@ -280,6 +280,35 @@ console.log('G23 — reopening');
   db.state.stock.BIKE = 1; // sold elsewhere meanwhile; item 2 needs 2
   const r = await put(db, AS.admin, { status: 'Work Ordered', reopen: true });
   check('not enough stock to reopen → 409, nothing restored', r.code === 409 && /insufficient stock/i.test(r.body?.error) && db.state.workorder.status === 'Cancelled' && item(db, 1).status === 'Canceled' && db.state.stock.TREAD === 6, JSON.stringify(r.body));
+}
+
+console.log('G25 increment 2 — reopening puts the website update back');
+{
+  const db = makeDb();
+  await put(db, AS.sales, { status: 'Cancelled' });
+  const seen = [];
+  const orig = db.query.bind(db);
+  db.query = async (sql, params) => {
+    const t = String(sql).replace(/\s+/g, ' ').trim();
+    seen.push(t);
+    if (/to_regclass\('public\.woo_stock_outbox'\)/i.test(t)) return { rows: [{ t: 'woo_stock_outbox' }], rowCount: 1 };
+    if (/^UPDATE woo_stock_outbox SET status = 'pending'/i.test(t)) return { rows: [], rowCount: 2 };
+    return orig(sql, params);
+  };
+  const synced = [];
+  const ON = { FEATURE_WOO_STOCK_SYNC: 'true' };
+  const r = await put(db, AS.admin, { status: 'Work Ordered', reopen: true }, { deps: { env: ON, syncWebsiteStock: async (c, id) => { synced.push({ id, at: seen.length }); return {}; } } });
+  const iRe = seen.findIndex((s) => /^UPDATE woo_stock_outbox SET status = 'pending'/i.test(s));
+  const iCommit = seen.findIndex((s) => /^COMMIT$/i.test(s));
+  check('reopen still succeeds', r.code === 200 && db.state.workorder.status === 'Work Ordered', JSON.stringify(r.body));
+  check('the closed-off website rows are re-queued INSIDE the reopen transaction', iRe > -1 && iRe < iCommit);
+  check('…and sent straight after the commit', synced.length === 1 && Number(synced[0].id) === 41 && synced[0].at > iCommit);
+
+  const db2 = makeDb();
+  await put(db2, AS.sales, { status: 'Cancelled' });
+  const synced2 = [];
+  await put(db2, AS.admin, { status: 'Work Ordered', reopen: true }, { deps: { env: {}, syncWebsiteStock: async () => { synced2.push(1); return {}; } } });
+  check('feature OFF: reopen never calls the website', synced2.length === 0);
 }
 
 console.log('G23 — nothing new attaches to a cancelled workorder');
