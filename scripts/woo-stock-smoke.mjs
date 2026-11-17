@@ -92,7 +92,14 @@ function fakeDb({ salesperson = 'JS', outboxExists = true } = {}) {
         outbox.push({ id: nextId++, workorder_id: params[0], sku: params[1], qty: params[2], status: 'pending', attempts: 0, result: null, last_error: null });
         return { rows: [], rowCount: 1 };
       }
-      if (/^SELECT salesperson FROM workorder/i.test(t)) return { rows: [{ salesperson }], rowCount: 1 };
+      if (/^SELECT salesperson, status::text AS status FROM workorder/i.test(t)) return { rows: [{ salesperson, status: 'Work Ordered' }], rowCount: 1 };
+      if (/^SELECT 1 FROM workorder_items WHERE workorder_id = \$1 AND product_id = \$2/i.test(t)) return { rows: [{ x: 1 }], rowCount: 1 };
+      if (/^UPDATE woo_stock_outbox SET status = 'needs_human', result = \$2::jsonb, last_error = \$3 WHERE id = \$1 AND status IN/i.test(t)) {
+        const r = outbox.find((x) => x.id === params[0] && ['pending', 'failed'].includes(x.status));
+        if (!r) return { rows: [], rowCount: 0 };
+        r.status = 'needs_human'; r.result = params[1]; r.last_error = params[2];
+        return { rows: [], rowCount: 1 };
+      }
       if (/^SELECT .* FROM woo_stock_outbox WHERE workorder_id = \$1 AND status IN/i.test(t)) {
         if (client.failSelect) throw new Error('select blip');
         const rows = outbox.filter((r) => r.workorder_id === params[0] && ['pending', 'failed'].includes(r.status));
