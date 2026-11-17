@@ -143,10 +143,10 @@ export default async function handler(req, res) {
       case 'director':
         return handleDirectorRoute(req, res);
       // G25 increment 2: Vercel Cron (vercel.json) → daily website-stock retry. Not behind the
-      // staff login — it carries its own CRON_SECRET and is refused without one.
-      case 'cron':
-        if (sub === 'website-stock') return handleWebsiteStockCron(req, res, { getClient: getClientWithTimezone });
-        return res.status(404).json({ error: 'Not found' });
+      // staff login — it carries its own CRON_SECRET and is refused without one. One path
+      // segment on purpose: /api/a/b never reaches this function on Vercel (PR #130 Preview).
+      case 'website-stock-cron':
+        return handleWebsiteStockCron(req, res, { getClient: getClientWithTimezone });
 
       default:
         return res.status(404).json({ error: 'Not found' });

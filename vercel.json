@@ -4,6 +4,6 @@
     "api/[...path].js": { "maxDuration": 60 }
   },
   "crons": [
-    { "path": "/api/cron/website-stock", "schedule": "0 20 * * *" }
+    { "path": "/api/website-stock-cron", "schedule": "0 20 * * *" }
   ]
 }

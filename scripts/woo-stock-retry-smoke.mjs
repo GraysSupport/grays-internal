@@ -377,15 +377,27 @@ console.log('routing + vercel.json');
 {
   const fs = await import('node:fs');
   const cfg = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
-  const cron = (cfg.crons || []).find((c) => c.path === '/api/cron/website-stock');
+  // ONE path segment: on this Vercel setup /api/a/b never reaches api/[...path].js (found on the
+  // PR #130 Preview, 17 Nov 2026: /api/cron/website-stock → platform 404, /api/cron → the router).
+  const cron = (cfg.crons || []).find((c) => c.path === '/api/website-stock-cron');
+  check('every cron path is a single /api/<segment> (no sub-path, no query)', (cfg.crons || []).every((c) => /^\/api\/[a-z0-9-]+$/.test(c.path)), JSON.stringify(cfg.crons));
   check('vercel.json schedules the daily retry', Boolean(cron), JSON.stringify(cfg));
   check('runs once a day (Vercel Hobby limit)', cron && /^\d+ \d+ \* \* \*$/.test(cron.schedule), cron?.schedule);
   check('vercel.json adds no rewrites / routes / builds (CRA routing untouched)', Object.keys(cfg).every((k) => ['$schema', 'crons', 'functions'].includes(k)), Object.keys(cfg).join(','));
   check('only the existing API function gets a longer time limit (no new function, Hobby max 60 s)', JSON.stringify(Object.keys(cfg.functions || {})) === '["api/[...path].js"]' && cfg.functions['api/[...path].js'].maxDuration <= 60);
   const router = fs.readFileSync(new URL('../api/[...path].js', import.meta.url), 'utf8');
-  check('router sends /api/cron/website-stock to the cron handler', /case 'cron':/.test(router) && /handleWebsiteStockCron/.test(router));
+  check('router sends /api/website-stock-cron to the cron handler', /case 'website-stock-cron':\s*\n\s*return handleWebsiteStockCron/.test(router));
   const { LOGIN_REQUIRED_ROOTS } = await import('../lib/apiLogin.js');
-  check('cron route is not behind the staff login (it has its own secret)', !LOGIN_REQUIRED_ROOTS.includes('cron'));
+  check('cron route is not behind the staff login (it has its own secret)', !LOGIN_REQUIRED_ROOTS.includes('website-stock-cron'));
+  {
+    // Through the real router: no secret configured → 503 from OUR handler (not a platform 404).
+    const { default: api } = await import('../api/[...path].js');
+    const saved = process.env.CRON_SECRET; delete process.env.CRON_SECRET;
+    const x = { statusCode: null, payload: null }; x.status = (c) => { x.statusCode = c; return x; }; x.json = (p) => { x.payload = p; return x; }; x.setHeader = () => {};
+    await api({ method: 'GET', url: '/api/website-stock-cron', query: {}, headers: {} }, x);
+    if (saved !== undefined) process.env.CRON_SECRET = saved;
+    check('the router hands /api/website-stock-cron to the cron handler (503 without a secret)', x.statusCode === 503, JSON.stringify(x));
+  }
 }
 
 console.log('workorder handler: Retry route + status for viewers');
