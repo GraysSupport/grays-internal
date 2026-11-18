@@ -197,6 +197,35 @@ async function main() {
   });
   check('… and not on other days', reportRan === 1);
 
+  // 10. review fixes (19 Nov 2026)
+  const slow = { calls: 0, async findProductsBySkus(list) { slow.calls += 1; return []; } };
+  const late = await fetchWebsiteStock(slow, many, { deadline: Date.now() - 1 });
+  check('past the deadline no batch starts; SKUs become "unknown", report notes it', slow.calls === 0 && late.unknown.size === 250 && late.errors.some((e) => /out of time/i.test(e)));
+  const commaSite = await fetchWebsiteStock(createMockWoo([]), ['A,B']);
+  check('a SKU with a comma is "unknown", never a false "not on website"', compareWithWebsite([{ sku: 'A,B', stock: 2 }], commaSite)[0].state === 'unknown');
+  const draftSite = await fetchWebsiteStock(createMockWoo([{ id: 9, sku: 'DRAFT-1', stock_quantity: 2, manage_stock: true, status: 'draft' }]), ['DRAFT-1']);
+  check('a draft / private product is flagged as not published', compareWithWebsite([{ sku: 'DRAFT-1', stock: 2 }], draftSite)[0].published === false);
+
+  const order = [];
+  const cronRes2 = fakeRes();
+  await handleWebsiteStockCron({ method: 'GET', headers: { authorization: 'Bearer s3' } }, cronRes2, {
+    getClient, env: { CRON_SECRET: 's3' }, now: new Date('2026-11-22T20:00:00Z'),
+    run: async (c, opts) => { order.push(['run', opts.budgetMs]); return { ok: true }; },
+    driftReport: async (c, opts) => { order.push(['drift', opts.deadline]); return { ok: true }; },
+  });
+  check('Monday: stock retries run FIRST with the full budget, the report after', order[0]?.[0] === 'run' && order[0][1] === 45000 && order[1]?.[0] === 'drift', JSON.stringify(order));
+  check('… and the report gets a deadline inside the 60 s function limit', typeof order[1]?.[1] === 'number' && order[1][1] <= Date.now() + 56000);
+
+  let releasedBeforeRead = null;
+  const db2 = fakeDb(PORTAL);
+  const watching = { async findProductsBySkus() { releasedBeforeRead = db2.released; return []; } };
+  await handleWebsiteStock({ method: 'GET', query: { resource: 'column' }, headers: { authorization: `Bearer ${tokenFor('GS', ['superadmin'])}` } }, fakeRes(), { getClient: async () => db2, env: ENV, woo: watching });
+  check('the column releases its database connection before reading the website', releasedBeforeRead === true);
+
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../lib/websiteStockView.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');
+  check('websiteStockView.js never calls a write (no updateProduct / PUT / POST)', !/updateProduct|['"]PUT['"]|['"]POST['"]|method:/.test(src));
+
   // 9. READ-ONLY proof: everything above, through the real adapter, made GET requests only
   const all = [...f.calls, ...f2.calls, ...f3.calls];
   check('every website request was a GET (no PUT/POST/PATCH/DELETE)', all.length > 0 && all.every((c) => c.method === 'GET'), all.map((c) => c.method).join(','));

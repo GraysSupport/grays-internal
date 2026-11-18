@@ -35,8 +35,8 @@ function DriftTable({ data }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.sku}>
+              {rows.map((r, i) => (
+                <tr key={`${r.sku}-${i}`}>
                   <td className="border px-4 py-2">{r.sku}</td>
                   <td className="border px-4 py-2">{r.name || ''}</td>
                   <td className="border px-4 py-2">{r.portal}</td>

@@ -4,6 +4,10 @@
 /** One product's website stock → { text, tone: 'ok' | 'warn' | 'muted' } */
 export function websiteStockCell(item) {
   if (!item) return { text: '—', tone: 'muted' };
+  // Found on the website but draft / private — customers can't see or buy it.
+  if (item.published === false && item.website != null && ['match', 'mismatch'].includes(item.state)) {
+    return { text: `${item.website} (not published)`, tone: 'warn' };
+  }
   const n = item.website;
   switch (item.state) {
     case 'match': return { text: String(n), tone: 'ok' };

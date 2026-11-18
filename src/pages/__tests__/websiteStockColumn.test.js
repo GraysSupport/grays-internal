@@ -75,6 +75,7 @@ describe('websiteStockCell', () => {
     expect(websiteStockCell({ website: 3, state: 'skipped' }).text).toMatch(/not synced/i);
     expect(websiteStockCell({ website: null, state: 'unknown' }).text).toMatch(/couldn.t read/i);
     expect(websiteStockCell(undefined).text).toBe('—');
+    expect(websiteStockCell({ website: 2, state: 'match', published: false })).toEqual({ text: '2 (not published)', tone: 'warn' });
   });
 });
 
