@@ -20,6 +20,7 @@ import { handleDirector } from '../lib/director.js';
 import { handleFreeWeights } from '../lib/freeWeights.js';
 import { buildJourney } from '../lib/customerJourney.js';
 import { handleWebsiteStockCron } from '../lib/wooStockRetry.js';
+import { handleWebsiteStock, handleWebsiteStockDrift } from '../lib/websiteStockView.js';
 import { refuseWorkshop } from '../lib/workshopAccess.js';
 import { isPodiumEnabled, podiumDisabled } from '../lib/featureFlags.js';
 import { apiLoginGate, signLoginToken, refreshLogin } from '../lib/apiLogin.js';
@@ -147,6 +148,13 @@ export default async function handler(req, res) {
       // segment on purpose: /api/a/b never reaches this function on Vercel (PR #130 Preview).
       case 'website-stock-cron':
         return handleWebsiteStockCron(req, res, { getClient: getClientWithTimezone });
+
+      // G25c: Products "Website stock" column + drift report (read-only toward the website).
+      // One-segment paths only — /api/a/b never reaches this catch-all on Vercel.
+      case 'website-stock':
+        return handleWebsiteStock(req, res, { getClient: getClientWithTimezone });
+      case 'website-stock-drift':
+        return handleWebsiteStockDrift(req, res, { getClient: getClientWithTimezone });
 
       default:
         return res.status(404).json({ error: 'Not found' });
