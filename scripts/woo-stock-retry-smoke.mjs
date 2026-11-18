@@ -77,7 +77,9 @@ function fakeDb({ workorders = {} } = {}) {
         return { rows, rowCount: rows.length };
       }
       // G25d: is migration 0015 (claimed_at) applied?
-      if (/information_schema\.columns/i.test(t) && /claimed_at/i.test(t)) {
+      // Resolved like the statements themselves (search_path), not via current_schema().
+      if (/pg_attribute/i.test(t) && /to_regclass\('woo_stock_outbox'\)/i.test(t) && /attname = 'claimed_at'/i.test(t)) {
+        client.columnChecks = (client.columnChecks || 0) + 1;
         if (client.columnCheckFails) throw new Error('column check blip');
         return { rows: [{ has: Boolean(client.hasClaimedAt) }], rowCount: 1 };
       }
@@ -511,6 +513,25 @@ console.log('workorder handler: Retry route + status for viewers');
   db2.add({ workorder_id: 64, sku: 'CL-2', qty: 1 });
   await syncWorkorderWebsiteStock(db2, 64, { env: ON, woo: woo2, now });
   check('pre-0015: the claim never mentions claimed_at (42703-safe) and the send still works', !/claimed_at/i.test(db2.claimSql[0] || '') && db2.outbox[0].status === 'sent', JSON.stringify(db2.outbox[0]));
+
+  // A failed row claimed again gets a FRESH claimed_at (the sweep must not see the old one).
+  const woo3 = createMockWoo([{ id: 9, sku: 'CL-3', stock_quantity: 3, manage_stock: true }]);
+  const db3 = fakeDb({ workorders: { 65: {} } });
+  db3.hasClaimedAt = true;
+  const old = minsAgo(3 * 24 * 60);
+  db3.add({ workorder_id: 65, sku: 'CL-3', qty: 1, status: 'failed', claimed_at: old });
+  await syncWorkorderWebsiteStock(db3, 65, { env: ON, woo: woo3, now });
+  check('re-claiming a failed row refreshes claimed_at', db3.outbox[0].claimed_at > old && db3.outbox[0].status === 'sent');
+}
+{
+  // The daily job checks for the column ONCE and hands the answer to every sync it runs.
+  const woo = createMockWoo([{ id: 10, sku: 'J-1', stock_quantity: 5, manage_stock: true }, { id: 11, sku: 'J-2', stock_quantity: 5, manage_stock: true }]);
+  const db = fakeDb({ workorders: { 66: {}, 67: {} } });
+  db.hasClaimedAt = true;
+  db.add({ workorder_id: 66, sku: 'J-1', qty: 1, status: 'failed', created_at: minsAgo(120) });
+  db.add({ workorder_id: 67, sku: 'J-2', qty: 1, status: 'failed', created_at: minsAgo(120) });
+  await runWebsiteStockRetryJob(db, { env: ON, sync: (c, id, opts) => syncWorkorderWebsiteStock(c, id, { env: ON, woo, now, ...opts }) });
+  check('job: one column check for the whole run, claims still stamped', db.columnChecks === 1 && db.outbox.every((r) => r.status === 'sent' && r.claimed_at instanceof Date), `${db.columnChecks} ${JSON.stringify(db.outbox)}`);
 }
 
 console.log(`\n✅ woo-stock retry smoke: ${passed} checks passed`);
