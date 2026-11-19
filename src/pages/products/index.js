@@ -8,19 +8,27 @@ import ProductLotsModal from '../../components/ProductLotsModal';
 import { getRoles, hasAnyRole } from '../../utils/auth';
 import { LOT_TRACKER_ROLES } from '../../utils/lotTracker';
 import FreeWeightsTab from '../../components/FreeWeightsTab';
+import WebsiteDriftReport from '../../components/WebsiteDriftReport';
+import { currentUserIsWorkshop } from '../../utils/workshopAccess';
+import { websiteStockCell } from '../../utils/websiteStockColumn';
 
 // G21 (owner, 29 Oct 2026): two tabs — the existing stock list, and the separate Brand New
 // Free Weights stock. The tab lives in the URL (?tab=free-weights) so it can be linked.
+// G25c (18 Nov 2026): a third tab, "Website drift", for superadmins only.
 const TABS = [
   { key: 'current', label: 'Current stock' },
   { key: 'free-weights', label: 'Brand New Free Weights' },
+  { key: 'website-drift', label: 'Website drift', superadminOnly: true },
 ];
+const TAB_KEYS = TABS.map((t) => t.key);
 
-function ProductTabs({ active, onSelect }) {
+const TONE_CLASS = { ok: 'text-gray-900', warn: 'font-semibold text-amber-800', muted: 'text-gray-700' };
+
+function ProductTabs({ active, onSelect, tabs = TABS }) {
   return (
     // Centred (owner, 30 Oct 2026): left-aligned tabs sat under the fixed Home / Back buttons.
     <div role="tablist" aria-label="Products" className="mb-4 flex justify-center gap-1 border-b border-gray-300">
-      {TABS.map((t) => (
+      {tabs.map((t) => (
         <button
           key={t.key}
           id={`products-tab-${t.key}`}
@@ -44,16 +52,20 @@ export default function ProductsPage() {
     catch { return null; }
   }, []);
   const isSuperadmin = String(storedUser?.access || '').toLowerCase() === 'superadmin';
+  // Drift tab: superadmin by role (the server decides; this only hides the tab).
+  const canSeeDrift = hasAnyRole(getRoles(), ['superadmin']);
+  const visibleTabs = TABS.filter((t) => !t.superadminOnly || canSeeDrift);
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get('tab') === 'free-weights' ? 'free-weights' : 'current';
+  const tabParam = searchParams.get('tab');
+  const tab = TAB_KEYS.includes(tabParam) && visibleTabs.some((t) => t.key === tabParam) ? tabParam : 'current';
   // Only `tab` changes — anything else in the URL (e.g. ?inStock=) is kept.
   const selectTab = (key) => setSearchParams((prev) => {
     const next = new URLSearchParams(prev);
-    if (key === 'free-weights') next.set('tab', 'free-weights');
-    else next.delete('tab');
+    if (key === 'current') next.delete('tab');
+    else next.set('tab', key);
     return next;
   });
   const [showModal, setShowModal] = useState(false);
@@ -61,6 +73,11 @@ export default function ProductsPage() {
   const canViewLots = hasAnyRole(getRoles(), LOT_TRACKER_ROLES);
   const [lotsProduct, setLotsProduct] = useState(null);
   const PRODUCTS_PER_PAGE = 20;
+  // G25c "Website stock" column: read from the website ONCE per page load (batched server-side,
+  // ≤100 SKUs per call), never per row. Shown only when the server allows it (superadmin incl.
+  // GS, plus GM); workshop logins never ask (G17).
+  const [website, setWebsite] = useState(null); // null = hidden; { items, source, ... }
+  const [websiteNote, setWebsiteNote] = useState('');
 
   const inStockParam = searchParams.get('inStock');
   const inStockFilter = inStockParam === 'true' ? true : inStockParam === 'false' ? false : null;
@@ -92,6 +109,27 @@ export default function ProductsPage() {
     }
     if (tab === 'current') fetchProducts();
   }, [navigate, fetchProducts, tab]);
+
+  useEffect(() => {
+    if (tab !== 'current' || currentUserIsWorkshop()) return undefined;
+    let gone = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/website-stock?resource=column');
+        if (!res.ok) return; // not allowed for this login → no column
+        const data = await res.json();
+        if (gone) return;
+        if (data.available === false) { setWebsiteNote(data.reason || 'The website connection is not set up here'); return; }
+        setWebsite(data);
+        if (Array.isArray(data.errors) && data.errors.length) setWebsiteNote(`Part of the website couldn't be read: ${data.errors[0]}`);
+      } catch {
+        /* the column is extra information — the page works without it */
+      }
+    })();
+    return () => { gone = true; };
+  }, [tab]);
+  const showWebsite = Boolean(website?.items);
+  const colCount = 6 + (isSuperadmin ? 1 : 0) + (showWebsite ? 1 : 0);
 
   const filteredProducts = products.filter((product) => {
     const productText = `${product.sku} ${product.name} ${product.brand}`.toLowerCase();
@@ -190,8 +228,13 @@ export default function ProductsPage() {
 
       {/* max-sm:pt-16 clears the fixed Home/Back overlay above (F19 incr 2d). */}
       <div className="min-h-screen bg-gray-100 p-6 max-sm:pt-16">
-        <ProductTabs active={tab} onSelect={selectTab} />
-        {tab === 'free-weights' ? (
+        <ProductTabs active={tab} onSelect={selectTab} tabs={visibleTabs} />
+        {tab === 'website-drift' ? (
+          <div role="tabpanel" id="products-panel-website-drift" aria-labelledby="products-tab-website-drift">
+            <h2 className="mb-4 text-center text-xl font-bold">Website drift</h2>
+            <WebsiteDriftReport />
+          </div>
+        ) : tab === 'free-weights' ? (
           <div role="tabpanel" id="products-panel-free-weights" aria-labelledby="products-tab-free-weights">
             <h2 className="mb-4 text-center text-xl font-bold">Brand New Free Weights</h2>
             <FreeWeightsTab />
@@ -230,6 +273,13 @@ export default function ProductsPage() {
           }}
         />
 
+        {(websiteNote || website?.source === 'mock') && (
+          <p className="mb-2 text-sm text-gray-700">
+            {website?.source === 'mock' && 'Website stock shows sample website data (this Preview has no website connection). '}
+            {websiteNote}
+          </p>
+        )}
+
         <div className="overflow-x-auto">
         <table className="w-full border text-sm">
           <thead className="bg-gray-100">
@@ -238,6 +288,7 @@ export default function ProductsPage() {
               <th className="border px-4 py-2">Name</th>
               <th className="border px-4 py-2">Brand</th>
               <th className="border px-4 py-2">Stock</th>
+              {showWebsite && <th className="border px-4 py-2">Website stock</th>}
               <th className="border px-4 py-2">Price</th>
               {isSuperadmin && <th className="border px-4 py-2">Cost</th>}
               <th className="border px-4 py-2">Actions</th>
@@ -250,6 +301,10 @@ export default function ProductsPage() {
                 <td className="border px-4 py-2">{p.name}</td>
                 <td className="border px-4 py-2">{p.brand}</td>
                 <td className="border px-4 py-2">{p.stock}</td>
+                {showWebsite && (() => {
+                  const cell = websiteStockCell(website.items[p.sku]);
+                  return <td className={`border px-4 py-2 ${TONE_CLASS[cell.tone]}`}>{cell.text}</td>;
+                })()}
                 <td className="border px-4 py-2">${p.price}</td>
                 {isSuperadmin && (
                   <td className="border px-4 py-2">
@@ -273,7 +328,7 @@ export default function ProductsPage() {
             ))}
             {currentProducts.length === 0 && (
               <tr>
-                <td colSpan={isSuperadmin ? 7 : 6} className="text-center p-4 text-gray-500">
+                <td colSpan={colCount} className="text-center p-4 text-gray-500">
                   No products found.
                 </td>
               </tr>
