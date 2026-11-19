@@ -125,6 +125,11 @@ function fakeDb({ hasCollection = true, status = 'Completed', items = ITEMS, inv
         const ids = [...new Set(st.outbox.filter((o) => o.collection_id && ['pending', 'failed'].includes(o.status)).map((o) => o.collection_id))];
         return res(ids.map((id) => ({ collection_id: id })));
       }
+      if (/g25e2:orphans/.test(t)) {
+        const hit = st.outbox.filter((o) => o.collection_id != null && o.collection_id !== 30 && ['pending', 'failed'].includes(o.status));
+        for (const o of hit) { o.status = 'cancelled'; o.last_error = params[0]; }
+        return res(hit.map((o) => ({ id: o.id })));
+      }
       if (/^INSERT INTO integration_sync_log/i.test(t)) { st.syncLog.push(params); return res([]); }
       if (/^INSERT INTO workorder_logs/i.test(t)) throw new Error('collections never write workorder logs');
       // the daily job's workorder sweeps — record the SQL so the orphan sweep can be checked
@@ -225,6 +230,88 @@ console.log('POST — Apply Stock to Website');
   woo.createDraftProduct = async () => { const e = new Error('Website timed out'); throw e; };
   await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo, now });
   check('draft request timed out → needs a human (never re-created automatically)', db.st.outbox[0].status === 'needs_human' && /check/i.test(db.st.outbox[0].last_error));
+}
+
+console.log('code review fixes (20 Nov 2026)');
+{
+  // I4 — a draft made on one press is FOUND on the next and only gets an increase; never a 2nd draft.
+  const db = fakeDb();
+  const woo = site();
+  await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo, now });
+  const drafts1 = [...woo.products.values()].filter((p) => p.sku === 'NEW-SKU1');
+  db.st.items.push({ collection_items_id: 300, product_sku: 'NEW-SKU1', quantity: 2, name: 'Brand-new rower' });
+  await applyCollectionToWebsite(db, 30, { all: true, actorId: 'GS', env: ON, woo, now });
+  const drafts2 = [...woo.products.values()].filter((p) => p.sku === 'NEW-SKU1');
+  check('I4 a later press finds the draft and adds to it — one draft, stock 3 → 5', drafts1.length === 1 && drafts2.length === 1 && drafts2[0].stock_quantity === 5, JSON.stringify(drafts2));
+}
+{
+  // M6 — a draft (not published) at 0 only gets its quantity: no publish date, no Sold / buttons.
+  const db = fakeDb();
+  const woo = createMockWoo([{ id: 103, sku: 'NEW-SKU1', status: 'draft', stock_quantity: 0, manage_stock: true, meta: {} }]);
+  await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo, now });
+  const d = woo.products.get(103);
+  check('M6 a draft at 0 gets stock only — no publish date or ACF flags', d.stock_quantity === 3 && d.date_created_gmt === undefined && d.meta.sold === undefined, JSON.stringify(d));
+}
+{
+  // I4 — after an uncertain draft (timeout after the request), pressing again never makes another.
+  const db = fakeDb();
+  const woo = site();
+  let creates = 0;
+  woo.createDraftProduct = async () => { creates += 1; throw new Error('Website timed out'); };
+  await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo, now });
+  await applyCollectionToWebsite(db, 30, { all: true, actorId: 'GS', env: ON, woo, now });
+  check('I4 uncertain draft + another press → still one create attempt', creates === 1 && db.st.outbox.filter((o) => o.sku === 'NEW-SKU1').length === 1);
+}
+{
+  // M11 — the website refuses the draft (e.g. SKU used by a trashed product) → needs you at once.
+  const db = fakeDb();
+  const woo = site();
+  woo.createDraftProduct = async () => { const e = new Error('Website returned 400: Invalid or duplicated SKU.'); e.status = 400; throw e; };
+  await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo, now });
+  const o = db.st.outbox[0];
+  check('M11 refused draft → needs you with the reason (no 5 silent retries)', o.status === 'needs_human' && /refused the draft/i.test(o.last_error) && o.result.action === 'needs_human', JSON.stringify(o));
+}
+{
+  // I1 — a deleted collection's waiting rows are closed, never sent.
+  const db = fakeDb();
+  db.st.outbox.push({ id: 60, workorder_id: null, collection_id: 77, sku: 'LFT-BN1', qty: 1, kind: 'increase', status: 'pending', attempts: 0, result: {}, last_error: null, created_at: new Date(0) });
+  const woo = site();
+  await runWebsiteStockRetryJob(db, { env: ON, syncCollection: (c, id, o) => syncCollectionWebsiteStock(c, id, { woo, env: ON, now, ...o }) });
+  check('I1 collection deleted → its waiting row is closed, website untouched', db.st.outbox[0].status === 'cancelled' && woo.writes === 0, JSON.stringify(db.st.outbox[0]));
+}
+{
+  // I3 — rows the daily job gave up on (or a lookup handed to a human) are retryable from the page.
+  const db = fakeDb();
+  db.st.outbox.push({ id: 70, workorder_id: null, collection_id: 30, sku: 'LFT-BN1', qty: 1, kind: 'increase', status: 'needs_human', attempts: 5, result: { action: 'needs_human', gave_up: true }, last_error: 'Gave up after 5 tries', created_at: new Date(0) });
+  db.st.outbox.push({ id: 71, workorder_id: null, collection_id: 30, sku: 'TEC-TR600', qty: 3, kind: 'increase', status: 'failed', attempts: 1, result: {}, last_error: 'x', created_at: new Date(0) });
+  db.st.outbox.push({ id: 72, workorder_id: null, collection_id: 30, sku: 'TEC-TR600', qty: 0, kind: 'increase', status: 'sent', attempts: 1, result: { action: 'increase', before: 1, after: 1 }, last_error: null, created_at: new Date(0) });
+  const v = await getCollectionWebsite(db, 30, { env: ON });
+  check('I3 GET reports how many rows a press would retry (incl. gave-up + older failed rows)', v.retryable === 2, JSON.stringify(v.retryable));
+  check('reminder counts lines whose send failed or needs you, not only unsent ones', v.notOnWebsite >= 3, JSON.stringify(v.notOnWebsite));
+  const r = await applyCollectionToWebsite(db, 30, { itemIds: [6], actorId: 'GS', env: ON, woo: site(), now });
+  check('M10 a "Send ticked" press does not re-open unrelated rows', db.st.outbox.find((o) => o.id === 70).status === 'needs_human', JSON.stringify(r));
+}
+{
+  // M5 — 0017 without 0016 → refused cleanly (no 42703 → 500).
+  const db = fakeDb();
+  const orig = db.query.bind(db);
+  db.query = async (sql, p) => (/attname = 'kind'/i.test(String(sql)) ? { rows: [{ has: false }], rowCount: 1 } : orig(sql, p));
+  const r = await applyCollectionToWebsite(db, 30, { all: true, actorId: 'GS', env: ON, woo: site(), now });
+  check('M5 0017 applied but not 0016 → refused (409), nothing queued', r.ok === false && r.status === 409 && db.st.outbox.length === 0);
+}
+{
+  // I2 — the claim stamps claimed_at when 0015 is applied (the stuck sweep measures from it).
+  const db = fakeDb();
+  const seen = [];
+  const orig = db.query.bind(db);
+  db.query = async (sql, p) => {
+    const t = String(sql).replace(/\s+/g, ' ');
+    if (/attname = 'claimed_at'/i.test(t)) return { rows: [{ has: true }], rowCount: 1 };
+    if (/g25e2:claim/.test(t)) seen.push(t);
+    return orig(sql, p);
+  };
+  await applyCollectionToWebsite(db, 30, { itemIds: [2], actorId: 'GS', env: ON, woo: site(), now });
+  check('I2 claim stamps claimed_at = NOW() (G25d)', seen.length === 1 && /claimed_at = NOW\(\)/.test(seen[0]), seen[0]);
 }
 
 console.log('daily job picks up collection rows');

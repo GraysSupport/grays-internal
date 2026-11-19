@@ -31,8 +31,9 @@ export default function CollectionWebsitePanel({ collectionId }) {
 
   const items = Array.isArray(data.items) ? data.items : [];
   const tickable = items.filter(canTick);
-  // Rows that failed (or are still waiting) are retried by pressing the button again.
-  const retryable = items.some((it) => it.rowStatus === 'failed' || it.rowStatus === 'pending');
+  // Rows a press would retry (waiting / failed / handed back by a lookup or the daily job) —
+  // counted by the server across every row, not just each line's latest.
+  const retryable = Number(data.retryable) > 0;
   const reminder = reminderText(data.notOnWebsite);
   const warning = notCompletedWarning(data.status);
 
@@ -84,6 +85,8 @@ export default function CollectionWebsitePanel({ collectionId }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           disabled={!data.available}
+          aria-expanded={open}
+          aria-controls="collection-website-dialog"
           title={data.available ? '' : data.reason || ''}
           className="rounded bg-[#B50B1D] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#930917] disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -93,7 +96,7 @@ export default function CollectionWebsitePanel({ collectionId }) {
       {!data.available && data.reason && <p className="px-3 py-2 text-sm text-gray-600">{data.reason}.</p>}
 
       {open && data.available && (
-        <div className="space-y-2 p-3">
+        <div id="collection-website-dialog" className="space-y-2 p-3">
           {warning && <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{warning}</p>}
           <p className="text-sm text-gray-600">
             Sends what hasn't gone to the website yet. Apply Stock &amp; Cost (portal stock) is separate and never changes the website.
@@ -106,7 +109,7 @@ export default function CollectionWebsitePanel({ collectionId }) {
                   <th className="p-2">SKU</th>
                   <th className="p-2">Product</th>
                   <th className="p-2 text-right">Qty</th>
-                  <th className="p-2 text-right">On website</th>
+                  <th className="p-2 text-right">Sent</th>
                   <th className="p-2 text-right">Left to send</th>
                   <th className="p-2">Website</th>
                 </tr>
