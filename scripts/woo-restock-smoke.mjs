@@ -115,7 +115,13 @@ function fakeDb({ hasKind = true, salesperson = 'JS', ecommerce = false, woStatu
         add({ workorder_id: wo, sku, qty, kind, reverses_id: reverses, status, result: json(result), last_error: err });
         return { rows: [], rowCount: 1 };
       }
-      if (/g25e:any-row/.test(t)) return res(st.outbox.filter((x) => x.workorder_id === params[0] && x.sku === params[1]).slice(0, 1).map((x) => ({ id: x.id })));
+      if (/g25e:any-row/.test(t)) return res(st.outbox.filter((x) => x.workorder_id === params[0] && x.sku === params[1] && (!/kind = 'decrease'/.test(t) || x.kind === 'decrease')).slice(0, 1).map((x) => ({ id: x.id })));
+      if (/g25e:legacy-sale/.test(t)) return res(st.outbox.filter((x) => x.workorder_id === params[0] && x.sku === params[1]).sort((a, b) => b.id - a.id).slice(0, 1).map((x) => ({ ...x })));
+      if (/g25e:open-adds/.test(t)) {
+        const n = st.outbox.filter((x) => x.workorder_id === params[0] && x.kind === 'increase'
+          && (['pending', 'failed'].includes(x.status) || (x.status === 'needs_human' && json(x.result)?.action === 'needs_human'))).length;
+        return res([{ n }]);
+      }
       if (/g25e:reopen-sale/.test(t)) {
         const r = st.outbox.filter((x) => x.workorder_id === params[0] && x.sku === params[1] && x.kind === 'decrease' && x.status === 'cancelled').sort((a, b) => b.id - a.id)[0];
         if (!r) return res([]);
@@ -130,8 +136,9 @@ function fakeDb({ hasKind = true, salesperson = 'JS', ecommerce = false, woStatu
         return { rows: [], rowCount: hit.length };
       }
       // --- the sync (lib/wooStock.js)
-      if (!/COUNT\(/.test(t) && /^SELECT .* FROM woo_stock_outbox WHERE workorder_id = \$1 AND status IN \('pending', 'failed'\)/i.test(t)) {
-        const rows = st.outbox.filter((x) => x.workorder_id === params[0] && ['pending', 'failed'].includes(x.status)).map((x) => ({ ...x }));
+      if (!/COUNT\(/.test(t) && /^SELECT .* FROM woo_stock_outbox (o )?WHERE workorder_id = \$1 AND status IN \('pending', 'failed'\)/i.test(t)) {
+        const rows = st.outbox.filter((x) => x.workorder_id === params[0] && ['pending', 'failed'].includes(x.status))
+          .map((x) => ({ ...x, ...(/reverses_status/.test(t) ? { reverses_status: st.outbox.find((y) => y.id === x.reverses_id)?.status ?? null } : {}) }));
         return res(rows);
       }
       if (/^SELECT 1 FROM workorder_items WHERE workorder_id = \$1 AND product_id = \$2/i.test(t)) {
@@ -216,7 +223,7 @@ console.log('E-D1 — only give back what the website actually lost');
   const db = fakeDb({ ecommerce: true });
   db.add({ sku: 'TEC-TR600', qty: 1, status: 'needs_human', result: { action: 'needs_human' }, last_error: 'SKU not on the website' });
   await cancelItem(db);
-  check('decrease lookup refused (nothing sent) → nothing to add back, closed off', incs(db).length === 0 && db.st.outbox[0].status === 'cancelled');
+  check('decrease lookup refused (nothing sent) → sale closed off, GS flagged in case they did it by hand (review #3)', incs(db).length === 1 && incs(db)[0].status === 'needs_human' && db.st.outbox[0].status === 'cancelled');
 }
 {
   const db = fakeDb({ ecommerce: true });
@@ -426,6 +433,63 @@ console.log('daily job + Retry button');
   check('workorder page rows carry kind + reverses_id', row?.kind === 'increase' && row?.reverses_id === 1, JSON.stringify(row));
 }
 
+console.log('code review fixes (20 Nov 2026)');
+{
+  // #1 — a dry-run sale's add-back stays a dry run even after its result was overwritten
+  //      (gave up after N refusals → GS presses Retry after go-live).
+  const db = fakeDb({ woStatus: 'Cancelled' });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'dry_run', result: { action: 'decrease', before: 3, after: 2 } });
+  await cancelItem(db);
+  const inc = incs(db)[0];
+  inc.status = 'failed'; inc.result = { action: 'needs_human', gave_up: true }; // what the daily job writes
+  const woo = createMockWoo([product(2)]);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  check('#1 dry-run sale → its add-back is never sent live, even after the result was overwritten', woo.writes === 0 && inc.status === 'dry_run', JSON.stringify(inc));
+}
+{
+  // #2 — cancel → restore → cancel on a workorder with no sale row (pre-G25, E-Commerce ticked).
+  const db = fakeDb({ ecommerce: true });
+  await cancelItem(db);                       // add-back A queued (not sent: site down)
+  await retakeWebsiteStock(db, { workorderId: 7, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON }); // closes A
+  const n = await cancelItem(db);             // cancelled again
+  check('#2 cancel → restore → cancel (no sale row) still adds back', n === 1 && incs(db).filter((x) => x.status === 'pending').length === 1, JSON.stringify(db.st.outbox));
+  const db2 = fakeDb({ ecommerce: false });
+  await cancelItem(db2);                      // flag F
+  await retakeWebsiteStock(db2, { workorderId: 7, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON }); // closes F
+  await cancelItem(db2);
+  check('#2 …and still flags GS when E-Commerce is not ticked', incs(db2).filter((x) => x.status === 'needs_human').length === 1, JSON.stringify(db2.st.outbox));
+}
+{
+  // #3 — a sale GS was told to do by hand (lookup refused / typo guard / gave up): flag the add-back too.
+  const db = fakeDb({ ecommerce: true });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'needs_human', result: { action: 'needs_human' }, last_error: 'More than 10 products on one workorder — check by hand' });
+  await cancelItem(db);
+  check('#3 sale handed to GS → closed AND GS flagged "if you reduced it by hand, add it back"',
+    db.st.outbox[0].status === 'cancelled' && incs(db)[0]?.status === 'needs_human' && /by hand/i.test(incs(db)[0].last_error), JSON.stringify(db.st.outbox));
+}
+{
+  // #4 — before migration 0016, the hand instruction depends on what the sale row says.
+  const pending = fakeDb({ hasKind: false, ecommerce: true });
+  pending.add({ sku: 'TEC-TR600', qty: 1, status: 'pending' });
+  await cancelItem(pending);
+  check('#4 pre-0016, sale never sent → no "add it back by hand" instruction', !pending.st.logs.some((l) => /by hand/i.test(l)), JSON.stringify(pending.st.logs));
+  const wb = fakeDb({ hasKind: false, salesperson: 'WB', ecommerce: true });
+  wb.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 3, after: 3 } });
+  await cancelItem(wb);
+  check('#4 pre-0016, website order → the WooCommerce cancel/refund message (E-D2)', wb.st.logs.some((l) => /refund/i.test(l)) && !wb.st.logs.some((l) => /0016/.test(l)), JSON.stringify(wb.st.logs));
+  const sent = fakeDb({ hasKind: false, ecommerce: true });
+  sent.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'decrease', before: 3, after: 2 } });
+  await cancelItem(sent);
+  check('#4 pre-0016, sale sent → "add it back by hand"', sent.st.logs.some((l) => /by hand/i.test(l)) && sent.st.outbox.length === 1);
+}
+{
+  // minor — Retry on a cancelled workorder whose add-back hit the typo guard (needs_human, lookup-level).
+  const db = fakeDb({ woStatus: 'Cancelled' });
+  db.add({ sku: 'TEC-TR600', qty: 1, kind: 'increase', status: 'needs_human', result: { action: 'needs_human' }, last_error: 'More than 10 products' });
+  const r = await retryWorkorderWebsiteStock(db, 7, { env: ON, actorId: 'GS', sync: async () => ({}) });
+  check('Retry is allowed for a re-openable add-back on a cancelled workorder', r.ok === true, JSON.stringify(r));
+}
+
 console.log('migration 0016 (Neon dev only, additive + reversible)');
 {
   const { readFileSync } = await import('node:fs');
@@ -435,6 +499,8 @@ console.log('migration 0016 (Neon dev only, additive + reversible)');
   check('adds reverses_id, idempotently', /ADD COLUMN IF NOT EXISTS reverses_id INT(EGER)? NULL/i.test(up));
   check('kind limited to decrease | increase | create_draft', /CHECK \(kind IN \('decrease', 'increase', 'create_draft'\)\)/i.test(up));
   check('index for "already given back?" lookups', /CREATE INDEX IF NOT EXISTS idx_woo_stock_outbox_reverses/i.test(up));
+  check('database guarantees a row is given back at most once (unique, ignoring closed rows)', /CREATE UNIQUE INDEX IF NOT EXISTS uq_woo_stock_outbox_reverses_once\s+ON woo_stock_outbox \(reverses_id\) WHERE reverses_id IS NOT NULL AND status <> 'cancelled'/i.test(up));
+  check('down drops the unique index too', /DROP INDEX IF EXISTS uq_woo_stock_outbox_reverses_once/i.test(down));
   check('no destructive statements in up', !/\bDROP\b|\bDELETE\b|\bTRUNCATE\b/i.test(up.replace(/--.*$/gm, '')));
   check('down drops both columns (and the index)', /DROP COLUMN IF EXISTS kind/i.test(down) && /DROP COLUMN IF EXISTS reverses_id/i.test(down) && /DROP INDEX IF EXISTS idx_woo_stock_outbox_reverses/i.test(down));
 }

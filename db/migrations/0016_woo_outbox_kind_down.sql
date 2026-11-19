@@ -5,6 +5,7 @@
 -- workorder page). If add-backs exist, delete them first:
 --   DELETE FROM woo_stock_outbox WHERE kind <> 'decrease';
 
+DROP INDEX IF EXISTS uq_woo_stock_outbox_reverses_once;
 DROP INDEX IF EXISTS idx_woo_stock_outbox_reverses;
 ALTER TABLE woo_stock_outbox DROP COLUMN IF EXISTS reverses_id;
 ALTER TABLE woo_stock_outbox DROP COLUMN IF EXISTS kind;

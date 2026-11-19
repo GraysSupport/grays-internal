@@ -22,3 +22,8 @@ ALTER TABLE woo_stock_outbox ADD COLUMN IF NOT EXISTS reverses_id INTEGER NULL;
 
 CREATE INDEX IF NOT EXISTS idx_woo_stock_outbox_reverses
   ON woo_stock_outbox (reverses_id) WHERE reverses_id IS NOT NULL;
+
+-- A row is given back (or taken again) at most once: the database refuses a second live row
+-- reversing the same row. Closed ('cancelled') rows don't count, so a later re-reversal works.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_woo_stock_outbox_reverses_once
+  ON woo_stock_outbox (reverses_id) WHERE reverses_id IS NOT NULL AND status <> 'cancelled';
