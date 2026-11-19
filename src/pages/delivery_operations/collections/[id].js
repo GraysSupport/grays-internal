@@ -8,6 +8,7 @@ import CreateProductModal from '../../../components/CreateProductModal';
 import { printLotLabels } from '../../../utils/lotLabels';
 import { downloadInwardRegisterXlsx } from '../../../utils/inwardRegisterXlsx';
 import { blockWorkshop } from '../../../components/WorkshopBlocked';
+import CollectionWebsitePanel from '../../../components/CollectionWebsitePanel'; // G25e2
 
 const ensureArray = (x) => (Array.isArray(x) ? x : (x && typeof x === 'object' ? [x] : []));
 
@@ -659,6 +660,9 @@ function CollectionDetailPage() {
               </div>
             )}
           </div>
+
+          {/* G25e2: Apply Stock to Website (superadmin incl. GS + GM; renders nothing for others) */}
+          <CollectionWebsitePanel collectionId={id} />
 
           {/* Buttons */}
           <div className="flex justify-end gap-3">
