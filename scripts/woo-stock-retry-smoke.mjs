@@ -34,7 +34,7 @@ function fakeDb({ workorders = {} } = {}) {
   const wo = (id) => wos.get(Number(id)) || { status: 'Work Ordered', salesperson: 'JS', ecommerce: false };
   const add = (r) => { const row = { id: nextId++, status: 'pending', attempts: 0, result: null, last_error: null, created_at: minsAgo(60 * 24), sent_at: null, ...r }; outbox.push(row); return row; };
   const client = {
-    outbox, logs, wos, add, deleted: new Set(), removed: new Set(),
+    outbox, logs, wos, add, deleted: new Set(), removed: new Set(), claimSql: [], hasClaimedAt: false,
     async query(sql, params = []) {
       const t = String(sql).replace(/\s+/g, ' ').trim();
       if (/to_regclass\('public\.woo_stock_outbox'\)/i.test(t)) return { rows: [{ t: client.noTable ? null : 'woo_stock_outbox' }], rowCount: 1 };
@@ -76,10 +76,20 @@ function fakeDb({ workorders = {} } = {}) {
         const rows = outbox.filter((r) => r.workorder_id === Number(params[0]) && ['pending', 'failed'].includes(r.status));
         return { rows, rowCount: rows.length };
       }
+      // G25d: is migration 0015 (claimed_at) applied?
+      // Resolved like the statements themselves (search_path), not via current_schema().
+      if (/pg_attribute/i.test(t) && /to_regclass\('woo_stock_outbox'\)/i.test(t) && /attname = 'claimed_at'/i.test(t)) {
+        client.columnChecks = (client.columnChecks || 0) + 1;
+        if (client.columnCheckFails) throw new Error('column check blip');
+        return { rows: [{ has: Boolean(client.hasClaimedAt) }], rowCount: 1 };
+      }
       if (/^UPDATE woo_stock_outbox SET status = 'sending'/i.test(t)) {
+        client.claimSql.push(t);
+        if (/claimed_at/i.test(t) && !client.hasClaimedAt) throw Object.assign(new Error('column "claimed_at" does not exist'), { code: '42703' });
         const r = outbox.find((x) => x.id === params[0] && ['pending', 'failed'].includes(x.status));
         if (!r) return { rows: [], rowCount: 0 };
         r.status = 'sending';
+        if (/claimed_at = NOW\(\)/i.test(t)) r.claimed_at = new Date();
         return { rows: [{ id: r.id }], rowCount: 1 };
       }
       // retry: reopen rows where nothing was sent (a lookup said "needs a human")
@@ -91,7 +101,14 @@ function fakeDb({ workorders = {} } = {}) {
       if (/^SELECT COUNT\(\*\)::int AS n FROM woo_stock_outbox WHERE workorder_id = \$1 AND status IN \('pending', 'failed'\)/i.test(t)) {
         return { rows: [{ n: outbox.filter((r) => r.workorder_id === Number(params[0]) && ['pending', 'failed'].includes(r.status)).length }], rowCount: 1 };
       }
-      // job: stuck 'sending'
+      // job: stuck 'sending' — G25d form (claimed_at, falling back to created_at for old rows)
+      if (/^UPDATE woo_stock_outbox SET status = 'needs_human', result = NULL, last_error = \$1 WHERE status = 'sending' AND COALESCE\(claimed_at, created_at\) < NOW\(\) - make_interval\(mins => \$2\)/i.test(t)) {
+        if (!client.hasClaimedAt) throw Object.assign(new Error('column "claimed_at" does not exist'), { code: '42703' });
+        const rows = outbox.filter((r) => r.status === 'sending' && (r.claimed_at ?? r.created_at) < minsAgo(params[1]));
+        rows.forEach((r) => { r.status = 'needs_human'; r.result = null; r.last_error = params[0]; });
+        return { rows: rows.map((r) => ({ id: r.id, workorder_id: r.workorder_id, sku: r.sku })), rowCount: rows.length };
+      }
+      // job: stuck 'sending' (before migration 0015)
       if (/^UPDATE woo_stock_outbox SET status = 'needs_human', result = NULL, last_error = \$1 WHERE status = 'sending' AND created_at < NOW\(\) - make_interval\(mins => \$2\)/i.test(t)) {
         const rows = outbox.filter((r) => r.status === 'sending' && r.created_at < minsAgo(params[1]));
         rows.forEach((r) => { r.status = 'needs_human'; r.result = null; r.last_error = params[0]; });
@@ -446,6 +463,75 @@ console.log('workorder handler: Retry route + status for viewers');
   check('GS popup list: ticked workorders carry nothing extra', !('website_stock' in gsList.find((w) => w.workorder_id === 756)));
   const kmList = await list(tok('KM', ['admin', 'sales']));
   check('other logins: list unchanged', kmList.every((w) => !('website_stock' in w)));
+}
+
+// --- G25d: claimed_at (migration 0015) -------------------------------------------------
+{
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync(new URL('../db/migrations/0015_woo_outbox_claimed_at.sql', import.meta.url), 'utf8');
+  const down = readFileSync(new URL('../db/migrations/0015_woo_outbox_claimed_at_down.sql', import.meta.url), 'utf8');
+  const code = (sql) => sql.replace(/--.*$/gm, '');
+  check('0015 up: additive, idempotent claimed_at timestamptz NULL', /ALTER TABLE woo_stock_outbox\s+ADD COLUMN IF NOT EXISTS claimed_at timestamptz/i.test(code(up)) && !/NOT NULL|DROP/i.test(code(up)));
+  check('0015 down: drops only that column, idempotently', /DROP COLUMN IF EXISTS claimed_at/i.test(code(down)) && !/DROP TABLE/i.test(code(down)));
+}
+{
+  // After migration: a row created days ago but claimed a moment ago is NOT "stuck" (the old
+  // created_at guess logged a false "didn't finish" for a slow-but-successful send).
+  const db = fakeDb();
+  db.hasClaimedAt = true;
+  db.add({ workorder_id: 60, sku: 'OLD-BUT-FRESH', qty: 1, status: 'sending', created_at: minsAgo(2 * 24 * 60), claimed_at: minsAgo(5) });
+  db.add({ workorder_id: 60, sku: 'REALLY-STUCK', qty: 1, status: 'sending', created_at: minsAgo(2 * 24 * 60), claimed_at: minsAgo(120) });
+  db.add({ workorder_id: 60, sku: 'LEGACY', qty: 1, status: 'sending', created_at: minsAgo(180), claimed_at: null });
+  const s = await runWebsiteStockRetryJob(db, { env: ON, sync: async () => ({}) });
+  check('claimed 5 min ago (created 2 days ago) → left alone, no false "didn\'t finish"', db.outbox[0].status === 'sending' && !db.logs.some((l) => /OLD-BUT-FRESH/.test(l.notes)));
+  check('claimed 2 h ago → needs a human', db.outbox[1].status === 'needs_human' && db.outbox[1].result === null);
+  check('claimed before the migration (claimed_at NULL) → falls back to created_at', db.outbox[2].status === 'needs_human' && s.stuck === 2, JSON.stringify(s));
+}
+{
+  // Before migration (prod until the owner migrates): the old sweep, no 42703.
+  const db = fakeDb();
+  db.add({ workorder_id: 61, sku: 'A', qty: 1, status: 'sending', created_at: minsAgo(180) });
+  const s = await runWebsiteStockRetryJob(db, { env: ON, sync: async () => ({}) });
+  check('pre-0015 database: old sweep still works, no error', s.stuck === 1 && s.errors === 0, JSON.stringify(s));
+  const db2 = fakeDb();
+  db2.columnCheckFails = true;
+  db2.add({ workorder_id: 62, sku: 'A', qty: 1, status: 'sending', created_at: minsAgo(180) });
+  const s2 = await runWebsiteStockRetryJob(db2, { env: ON, sync: async () => ({}) });
+  check('column check fails → treated as not migrated, sweep still runs', s2.stuck === 1 && s2.errors === 0, JSON.stringify(s2));
+}
+{
+  // The claim stamps claimed_at after the migration, and never mentions it before.
+  const woo = createMockWoo([{ id: 7, sku: 'CL-1', stock_quantity: 3, manage_stock: true }]);
+  const db = fakeDb({ workorders: { 63: {} } });
+  db.hasClaimedAt = true;
+  db.add({ workorder_id: 63, sku: 'CL-1', qty: 1 });
+  await syncWorkorderWebsiteStock(db, 63, { env: ON, woo, now });
+  check('claim stamps claimed_at = NOW() once 0015 is applied', /claimed_at = NOW\(\)/i.test(db.claimSql[0] || '') && db.outbox[0].claimed_at instanceof Date && db.outbox[0].status === 'sent', JSON.stringify(db.outbox[0]));
+
+  const woo2 = createMockWoo([{ id: 8, sku: 'CL-2', stock_quantity: 3, manage_stock: true }]);
+  const db2 = fakeDb({ workorders: { 64: {} } });
+  db2.add({ workorder_id: 64, sku: 'CL-2', qty: 1 });
+  await syncWorkorderWebsiteStock(db2, 64, { env: ON, woo: woo2, now });
+  check('pre-0015: the claim never mentions claimed_at (42703-safe) and the send still works', !/claimed_at/i.test(db2.claimSql[0] || '') && db2.outbox[0].status === 'sent', JSON.stringify(db2.outbox[0]));
+
+  // A failed row claimed again gets a FRESH claimed_at (the sweep must not see the old one).
+  const woo3 = createMockWoo([{ id: 9, sku: 'CL-3', stock_quantity: 3, manage_stock: true }]);
+  const db3 = fakeDb({ workorders: { 65: {} } });
+  db3.hasClaimedAt = true;
+  const old = minsAgo(3 * 24 * 60);
+  db3.add({ workorder_id: 65, sku: 'CL-3', qty: 1, status: 'failed', claimed_at: old });
+  await syncWorkorderWebsiteStock(db3, 65, { env: ON, woo: woo3, now });
+  check('re-claiming a failed row refreshes claimed_at', db3.outbox[0].claimed_at > old && db3.outbox[0].status === 'sent');
+}
+{
+  // The daily job checks for the column ONCE and hands the answer to every sync it runs.
+  const woo = createMockWoo([{ id: 10, sku: 'J-1', stock_quantity: 5, manage_stock: true }, { id: 11, sku: 'J-2', stock_quantity: 5, manage_stock: true }]);
+  const db = fakeDb({ workorders: { 66: {}, 67: {} } });
+  db.hasClaimedAt = true;
+  db.add({ workorder_id: 66, sku: 'J-1', qty: 1, status: 'failed', created_at: minsAgo(120) });
+  db.add({ workorder_id: 67, sku: 'J-2', qty: 1, status: 'failed', created_at: minsAgo(120) });
+  await runWebsiteStockRetryJob(db, { env: ON, sync: (c, id, opts) => syncWorkorderWebsiteStock(c, id, { env: ON, woo, now, ...opts }) });
+  check('job: one column check for the whole run, claims still stamped', db.columnChecks === 1 && db.outbox.every((r) => r.status === 'sent' && r.claimed_at instanceof Date), `${db.columnChecks} ${JSON.stringify(db.outbox)}`);
 }
 
 console.log(`\n✅ woo-stock retry smoke: ${passed} checks passed`);
