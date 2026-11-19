@@ -63,7 +63,7 @@ function fakeDb({ workorders = {} } = {}) {
         rows.forEach((r) => { r.status = 'pending'; r.last_error = null; });
         return { rows: [], rowCount: rows.length };
       }
-      if (/^UPDATE woo_stock_outbox o SET status = 'cancelled', last_error = \$1 WHERE o\.status IN \('pending', 'failed'\) AND NOT EXISTS \(SELECT 1 FROM workorder w WHERE w\.workorder_id = o\.workorder_id\)/i.test(t)) {
+      if (/^UPDATE woo_stock_outbox o SET status = 'cancelled', last_error = \$1 WHERE o\.status IN \('pending', 'failed'\) AND o.workorder_id IS NOT NULL AND NOT EXISTS \(SELECT 1 FROM workorder w WHERE w\.workorder_id = o\.workorder_id\)/i.test(t)) {
         const rows = outbox.filter((r) => client.deleted.has(r.workorder_id) && ['pending', 'failed'].includes(r.status));
         rows.forEach((r) => { r.status = 'cancelled'; r.last_error = params[0]; });
         return { rows: rows.map((r) => ({ id: r.id, workorder_id: r.workorder_id, sku: r.sku })), rowCount: rows.length };
