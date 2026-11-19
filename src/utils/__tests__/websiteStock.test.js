@@ -90,3 +90,37 @@ describe('canRetryWebsiteStock — when the Retry button shows', () => {
     expect(canRetryWebsiteStock(undefined)).toBe(false);
   });
 });
+
+describe('G25e1 — a cancelled item added back to the website', () => {
+  const add = (status, extra = {}) => row(status, { kind: 'increase', reverses_id: 1, ...extra });
+  test('sent increase: "Added back: 2 → 3"', () => {
+    expect(websiteRowLabel(add('sent', { result: { action: 'increase', before: 2, after: 3 } }))).toEqual({ text: 'Added back: 2 → 3', tone: 'ok' });
+  });
+  test('sent restock of a Sold product says it is back on sale (was Sold)', () => {
+    expect(websiteRowLabel(add('sent', { result: { action: 'restock', before: 0, after: 1, was_sold: true } })).text).toBe('Added back: 0 → 1, back on sale (was Sold)');
+  });
+  test('restock without the Sold tick says "was sold out"', () => {
+    expect(websiteRowLabel(add('sent', { result: { action: 'restock', before: 0, after: 2, was_sold: false } })).text).toBe('Added back: 0 → 2, back on sale (was sold out)');
+  });
+  test('dry run reads "would add N back"', () => {
+    expect(websiteRowLabel(add('dry_run', { qty: 1, result: { action: 'increase', before: 2, after: 3 } }))).toEqual({ text: 'Dry run — would add 1 back (2 → 3) — add it back by hand', tone: 'muted' });
+  });
+  test('needs you keeps the reason', () => {
+    expect(websiteRowLabel(add('needs_human', { result: { action: 'manual' }, last_error: 'no website record — update the website by hand' }))).toEqual({ text: 'Needs you: no website record — update the website by hand', tone: 'warn' });
+  });
+  test('pending add-back waits to be sent', () => {
+    expect(websiteRowLabel(add('pending')).text).toMatch(/^Waiting to add back/);
+  });
+  test('a closed add-back says why', () => {
+    expect(websiteRowLabel(add('cancelled', { last_error: 'Item back on the workorder before the add-back was sent — nothing sent' })).text).toBe('Add-back not needed — Item back on the workorder before the add-back was sent — nothing sent');
+  });
+  test('a sale closed by a cancel says so (not "workorder cancelled")', () => {
+    expect(websiteRowLabel(row('cancelled', { kind: 'decrease', last_error: 'Item cancelled before the website was updated — nothing sent' })).text).toBe('Not sent — Item cancelled before the website was updated — nothing sent');
+  });
+  test('a flagged add-back (manual) can never be retried', () => {
+    expect(canRetryWebsiteStock([add('needs_human', { result: { action: 'manual' } })])).toBe(false);
+  });
+  test('summary: a flagged add-back makes the workorder "needs you"', () => {
+    expect(websiteStockSummary([row('sent', { result: { action: 'decrease', before: 3, after: 2 } }), add('needs_human', { result: { action: 'manual' }, last_error: 'check by hand' })]).state).toBe('needs_you');
+  });
+});

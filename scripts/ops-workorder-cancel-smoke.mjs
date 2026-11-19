@@ -311,6 +311,101 @@ console.log('G25 increment 2 — reopening puts the website update back');
   check('feature OFF: reopen never calls the website', synced2.length === 0);
 }
 
+console.log('G25e1 — cancelled items go back on the website (all three triggers + reopen)');
+{
+  const ON = { FEATURE_WOO_STOCK_SYNC: 'true' };
+  // Watches the order of statements so we can prove "inside the transaction, synced after it".
+  const watch = (db) => {
+    const seen = [];
+    const orig = db.query.bind(db);
+    db.query = async (sql, params) => {
+      const t = String(sql).replace(/\s+/g, ' ').trim();
+      seen.push(t);
+      if (/^SELECT workorder_items_id, product_id, quantity, status FROM workorder_items WHERE workorder_id = \$1 AND workorder_items_id = ANY/i.test(t)) {
+        const want = (params[1] || []).map(Number);
+        const rows = db.state.items.filter((i) => want.includes(i.workorder_items_id)).map((i) => ({ ...i }));
+        return { rows, rowCount: rows.length };
+      }
+      if (/^SELECT is_custom FROM workorder_items WHERE workorder_items_id/i.test(t)) {
+        const i = db.state.items.find((x) => x.workorder_items_id === Number(params[0]));
+        return { rows: i ? [{ is_custom: i.is_custom }] : [], rowCount: i ? 1 : 0 };
+      }
+      return orig(sql, params);
+    };
+    return seen;
+  };
+  const spies = (seen) => {
+    const calls = { add: [], retake: [], sync: [] };
+    return {
+      calls,
+      deps: {
+        env: ON,
+        addBackWebsiteStock: async (c, args, opts) => { calls.add.push({ ...args, at: seen.length, opts }); return 1; },
+        retakeWebsiteStock: async (c, args, opts) => { calls.retake.push({ ...args, at: seen.length, opts }); return 1; },
+        syncWebsiteStock: async (c, id) => { calls.sync.push({ id, at: seen.length }); return {}; },
+      },
+    };
+  };
+  const skus = (call) => (call?.items || []).filter((i) => !i.is_custom).map((i) => `${i.product_id}x${i.quantity}`).sort().join(',');
+  const commitAt = (seen) => seen.findIndex((s) => /^COMMIT$/i.test(s));
+
+  // 1. whole workorder cancelled
+  {
+    const db = makeDb();
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    const r = await put(db, AS.sales, { status: 'Cancelled' }, { deps });
+    check('whole-workorder cancel still succeeds', r.code === 200, JSON.stringify(r.body));
+    check('cancel: the live items are offered for add-back (not the one removed earlier)', calls.add.length === 1 && skus(calls.add[0]) === 'BIKEx2,TREADx1', JSON.stringify(calls.add));
+    check('…with the workorder, salesperson and E-Commerce flag', calls.add[0].workorderId === 41 && 'salesperson' in calls.add[0] && 'ecommerce' in calls.add[0]);
+    check('…inside the transaction', calls.add[0].at <= commitAt(seen));
+    check('…and synced straight after the commit', calls.sync.length === 1 && calls.sync[0].at > commitAt(seen));
+  }
+  // 2. one item set to Canceled
+  {
+    const db = makeDb();
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    const r = await put(db, AS.admin, { items: [{ workorder_items_id: 1, status: 'Canceled' }] }, { deps });
+    check('item → Canceled: add-back offered for that item only', r.code === 200 && calls.add.length === 1 && skus(calls.add[0]) === 'TREADx1', JSON.stringify(calls.add));
+    check('…inside the transaction, synced after it', calls.add[0].at <= commitAt(seen) && calls.sync.length === 1);
+  }
+  // 3. items deleted (delete_item_ids → Canceled)
+  {
+    const db = makeDb();
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    const r = await put(db, AS.admin, { delete_item_ids: [2, 4] }, { deps });
+    check('delete_item_ids: add-back offered for the live item only (item 4 was already Canceled)', r.code === 200 && calls.add.length === 1 && skus(calls.add[0]) === 'BIKEx2', JSON.stringify(calls.add));
+  }
+  // 4. reopen the whole workorder
+  {
+    const db = makeDb();
+    await put(db, AS.sales, { status: 'Cancelled' });
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    const r = await put(db, AS.admin, { status: 'Work Ordered', reopen: true }, { deps });
+    check('reopen: restored items are taken again on the website (E-D4)', r.code === 200 && calls.retake.length === 1 && skus(calls.retake[0]) === 'BIKEx2,TREADx1', JSON.stringify(calls.retake));
+    check('…inside the transaction, synced after it', calls.retake[0].at <= commitAt(seen) && calls.sync.length === 1);
+  }
+  // 5. one item brought back from Canceled
+  {
+    const db = makeDb();
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    const r = await put(db, AS.admin, { items: [{ workorder_items_id: 4, status: 'In Workshop' }] }, { deps });
+    check('item back from Canceled: taken again on the website, its closed sale re-queued', r.code === 200 && calls.retake.length === 1 && skus(calls.retake[0]) === 'ROWERx1' && calls.retake[0].opts?.reopenClosedSale === true, JSON.stringify(calls.retake));
+  }
+  // 6. nothing cancelled → never called
+  {
+    const db = makeDb();
+    const seen = watch(db);
+    const { calls, deps } = spies(seen);
+    await put(db, AS.admin, { notes: 'hello' }, { deps });
+    check('an ordinary save never touches the website add-back', calls.add.length === 0 && calls.retake.length === 0 && calls.sync.length === 0);
+  }
+}
+
 console.log('G23 — nothing new attaches to a cancelled workorder');
 {
   const { default: lotsHandler } = await import('../lib/handlers/lots.js');

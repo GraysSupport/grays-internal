@@ -13,6 +13,20 @@ export function websiteRowLabel(row) {
   const res = parse(row?.result) || {};
   const err = String(row?.last_error || '').trim();
   const arrow = `${res.before} → ${res.after}`;
+  // G25e1: a cancelled item's add-back (kind 'increase').
+  if (row?.kind === 'increase') {
+    const back = res.action === 'restock' ? `, back on sale (${res.was_sold ? 'was Sold' : 'was sold out'})` : '';
+    switch (row.status) {
+      case 'sent': return { text: `Added back: ${arrow}${back}`, tone: 'ok' };
+      case 'dry_run': return { text: `Dry run — would add ${Number(row.qty)} back (${arrow})${back} — add it back by hand`, tone: 'muted' };
+      case 'failed': return { text: `Add-back failed: ${err || 'website error'} — retries daily, or press Retry`, tone: 'warn' };
+      case 'needs_human': return { text: `Needs you: ${err || 'add it back by hand'}`, tone: 'warn' };
+      case 'pending': return { text: 'Waiting to add back — retries daily, or press Retry', tone: 'muted' };
+      case 'sending': return { text: 'Adding back…', tone: 'muted' };
+      case 'cancelled': return { text: `Add-back not needed${err ? ` — ${err}` : ''}`, tone: 'muted' };
+      default: return { text: String(row.status || 'Unknown'), tone: 'muted' };
+    }
+  }
   switch (row?.status) {
     case 'sent': {
       let text;
@@ -35,7 +49,8 @@ export function websiteRowLabel(row) {
     case 'sending':
       return { text: 'Sending…', tone: 'muted' };
     case 'cancelled':
-      return { text: 'Not sent — workorder cancelled', tone: 'muted' };
+      // G25e1: a single cancelled item also closes its sale — say which reason applied.
+      return { text: err ? `Not sent — ${err}` : 'Not sent — workorder cancelled', tone: 'muted' };
     default:
       return { text: String(row?.status || 'Unknown'), tone: 'muted' };
   }
