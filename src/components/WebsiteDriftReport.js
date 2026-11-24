@@ -41,7 +41,10 @@ function DriftTable({ data }) {
                   <td className="border px-4 py-2">{r.name || ''}</td>
                   <td className="border px-4 py-2">{r.portal}</td>
                   <td className="border px-4 py-2">{r.website == null ? '—' : r.website}</td>
-                  <td className="border px-4 py-2">{DRIFT_STATE_LABEL[r.state] || r.state}</td>
+                  <td className="border px-4 py-2">
+                    {/* G25e2 (E-D9): website ahead because a collection was sent before its inventory was applied */}
+                    {r.note || DRIFT_STATE_LABEL[r.state] || r.state}
+                  </td>
                 </tr>
               ))}
             </tbody>
