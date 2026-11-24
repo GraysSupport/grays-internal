@@ -94,7 +94,8 @@ async function main() {
   // 1. batching
   const many = Array.from({ length: 250 }, (_, i) => `SKU-${i}`);
   const batches = chunkSkus(many);
-  check('batch size is 100 SKUs per REST call', WOO_SKU_BATCH === 100 && batches.length === 3 && batches[0].length === 100 && batches[2].length === 50);
+  // 25 Nov 2026: 100 SKUs per call timed out on the live website (765 / 969 unread) → 50.
+  check('batch size is 50 SKUs per REST call', WOO_SKU_BATCH === 50 && batches.length === 5 && batches[0].length === 50 && batches[4].length === 50);
   check('blank / comma SKUs are never sent (a comma would split the filter)', chunkSkus(['A', '', null, 'B,C', ' D ']).flat().join('|') === 'A|D');
   check('duplicate SKUs (any case) are sent once', chunkSkus(['A', 'a', 'A']).flat().length === 1);
 
@@ -108,14 +109,30 @@ async function main() {
 
   const f2 = recordingFetch(SITE);
   const site = await fetchWebsiteStock(createWooClient({ env: ENV, fetch: f2 }), many.concat(PORTAL.map((p) => p.sku)));
-  check('255 SKUs → 3 REST calls, never one per row', f2.calls.length === 3, String(f2.calls.length));
+  check('255 SKUs → 6 REST calls, never one per row', f2.calls.length === 6, String(f2.calls.length));
   check('website map is keyed case-insensitively', site.map.get('LFT-TRSE3HD')?.stock === 6);
   check('missing SKU is absent from the map', !site.map.has('G25-NOWEB'));
 
   // a failing batch is reported, not thrown, and its SKUs are "unknown" (not "not on website")
-  const flaky = { async findProductsBySkus(list) { if (list.includes('SKU-0')) throw new Error('Website timed out'); return []; } };
+  const flaky = { async findProductsBySkus(list) { if (list.includes('SKU-0')) throw new Error('Website returned 500'); return []; } };
   const part = await fetchWebsiteStock(flaky, many);
   check('a failed batch is reported, other batches still read', part.errors.length === 1 && part.unknown.has('SKU-0') && !part.unknown.has('SKU-200'));
+
+  // 25 Nov 2026 (owner: "969 couldn't be read — Website timed out"):
+  // a timed-out batch is split in two and read again, so a slow website still gets read.
+  const bigSlow = { calls: [], async findProductsBySkus(list, opts) { bigSlow.calls.push({ n: list.length, t: opts?.timeoutMs }); if (list.length > 25) throw new Error('Website timed out'); return list.map((s, i) => ({ id: i, sku: s, stock_quantity: 1, manage_stock: true, status: 'publish' })); } };
+  const healed = await fetchWebsiteStock(bigSlow, many, { deadline: Date.now() + 20000 });
+  check('timed-out batches are split and read again → nothing left unread', healed.unknown.size === 0 && healed.map.size === 250 && healed.errors.length === 0, JSON.stringify({ unknown: healed.unknown.size, errors: healed.errors }));
+  check('bulk reads get the longer read timeout (≤ 15 s), never the 5 s single-lookup one', bigSlow.calls.every((c) => c.t > 5000 && c.t <= 15000), JSON.stringify(bigSlow.calls.slice(0, 3)));
+  const refused = { calls: 0, async findProductsBySkus() { refused.calls += 1; throw new Error('Website returned 401'); } };
+  await fetchWebsiteStock(refused, many.slice(0, 50));
+  check('a refusal (not a timeout) is not retried', refused.calls === 1);
+  const always = { async findProductsBySkus() { throw new Error('Website timed out'); } };
+  const down = await fetchWebsiteStock(always, many, { deadline: Date.now() + 20000 });
+  check('website down → every SKU unknown, errors summarised (not one line per batch)', down.unknown.size === 250 && down.errors.length <= 2, JSON.stringify(down.errors));
+  const nearEnd = { calls: [], async findProductsBySkus(list, opts) { nearEnd.calls.push(opts?.timeoutMs); return []; } };
+  await fetchWebsiteStock(nearEnd, many.slice(0, 50), { deadline: Date.now() + 8000 });
+  check('a read never waits past the deadline (timeout trimmed to the time left)', nearEnd.calls.length === 1 && nearEnd.calls[0] <= 8000, JSON.stringify(nearEnd.calls));
 
   // 3. comparison
   const rows = compareWithWebsite(PORTAL, site);
@@ -213,8 +230,22 @@ async function main() {
     run: async (c, opts) => { order.push(['run', opts.budgetMs]); return { ok: true }; },
     driftReport: async (c, opts) => { order.push(['drift', opts.deadline]); return { ok: true }; },
   });
-  check('Monday: stock retries run FIRST with the full budget, the report after', order[0]?.[0] === 'run' && order[0][1] === 45000 && order[1]?.[0] === 'drift', JSON.stringify(order));
-  check('… and the report gets a deadline inside the 60 s function limit', typeof order[1]?.[1] === 'number' && order[1][1] <= Date.now() + 56000);
+  // 25 Nov 2026: with the full 45 s the report was left ~10 s (765 / 965 unread) — Mondays cap retries at 20 s.
+  check('Monday: stock retries run FIRST (capped at 20 s), the report after', order[0]?.[0] === 'run' && order[0][1] === 20000 && order[1]?.[0] === 'drift', JSON.stringify(order));
+  check('… and the report deadline is measured from the start, inside the 60 s limit', typeof order[1]?.[1] === 'number' && order[1][1] <= Date.now() + 52000);
+  const tue = [];
+  await handleWebsiteStockCron({ method: 'GET', headers: { authorization: 'Bearer s3' } }, fakeRes(), {
+    getClient, env: { CRON_SECRET: 's3' }, now: new Date('2026-11-23T20:00:00Z'),
+    run: async (c, opts) => { tue.push(opts.budgetMs); return { ok: true }; },
+    driftReport: async () => ({ ok: true }),
+  });
+  check('other days: retries keep the full 45 s', tue[0] === 45000, JSON.stringify(tue));
+
+  // review 25 Nov 2026: a timeout while the body downloads is still "Website timed out" (→ split + retry)
+  const bodyTimeout = async () => ({ ok: true, status: 200, json: async () => { const e = new Error('The operation was aborted due to timeout'); e.name = 'TimeoutError'; throw e; } });
+  let bodyMsg = '';
+  try { await createWooClient({ env: ENV, fetch: bodyTimeout }).findProductsBySkus(['A']); } catch (e) { bodyMsg = e.message; }
+  check('timeout during the body download → "Website timed out"', bodyMsg === 'Website timed out', bodyMsg);
 
   let releasedBeforeRead = null;
   const db2 = fakeDb(PORTAL);
