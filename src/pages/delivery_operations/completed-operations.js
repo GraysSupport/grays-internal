@@ -5,6 +5,26 @@ import DeliveryTabs from '../../components/DeliveryTabs';
 import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
 
 const PAGE_SIZE = 20;
+const SHOW_BOTH = 'Both';
+const SHOW_LABEL = { [SHOW_BOTH]: 'Completed & Cancelled', Completed: 'Completed', Cancelled: 'Cancelled' };
+
+// The API builds each status's item list its own way (a cancelled WO lists the items the cancel
+// took off it), so "both" loads the two lists separately and merges them, newest first.
+async function loadStatus(status) {
+  const res = await fetch(`/api/workorder?status=${status}`, { headers: identityHeaders() });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || 'Failed to load');
+  return (data || []).map((w) => ({ ...w, status: w.status || status }));
+}
+
+function StatusBadge({ status }) {
+  const cancelled = status === 'Cancelled';
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${cancelled ? 'bg-gray-100 text-gray-700 ring-gray-300' : 'bg-green-50 text-green-700 ring-green-200'}`}>
+      {cancelled ? 'Cancelled' : 'Completed'}
+    </span>
+  );
+}
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -33,7 +53,8 @@ export default function CompletedOperationsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   // G23: the same list for cancelled workorders (owner, 30 Oct 2026).
-  const [show, setShow] = useState('Completed');
+  // 25 Nov 2026 (owner): the default shows both together so one search finds either.
+  const [show, setShow] = useState(SHOW_BOTH);
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
   // G17: workshop logins (technician / workshop / WK) get no balances.
@@ -48,15 +69,21 @@ export default function CompletedOperationsPage() {
     let mounted = true;
     const load = async () => {
       setLoading(true);
-      toast.loading(`Loading ${show.toLowerCase()} operations...`, { id: 'ops-load' });
+      const label = SHOW_LABEL[show];
+      toast.loading(`Loading ${label.toLowerCase()} operations...`, { id: 'ops-load' });
       try {
-        const res = await fetch(`/api/workorder?status=${show}`, { headers: identityHeaders() });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || 'Failed to load');
-        if (mounted) setRows(data || []);
-        toast.success(`${show} operations loaded`, { id: 'ops-load' });
+        const statuses = show === SHOW_BOTH ? ['Completed', 'Cancelled'] : [show];
+        const lists = await Promise.all(statuses.map(loadStatus));
+        const merged = lists.flat().sort((a, b) => new Date(b.date_created || 0) - new Date(a.date_created || 0));
+        if (mounted) {
+          setRows(merged);
+          toast.success(`${label} operations loaded`, { id: 'ops-load' });
+        }
       } catch (e) {
-        toast.error(e.message || 'Failed to load', { id: 'ops-load' });
+        if (mounted) {
+          setRows([]); // never leave the previous view's rows under the new heading
+          toast.error(e.message || 'Failed to load', { id: 'ops-load' });
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -77,6 +104,7 @@ export default function CompletedOperationsPage() {
         w.delivery_state ?? '',
         w.salesperson ?? '',
         w.notes ?? '',
+        w.status ?? '',
         itemsStr,
       ].join(' ').toLowerCase().includes(q);
     });
@@ -117,14 +145,15 @@ export default function CompletedOperationsPage() {
                 />
               </div>
               <div className="hidden sm:flex justify-center">
-                <h2 className="text-lg font-semibold">Operations {show}</h2>
+                <h2 className="text-lg font-semibold">Operations {SHOW_LABEL[show]}</h2>
               </div>
               <div className="sm:hidden">
-                <h2 className="text-lg font-semibold text-center">Operations {show}</h2>
+                <h2 className="text-lg font-semibold text-center">Operations {SHOW_LABEL[show]}</h2>
               </div>
               <label className="flex items-center gap-2 text-sm sm:justify-self-end">
                 <span>Show</span>
                 <select aria-label="Show completed or cancelled" className="rounded-lg border px-3 py-2" value={show} onChange={(e) => { setShow(e.target.value); setPage(1); }}>
+                  <option value={SHOW_BOTH}>Completed &amp; Cancelled</option>
                   <option value="Completed">Completed</option>
                   <option value="Cancelled">Cancelled</option>
                 </select>
@@ -136,6 +165,7 @@ export default function CompletedOperationsPage() {
                 <thead className="bg-gray-100">
                   <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
                     <th className="px-4 py-3 w-20">Invoice</th>
+                    <th className="px-4 py-3 w-28">Status</th>
                     <th className="px-4 py-3 w-28">WO Date</th>
                     <th className="px-4 py-3 w-36">Name</th>
                     <th className="px-4 py-3 w-28">Suburb</th>
@@ -150,12 +180,12 @@ export default function CompletedOperationsPage() {
                 <tbody className="divide-y divide-gray-100">
                   {loading && (
                     <tr>
-                      <td colSpan={isWorkshop ? 9 : 10} className="px-4 py-6 text-center text-sm">Loading…</td>
+                      <td colSpan={isWorkshop ? 10 : 11} className="px-4 py-6 text-center text-sm">Loading…</td>
                     </tr>
                   )}
                   {!loading && pageRows.length === 0 && (
                     <tr>
-                      <td colSpan={isWorkshop ? 9 : 10} className="px-4 py-6 text-center text-sm">No completed work orders.</td>
+                      <td colSpan={isWorkshop ? 10 : 11} className="px-4 py-6 text-center text-sm">No work orders.</td>
                     </tr>
                   )}
                   {pageRows.map((w) => {
@@ -168,6 +198,7 @@ export default function CompletedOperationsPage() {
                         onClick={() => navigate(`/delivery_operations/workorder/${w.workorder_id}`)}
                       >
                         <td className="px-4 py-3 text-sm font-medium w-20">{w.invoice_id ?? '—'}</td>
+                        <td className="px-4 py-3 text-sm w-28"><StatusBadge status={w.status} /></td>
                         <td className="px-4 py-3 text-sm w-28">{formatDate(w.date_created)}</td>
                         <td className="px-4 py-3 text-sm w-36">{w.customer_name ?? '—'}</td>
                         <td className="px-4 py-3 text-sm w-28">{w.delivery_suburb ?? '—'}</td>
