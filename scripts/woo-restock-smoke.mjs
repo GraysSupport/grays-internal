@@ -138,7 +138,12 @@ function fakeDb({ hasKind = true, salesperson = 'JS', ecommerce = false, woStatu
       // --- the sync (lib/wooStock.js)
       if (!/COUNT\(/.test(t) && /^SELECT .* FROM woo_stock_outbox (o )?WHERE workorder_id = \$1 AND status IN \('pending', 'failed'\)/i.test(t)) {
         const rows = st.outbox.filter((x) => x.workorder_id === params[0] && ['pending', 'failed'].includes(x.status))
-          .map((x) => ({ ...x, ...(/reverses_status/.test(t) ? { reverses_status: st.outbox.find((y) => y.id === x.reverses_id)?.status ?? null } : {}) }));
+          .map((x) => {
+            const rev = st.outbox.find((y) => y.id === x.reverses_id);
+            return { ...x,
+              ...(/reverses_status/.test(t) ? { reverses_status: rev?.status ?? null } : {}),
+              ...(/reverses_action/.test(t) ? { reverses_action: json(rev?.result)?.action ?? null } : {}) };
+          });
         return res(rows);
       }
       if (/^SELECT 1 FROM workorder_items WHERE workorder_id = \$1 AND product_id = \$2/i.test(t)) {
@@ -245,19 +250,115 @@ console.log('E-D1b — no website record (workorder from before G25 went live)')
   check('E-Commerce not ticked → GS flagged "update the website by hand"', n === 0 && incs(db)[0]?.status === 'needs_human' && /by hand/i.test(incs(db)[0].last_error));
 }
 
-console.log('E-D2 — website orders (salesperson WB) are never pushed back');
+// Owner, 25 Nov 2026 (replaces E-D2): a cancelled WEBSITE order (salesperson WB) puts its stock
+// back on the website too — the website order took it, so the portal gives it back with the
+// back-in-stock treatment. Example: staging workorder 754, PRE-RK004 ×1.
+console.log('website orders (salesperson WB) are given back on cancel (owner, 25 Nov 2026)');
 {
   const db = fakeDb({ salesperson: 'WB', ecommerce: true });
   db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 3, after: 3 } });
   const n = await cancelItem(db);
-  check('WB → nothing queued', n === 0 && incs(db).length === 0);
-  check('…log says cancel/refund it in WooCommerce', db.st.logs.some((l) => /WooCommerce/.test(l) && /refund/i.test(l)), JSON.stringify(db.st.logs));
+  check('WB, sale recorded (website already took it) → one add-back queued, linked to the sale', n === 1 && incs(db).length === 1 && incs(db)[0].reverses_id === 1 && incs(db)[0].status === 'pending', JSON.stringify(db.st.outbox));
+  check('…marked as a website order', incs(db)[0].result?.website_order === true, JSON.stringify(incs(db)[0]));
+  check('…never the old "refund it in WooCommerce" message', !db.st.logs.some((l) => /refund/i.test(l)), JSON.stringify(db.st.logs));
+  const again = await cancelItem(db);
+  check('…and never given back twice', again === 0 && incs(db).length === 1);
 }
 {
   const db = fakeDb({ salesperson: 'JS', ecommerce: true });
   db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'soldout_only', before: 0, after: 0 } });
   const n = await cancelItem(db);
-  check('decrease recorded as a website sale (soldout_only) → not pushed either', n === 0 && incs(db).length === 0);
+  check('sale recorded as a website sale (soldout_only) → given back too', n === 1 && incs(db)[0].reverses_id === 1 && incs(db)[0].result?.website_order === true);
+}
+{
+  // Workorder 754 on staging: WB, PRE-RK004 ×1, the sale was a dry run ("0 → 0, sold out").
+  const db = fakeDb({ salesperson: 'WB', woStatus: 'Cancelled', items: [{ product_id: 'PRE-RK004', status: 'Canceled' }] });
+  db.add({ sku: 'PRE-RK004', qty: 1, status: 'dry_run', result: { action: 'soldout_only', before: 0, after: 0 } });
+  const n = await queueWebsiteAddBack(db, { workorderId: 7, items: [{ product_id: 'PRE-RK004', quantity: 1, is_custom: false }], salesperson: 'WB', ecommerce: false }, { env: ON });
+  check('754: WB sale was a dry run, E-Commerce not ticked → still queued (no "by hand" flag)', n === 1 && incs(db).length === 1 && incs(db)[0].status === 'pending', JSON.stringify(db.st.outbox));
+  const woo = createMockWoo([{ ...product(0, true, 'PRE-RK004', 35047), price: '1795', name: 'Rack' }]);
+  const s = await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  const w = woo.products.get(35047);
+  check('754 live: the website order really took the stock, so the add-back is NOT held as a dry run', s.sent === 1 && incs(db)[0].status === 'sent', JSON.stringify(s));
+  check('754: PRE-RK004 back in stock — 0 → 1, Sold off, Add to Cart + Enquire on, published now', w.stock_quantity === 1 && w.meta.sold === '0' && w.meta.add_to_cart_button === '1' && w.meta.enquire_button === '1' && w.date_created_gmt === '2026-11-20T03:00:00', JSON.stringify(w));
+  check('754: price and title untouched', w.price === '1795' && w.name === 'Rack');
+}
+{
+  const db = fakeDb({ salesperson: 'WB', woStatus: 'Cancelled' });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 3, after: 3 } });
+  await cancelItem(db);
+  const woo = createMockWoo([product(2, false)]);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: DRY, now });
+  check('WB with the dry-run switch on → "would add", writes nothing', woo.writes === 0 && incs(db)[0].status === 'dry_run' && db.st.logs.some((l) => /would add 1 back/i.test(l)), JSON.stringify(db.st.logs));
+}
+{
+  const db = fakeDb({ salesperson: 'WB', ecommerce: false });
+  const n = await cancelItem(db);
+  check('WB, no website record at all → still given back (the website order took it), not flagged', n === 1 && incs(db)[0].status === 'pending' && incs(db)[0].reverses_id == null);
+}
+{
+  const db = fakeDb({ salesperson: 'WB' });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'pending' });
+  const n = await cancelItem(db);
+  check('WB, sale not recorded yet → sale closed off AND the stock given back', n === 1 && db.st.outbox[0].status === 'cancelled' && incs(db)[0].status === 'pending');
+}
+{
+  const db = fakeDb({ salesperson: 'WB', ecommerce: true });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'needs_human', result: null, last_error: "The website didn't confirm" });
+  const n = await cancelItem(db);
+  check('WB, sale uncertain → GS flagged, never automatic (unchanged)', n === 0 && incs(db)[0].status === 'needs_human');
+}
+{
+  // Reopen after a WB add-back: the website must come down again exactly once (E-D4), even
+  // though a WB SALE never reduces it.
+  const db = fakeDb({ salesperson: 'WB', items: [{ product_id: 'TEC-TR600', status: 'Canceled' }] });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 2, after: 2 } });
+  const woo = createMockWoo([product(2, false)]);
+  db.st.wo.status = 'Cancelled';
+  await cancelItem(db);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  check('WB cancel: website 2 → 3', woo.products.get(101).stock_quantity === 3);
+  db.st.wo.status = 'Work Ordered'; db.st.items[0].status = 'In Workshop';
+  const r = await retakeWebsiteStock(db, { workorderId: 7, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  check('WB reopen: website 3 → 2, once', r === 1 && woo.products.get(101).stock_quantity === 2, JSON.stringify(db.st.outbox));
+}
+{
+  // Review 25 Nov #1: cancel → reopen (retake NOT sent yet) → cancel again must not give back twice.
+  const db = fakeDb({ salesperson: 'WB', woStatus: 'Cancelled', items: [{ product_id: 'TEC-TR600', status: 'Canceled' }] });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 2, after: 2 } });
+  const woo = createMockWoo([product(2, false)]);
+  await cancelItem(db);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  db.st.wo.status = 'Work Ordered'; db.st.items[0].status = 'In Workshop';
+  await retakeWebsiteStock(db, { workorderId: 7, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  // website down: the retake stays pending — then the item is cancelled again
+  db.st.wo.status = 'Cancelled'; db.st.items[0].status = 'Canceled';
+  const n = await cancelItem(db);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  check('WB retake still pending, cancelled again → retake closed, NO second add-back (website stays 3)', n === 0 && incs(db).length === 1 && woo.products.get(101).stock_quantity === 3, JSON.stringify(db.st.outbox));
+}
+{
+  // Review 25 Nov #2: the website-order marker survives a step that overwrites result.
+  const db = fakeDb({ salesperson: 'WB', woStatus: 'Cancelled', items: [{ product_id: 'PRE-RK004', status: 'Canceled' }] });
+  db.add({ sku: 'PRE-RK004', qty: 1, status: 'dry_run', result: { action: 'soldout_only', before: 0, after: 0 } });
+  await queueWebsiteAddBack(db, { workorderId: 7, items: [{ product_id: 'PRE-RK004', quantity: 1 }], salesperson: 'WB', ecommerce: false }, { env: ON });
+  Object.assign(incs(db)[0], { status: 'failed', result: { action: 'needs_human', gave_up: true } }); // daily give-up, then Retry
+  const woo = createMockWoo([product(0, true, 'PRE-RK004', 35047)]);
+  await syncWorkorderWebsiteStock(db, 7, { woo, env: ON, now });
+  check('marker lost from result (give-up + Retry) → still sent live, not "would add"', incs(db)[0].status === 'sent' && woo.products.get(35047).stock_quantity === 1, JSON.stringify(incs(db)[0]));
+}
+{
+  // Review 25 Nov #3: what the sale row recorded wins over the salesperson at cancel time.
+  const db = fakeDb({ salesperson: 'WB', ecommerce: true });
+  db.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'soldout', before: 0, after: 0, check: true } });
+  const n = await cancelItem(db);
+  check('JS sale needed a check, salesperson later changed to WB → still flagged, nothing automatic', n === 0 && incs(db)[0].status === 'needs_human', JSON.stringify(db.st.outbox));
+  const db2 = fakeDb({ salesperson: 'WB' });
+  db2.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'decrease', before: 3, after: 2 } });
+  await cancelItem(db2);
+  check('JS sale that really reduced the website, now WB → normal add-back (not a website order)', incs(db2).length === 1 && incs(db2)[0].result?.website_order !== true && incs(db2)[0].reverses_id === 1);
 }
 
 console.log('custom items, switches, before migration 0016');
@@ -476,7 +577,7 @@ console.log('code review fixes (20 Nov 2026)');
   const wb = fakeDb({ hasKind: false, salesperson: 'WB', ecommerce: true });
   wb.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'none', before: 3, after: 3 } });
   await cancelItem(wb);
-  check('#4 pre-0016, website order → the WooCommerce cancel/refund message (E-D2)', wb.st.logs.some((l) => /refund/i.test(l)) && !wb.st.logs.some((l) => /0016/.test(l)), JSON.stringify(wb.st.logs));
+  check('#4 pre-0016, website order → "add it back by hand" (owner, 25 Nov 2026: WB is given back too)', wb.st.logs.some((l) => /by hand/i.test(l)) && !wb.st.logs.some((l) => /refund/i.test(l)), JSON.stringify(wb.st.logs));
   const sent = fakeDb({ hasKind: false, ecommerce: true });
   sent.add({ sku: 'TEC-TR600', qty: 1, status: 'sent', result: { action: 'decrease', before: 3, after: 2 } });
   await cancelItem(sent);
