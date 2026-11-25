@@ -21,7 +21,16 @@ function DriftTable({ data }) {
         <p className="mb-2 text-sm text-amber-800">Part of the website couldn't be read: {data.errors[0]}</p>
       )}
       {rows.length === 0 ? (
-        <p className="text-sm text-gray-700">No differences — the website matches the portal.</p>
+        // 25 Nov 2026: never claim a match for products that couldn't be read.
+        Number(c.unknown) > 0 && Number(c.unknown) >= Number(c.checked) ? (
+          <p className="text-sm text-amber-800">Couldn't read the website, so nothing was compared. Try "Check now" again in a few minutes.</p>
+        ) : Number(c.unknown) > 0 ? (
+          <p className="text-sm text-gray-700">
+            No differences in the {Number(c.checked) - Number(c.unknown)} products that could be read — {c.unknown} couldn't be checked. Try "Check now" again to read the rest.
+          </p>
+        ) : (
+          <p className="text-sm text-gray-700">No differences — the website matches the portal.</p>
+        )
       ) : (
         <div className="overflow-x-auto">
           <table aria-label="Website drift" className="w-full border text-sm">
