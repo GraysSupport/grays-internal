@@ -76,15 +76,17 @@ body = buildWooUpdate({ action: 'soldout_only', after: 0 }, now);
 check('sold-out-only does the same treatment', body.stock_quantity === 0 && body.meta_data.length === 3);
 
 // --- fake pg client with an in-memory outbox ------------------------------------------
-function fakeDb({ salesperson = 'JS', outboxExists = true } = {}) {
+function fakeDb({ salesperson = 'JS', outboxExists = true, autoColumn = true } = {}) {
   const outbox = [];
   const logs = [];
   const syncLog = [];
   let ecommerce = false;
+  let autoTickedAt = null;
   let nextId = 1;
   const client = {
     outbox, logs, syncLog,
     get ecommerce() { return ecommerce; },
+    get autoTickedAt() { return autoTickedAt; },
     async query(sql, params = []) {
       const t = String(sql).replace(/\s+/g, ' ').trim();
       if (/to_regclass\('public\.woo_stock_outbox'\)/i.test(t)) return { rows: [{ t: outboxExists ? 'woo_stock_outbox' : null }], rowCount: 1 };
@@ -121,7 +123,13 @@ function fakeDb({ salesperson = 'JS', outboxExists = true } = {}) {
         const rows = outbox.filter((r) => r.workorder_id === params[0]);
         return { rows, rowCount: rows.length };
       }
-      if (/^UPDATE workorder SET ecommerce = TRUE/i.test(t)) { ecommerce = true; return { rows: [], rowCount: 1 }; }
+      if (/^UPDATE workorder SET ecommerce = TRUE/i.test(t)) {
+        if (/ecommerce_auto_ticked_at/i.test(t)) {
+          if (!autoColumn) throw Object.assign(new Error('column "ecommerce_auto_ticked_at" does not exist'), { code: '42703' });
+          if (!ecommerce) autoTickedAt = autoTickedAt || 'now';
+        }
+        ecommerce = true; return { rows: [], rowCount: 1 };
+      }
       if (/^INSERT INTO workorder_logs/i.test(t)) { logs.push({ event_type: params[1], user_id: params[2], notes: params[3] }); return { rows: [], rowCount: 1 }; }
       if (/^INSERT INTO integration_sync_log/i.test(t)) { syncLog.push(params); return { rows: [], rowCount: 1 }; }
       return { rows: [], rowCount: 0 };
@@ -153,6 +161,7 @@ console.log('after-commit sync (mock WooCommerce)');
   check('website stock 6 → 5', woo.products.get(101).stock_quantity === 5);
   check('last unit → website product marked sold', woo.products.get(102).stock_quantity === 0 && woo.products.get(102).meta.sold === '1');
   check('E-Commerce flag ticked automatically', db.ecommerce === true && s.ticked === true);
+  check('automatic tick is stamped for the GS one-time popup', db.autoTickedAt !== null);
   check('workorder log says what changed', db.logs.some((l) => /TEC-TR600 6 → 5/.test(l.notes)), JSON.stringify(db.logs));
   check('logged as the Website user', db.logs.every((l) => l.user_id === 'WB'));
   check('sync recorded in integration_sync_log', db.syncLog.length === 2);
@@ -165,6 +174,7 @@ console.log('after-commit sync (mock WooCommerce)');
   check('dry run writes nothing to the website', woo.products.get(101).stock_quantity === 6 && woo.writes === 0);
   check('dry run records "would set"', db.outbox[0].status === 'dry_run' && db.logs.some((l) => /would set TEC-TR600 6 → 5/.test(l.notes)), JSON.stringify(db.logs));
   check('dry run never ticks the E-Commerce flag', db.ecommerce === false && s.ticked === false);
+  check('dry run never stamps the one-time popup', db.autoTickedAt === null);
 }
 {
   const db = fakeDb();
@@ -189,6 +199,14 @@ console.log('after-commit sync (mock WooCommerce)');
   await queueWooStock(db, { workorderId: 11, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
   await syncWorkorderWebsiteStock(db, 11, { woo, env: ON, now });
   check('WB order: website untouched but flag ticked', woo.writes === 0 && db.outbox[0].status === 'sent' && db.ecommerce === true);
+}
+{
+  // Migration 0018 not on this database yet → the tick still happens, nothing thrown.
+  const db = fakeDb({ autoColumn: false });
+  const woo = createMockWoo([{ id: 101, sku: 'TEC-TR600', stock_quantity: 6, manage_stock: true }]);
+  await queueWooStock(db, { workorderId: 13, items: [{ product_id: 'TEC-TR600', quantity: 1 }] }, { env: ON });
+  const s = await syncWorkorderWebsiteStock(db, 13, { woo, env: ON, now });
+  check('before migration 0018 the flag is still ticked (42703-safe)', db.ecommerce === true && s.ticked === true && db.autoTickedAt === null);
 }
 {
   const db = fakeDb();
