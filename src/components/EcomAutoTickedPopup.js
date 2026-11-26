@@ -43,7 +43,7 @@ export default function EcomAutoTickedPopup({ onOpen }) {
           <div>
             <h2 id="ecom-auto-title" className="text-lg font-semibold">Website stock updated automatically</h2>
             <p className="text-sm text-gray-600">
-              The website stock for these workorders was updated and E-Commerce was ticked off for you.
+              The website stock for these workorders was updated and E-Commerce has been ticked for you.
               Open each one to enter the value of the sold items. Once you've opened a workorder it won't show here again.
             </p>
           </div>

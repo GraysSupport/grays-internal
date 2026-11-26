@@ -112,6 +112,11 @@ console.log('workorder handler routes');
   check('GS opening a workorder marks it seen', r.statusCode === 200 && r.payload?.marked === true && db.wos[1].ecommerce_auto_seen_at === 'now', JSON.stringify(r));
   r = res();
   await handler({ method: 'POST', query: { resource: 'ecommerce-auto-seen', id: '1' }, headers: { authorization: tok('KM', ['admin']) }, body: {} }, r, [], deps);
+  r = res();
+  await handler({ method: 'POST', query: { resource: 'ecommerce-auto-seen' }, headers: { authorization: tok('GS', ['superadmin']) }, body: {} }, r, [], deps);
+  check('GS POST without a workorder id → 400', r.statusCode === 400);
+  r = res();
+  await handler({ method: 'POST', query: { resource: 'ecommerce-auto-seen', id: '1' }, headers: { authorization: tok('KM', ['admin']) }, body: {} }, r, [], deps);
   check('someone else opening it does not mark it seen', r.statusCode === 403 && db.wos[0].ecommerce_auto_seen_at === null);
 }
 

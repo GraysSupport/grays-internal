@@ -523,7 +523,8 @@ export default function ActiveWorkordersPage() {
       </div>
 
       {/* Owner, 26 Nov 2026: one-time GS popup — workorders the website update ticked by itself. */}
-      {isGS && <EcomAutoTickedPopup onOpen={(id) => navigate(`./workorder/${id}`)} />}
+      {/* Shown after the "Ecommerce checks pending" popup is closed, so two never stack. */}
+      {isGS && !(showEcomPopup && ecommerceUnchecked.length > 0) && <EcomAutoTickedPopup onOpen={(id) => navigate(`./workorder/${id}`)} />}
 
       {/* ✅ GS popup for ecommerce=false */}
       {isGS && showEcomPopup && ecommerceUnchecked.length > 0 && (

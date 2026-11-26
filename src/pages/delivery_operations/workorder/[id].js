@@ -379,8 +379,10 @@ export default function WorkorderDetailPage() {
   const ecomAutoSeenSent = useRef(null);
   useEffect(() => {
     if (!shouldMarkEcomAutoSeen(wo, isGS) || ecomAutoSeenSent.current === wo.workorder_id) return;
-    ecomAutoSeenSent.current = wo.workorder_id;
-    markEcomAutoSeen(wo.workorder_id);
+    const sentFor = wo.workorder_id;
+    ecomAutoSeenSent.current = sentFor;
+    // A failed call (offline / expired login) is allowed to try again on the next load of this page.
+    markEcomAutoSeen(sentFor).then((ok) => { if (!ok && ecomAutoSeenSent.current === sentFor) ecomAutoSeenSent.current = null; });
   }, [wo, isGS]);
   // G17 (Nick, 19 Oct 2026): technicians, the workshop role and the WK kiosk see the job, not the
   // money, and may only change item status (never Canceled) and serials. The server enforces the
