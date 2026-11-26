@@ -5,6 +5,7 @@ import { SlidersHorizontal } from 'lucide-react';
 import DeliveryTabs from '../../components/DeliveryTabs';
 import { currentUserIsWorkshop, identityHeaders } from '../../utils/workshopAccess';
 import { websiteStockSummary } from '../../utils/websiteStock'; // G25 increment 2
+import EcomAutoTickedPopup from '../../components/EcomAutoTickedPopup'; // GS one-time popup (26 Nov 2026)
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -520,6 +521,10 @@ export default function ActiveWorkordersPage() {
           </div>
         </main>
       </div>
+
+      {/* Owner, 26 Nov 2026: one-time GS popup — workorders the website update ticked by itself. */}
+      {/* Shown after the "Ecommerce checks pending" popup is closed, so two never stack. */}
+      {isGS && !(showEcomPopup && ecommerceUnchecked.length > 0) && <EcomAutoTickedPopup onOpen={(id) => navigate(`./workorder/${id}`)} />}
 
       {/* ✅ GS popup for ecommerce=false */}
       {isGS && showEcomPopup && ecommerceUnchecked.length > 0 && (
