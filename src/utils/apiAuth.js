@@ -13,7 +13,9 @@
 
 import { getStoredUser, getToken } from './auth.js';
 
-const GATED_ROOTS = ['workorder', 'delivery', 'customers', 'customer', 'waitlist', 'waitlists', 'lots', 'lot'];
+// SEC1 (27 Nov 2026): + products, collections, users. Not access-log, so a sign-out never loops.
+const GATED_ROOTS = ['workorder', 'delivery', 'customers', 'customer', 'waitlist', 'waitlists', 'lots', 'lot',
+  'products', 'product', 'collections', 'users'];
 const REFRESH_URL = '/api/auth/refresh';
 const RENEW_WINDOW_MS = 10 * 60 * 1000;
 const NO_REDIRECT_PATHS = ['/', '/scan'];

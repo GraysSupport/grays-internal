@@ -27,11 +27,12 @@ test('only same-origin /api calls are treated as API calls', () => {
   expect(isApiUrl(new Request('/api/lots?sku=1'))).toBe(true);
 });
 
-test('the five login-only areas are recognised (not login or products)', () => {
-  for (const u of ['/api/workorder', '/api/delivery?x=1', '/api/customers/7/journey', '/api/customer', '/api/waitlist', '/api/waitlists', '/api/lots?sku=1', '/api/lot']) {
+test('the login-only areas are recognised (SEC1 added products, collections, users — not login or access-log)', () => {
+  for (const u of ['/api/workorder', '/api/delivery?x=1', '/api/customers/7/journey', '/api/customer', '/api/waitlist', '/api/waitlists', '/api/lots?sku=1', '/api/lot',
+    '/api/products', '/api/product?sku=X', '/api/collections?id=3', '/api/users']) {
     expect(isLoginGatedUrl(u)).toBe(true);
   }
-  for (const u of ['/api/login', '/api/products', '/api/auth/refresh', '/api/workorders-report']) {
+  for (const u of ['/api/login', '/api/access-log', '/api/brands', '/api/auth/refresh', '/api/workorders-report']) {
     expect(isLoginGatedUrl(u)).toBe(false);
   }
 });
