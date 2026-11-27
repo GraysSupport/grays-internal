@@ -6,14 +6,16 @@
 //   - a login within 10 minutes of expiry is renewed (POST /api/auth/refresh) before the call —
 //     App.js also asks every 5 s while the session is active — so people working all day are
 //     not signed out every hour. The WK workshop kiosk does not renew: one 12 h shift;
-//   - a 401 from one of the five login-only areas means the login is dead: clear it and go to
+//   - a 401 from one of the login-only areas (GATED_ROOTS) means the login is dead: clear it and go to
 //     the sign-in page (never from the sign-in page itself or the public /scan page).
 //
 // The server is the authority (lib/apiLogin.js); this only keeps the browser in step with it.
 
 import { getStoredUser, getToken } from './auth.js';
 
-const GATED_ROOTS = ['workorder', 'delivery', 'customers', 'customer', 'waitlist', 'waitlists', 'lots', 'lot'];
+// SEC1 (27 Nov 2026): + products, collections, users. Not access-log, so a sign-out never loops.
+const GATED_ROOTS = ['workorder', 'delivery', 'customers', 'customer', 'waitlist', 'waitlists', 'lots', 'lot',
+  'products', 'product', 'collections', 'users'];
 const REFRESH_URL = '/api/auth/refresh';
 const RENEW_WINDOW_MS = 10 * 60 * 1000;
 const NO_REDIRECT_PATHS = ['/', '/scan'];

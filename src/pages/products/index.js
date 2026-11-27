@@ -87,11 +87,8 @@ export default function ProductsPage() {
   const fetchProducts = useCallback(async () => {
     toast.loading('Loading products...', { id: 'product-load' });
     try {
-      const res = await fetch('/api/products', {
-        headers: {
-          'x-user-access': String(storedUser?.access || ''),
-        },
-      });
+      // SEC1: the server decides who sees cost from the signed login (added by utils/apiAuth.js).
+      const res = await fetch('/api/products');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setProducts(data);
@@ -99,7 +96,7 @@ export default function ProductsPage() {
     } catch (err) {
       toast.error(err.message, { id: 'product-load' });
     }
-  }, [storedUser?.access]);
+  }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem('user');

@@ -53,8 +53,8 @@ console.log('P7 — routes that need a login');
 check('the five areas (and their aliases) are login-only',
   ['workorder', 'delivery', 'customers', 'customer', 'waitlist', 'waitlists', 'lots', 'lot']
     .every((r) => LOGIN_REQUIRED_ROOTS.includes(r)));
-check('login, products, brands are NOT in scope (unchanged)',
-  !['auth', 'login', 'products', 'brands', 'access-log'].some((r) => LOGIN_REQUIRED_ROOTS.includes(r)));
+check('login, brands and change-password are NOT in scope (SEC1 added products, collections, users, access-log)',
+  !['auth', 'login', 'brands', 'change-password'].some((r) => LOGIN_REQUIRED_ROOTS.includes(r)));
 
 console.log('P7 — the public /scan lot lookup stays open (D7)');
 check('GET /api/lots?lot_number= is public', isPublicApiRequest('lots', req({ query: { lot_number: 'L00042' } })));
@@ -93,7 +93,7 @@ for (const [label, headers] of [
   check('the public lot lookup passes with no token', apiLoginGate('lots', r).ok === true);
   check('… and claims no identity', r.headers['x-user-id'] === undefined);
 }
-check('a route out of scope passes untouched', apiLoginGate('products', req({})).ok === true);
+check('a route out of scope passes untouched', apiLoginGate('brands', req({})).ok === true); // SEC1: products is now gated
 
 console.log('P7 — the router refuses before any database work');
 for (const [url, query] of [

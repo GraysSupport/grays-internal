@@ -18,6 +18,8 @@ import lotsHandler from '../lib/handlers/lots.js';
 import evidenceHandler from '../lib/handlers/evidence.js';
 import { handleDirector } from '../lib/director.js';
 import { handleFreeWeights } from '../lib/freeWeights.js';
+import { handleProducts } from '../lib/products.js'; // SEC1
+import { handleAccessLog } from '../lib/accessLog.js'; // SEC1
 import { buildJourney } from '../lib/customerJourney.js';
 import { handleWebsiteStockCron } from '../lib/wooStockRetry.js';
 import { handleWebsiteStock, handleWebsiteStockDrift } from '../lib/websiteStockView.js';
@@ -49,7 +51,8 @@ export default async function handler(req, res) {
   const parts = segs(req);
   const [root, sub] = parts;
   try {
-    // P7: workorder / delivery / customers / waitlist / lots need a valid login (the public
+    // P7 + SEC1: workorder / delivery / customers / waitlist / lots, and since SEC1 (27 Nov 2026)
+    // products / collections / users / access-log, need a valid login (the public
     // /scan lot lookup excepted). Refused here, before any database work.
     const login = apiLoginGate(root, req);
     if (!login.ok) return res.status(login.status).json({ error: login.error });
@@ -67,7 +70,7 @@ export default async function handler(req, res) {
 
       case 'products':
       case 'product':
-        return handleProducts(req, res, sub);
+        return handleProducts(req, res, sub, { getClient: getClientWithTimezone });
 
       case 'waitlist':
       case 'waitlists':
@@ -95,7 +98,7 @@ export default async function handler(req, res) {
         return handleUsers(req, res);
 
       case 'access-log':
-        return handleAccessLog(req, res);
+        return handleAccessLog(req, res, { getClient: getClientWithTimezone });
 
       // Relocated standalone functions (delegate to the moved handlers verbatim).
       // These read req.method/req.query/req.body only, so routing through the
@@ -247,67 +250,8 @@ async function handleCustomers(req, res, rest = []) {
   }
 }
 
-function isSuperadminFromReq(req) {
-  // Your auth currently returns "access" (not "role")
-  // We’ll treat access === 'superadmin' as the superadmin flag.
-  const access = (req.headers['x-user-access'] || '').toString().toLowerCase();
-  return access === 'superadmin';
-}
-
-
 /* ---------- PRODUCTS ---------- */
-async function handleProducts(req, res, subSku) {
-  const client = await getClientWithTimezone();
-  try {
-    const { method, query, body } = req;
-    const sku = subSku ?? query.sku;
-
-    if (method === 'GET') {
-      if (sku) {
-        const superadmin = isSuperadminFromReq(req);
-        const r = await client.query(
-          superadmin
-            ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product WHERE sku = $1'
-            : 'SELECT sku, brand, name, stock, price FROM product WHERE sku = $1',
-          [sku]
-        );
-
-        if (!r.rows.length) return res.status(404).json({ error: 'Product not found' });
-        return res.status(200).json(r.rows[0]);
-      }
-      const superadmin = isSuperadminFromReq(req);
-      const r = await client.query(
-        superadmin
-          ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product'
-          : 'SELECT sku, brand, name, stock, price FROM product'
-      );
-      return res.status(200).json(r.rows);
-    }
-
-    if (method === 'POST') {
-      const { sku, brand, name, stock, price } = body;
-      await client.query(
-        'INSERT INTO product (sku, brand, name, stock, price) VALUES ($1,$2,$3,$4,$5)',
-        [sku, brand, name, stock, price]
-      );
-      return res.status(201).json({ message: 'Product created' });
-    }
-
-    if (method === 'PUT') {
-      if (!sku) return res.status(400).json({ error: 'SKU is required' });
-      const { name, brand, stock, price } = body;
-      await client.query(
-        'UPDATE product SET name=$1, brand=$2, stock=$3, price=$4 WHERE sku=$5',
-        [name, brand, stock, price, sku]
-      );
-      return res.status(200).json({ message: 'Product updated' });
-    }
-
-    return methodNotAllowed(res, ['GET', 'POST', 'PUT']);
-  } finally {
-    client.release();
-  }
-}
+// SEC1 (27 Nov 2026): moved to lib/products.js — cost now decided from the signed login.
 
 /* ---------- FREE WEIGHTS (G21) ---------- */
 async function handleFreeWeightsRoute(req, res) {
@@ -573,7 +517,7 @@ async function handleUsers(req, res) {
       // F0b: return each user's full role set alongside the legacy columns.
       // Falls back to [access] if user_roles is absent (undefined_table).
       // F23: SELECT an explicit allow-list of columns (never a wildcard select) — the users
-      // list is fetched token-less by the workorder/technician dropdowns, so it must never
+      // list feeds the workorder/technician dropdowns (login required since SEC1), so it must never
       // carry the bcrypt password hash. (id is the PK, so the explicit columns stay valid
       // under GROUP BY u.id via functional dependency.)
       try {
@@ -661,19 +605,4 @@ async function handleUsers(req, res) {
 }
 
 /* ---------- ACCESS LOG ---------- */
-async function handleAccessLog(req, res) {
-  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
-  const client = await getClientWithTimezone();
-  try {
-    const { userId, description } = req.body;
-    if (!userId || !description) return res.status(400).json({ error: 'Missing data' });
-
-    await client.query(
-      'INSERT INTO access_log (user_id, description) VALUES ($1,$2)',
-      [userId, description]
-    );
-    return res.status(200).json({ message: 'Log created' });
-  } finally {
-    client.release();
-  }
-}
+// SEC1 (27 Nov 2026): moved to lib/accessLog.js — recorded under the signed user id.
