@@ -155,4 +155,45 @@ for (const [label, h, query, table] of [
   check(`a superadmin can still delete a ${label}`, res.statusCode < 400 && db.sql.some((q) => new RegExp(`^DELETE FROM ${table}\\b`, 'i').test(q)), `${res.statusCode} ${JSON.stringify(res.body)}`);
 }
 
+console.log('SEC1 — no dispatch while money is owing');
+const { balanceOwing, owingMessage } = await import('../lib/deliveryBalance.js');
+check('message formats whole dollars without cents', owingMessage(2125) === 'Cannot set to "Delivery Completed": $2,125 is still owing. The balance must be paid in full before dispatch.', owingMessage(2125));
+check('…and cents when there are some', owingMessage(2125.5).includes('$2,125.50'));
+check('no workorder → nothing owing', (await balanceOwing({ query: () => { throw new Error('no query'); } }, null)) === 0);
+function deliveryDb({ balance, prev = 'Booked for Delivery', workorderId = 41 }) {
+  const db = {
+    sql: [], release() {},
+    async query(text) {
+      const t = String(text).replace(/\s+/g, ' ').trim();
+      db.sql.push(t);
+      if (/FROM delivery WHERE delivery_id = \$1/i.test(t)) return { rows: [{ delivery_id: 7, workorder_id: workorderId, delivery_status: prev, cur_removalist_id: 3, cur_delivery_date: '2026-11-28' }] };
+      if (/SELECT outstanding_balance FROM workorder/i.test(t)) return { rows: [{ outstanding_balance: balance }] };
+      if (/^INSERT INTO delivery/i.test(t)) return { rows: [{ delivery_id: 9, workorder_id: workorderId, delivery_status: 'Delivery Completed' }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  return db;
+}
+const completeDelivery = async (db, body = { delivery_status: 'Delivery Completed' }) => {
+  const res = fakeRes();
+  await deliveryHandler(req({ method: 'PUT', query: { id: '7' }, headers: { authorization: bearer('LG', ['logistics']), 'x-user-id': 'LG' }, body }), res, [], { getClient: async () => db });
+  return res;
+};
+{
+  const db = deliveryDb({ balance: '2125.00' });
+  const res = await completeDelivery(db);
+  check('owing $2,125 → 409 BALANCE_OWING, nothing updated', res.statusCode === 409 && res.body?.code === 'BALANCE_OWING' && !db.sql.some((q) => /^UPDATE delivery/i.test(q)), `${res.statusCode} ${JSON.stringify(res.body)}`);
+  check('…and the transaction was rolled back', db.sql.includes('ROLLBACK'));
+}
+check('paid in full → allowed', (await completeDelivery(deliveryDb({ balance: '0.00' }))).statusCode === 200);
+check('half a cent counts as paid', (await completeDelivery(deliveryDb({ balance: '0.004' }))).statusCode === 200);
+check('already completed + owing: editing notes is not blocked', (await completeDelivery(deliveryDb({ balance: '50', prev: 'Delivery Completed' }), { notes: 'x' })).statusCode === 200);
+check('a delivery with no workorder is not blocked', (await completeDelivery(deliveryDb({ balance: '50', workorderId: null }))).statusCode === 200);
+{
+  const db = deliveryDb({ balance: '300' });
+  const res = fakeRes();
+  await deliveryHandler(req({ method: 'POST', query: {}, headers: { authorization: bearer('LG', ['logistics']), 'x-user-id': 'LG' }, body: { invoice_id: 'INV-41', customer_id: 7, delivery_state: 'VIC', workorder_id: 41, delivery_status: 'Delivery Completed', removalist_id: 3, delivery_date: '2026-11-28' } }), res, [], { getClient: async () => db });
+  check('creating a delivery straight as Delivery Completed while owing → 409', res.statusCode === 409 && !db.sql.some((q) => /^INSERT INTO delivery/i.test(q)), `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+
 console.log(`\nsec1 smoke: ${passed} checks passed`);
