@@ -18,6 +18,7 @@ import lotsHandler from '../lib/handlers/lots.js';
 import evidenceHandler from '../lib/handlers/evidence.js';
 import { handleDirector } from '../lib/director.js';
 import { handleFreeWeights } from '../lib/freeWeights.js';
+import { handleProducts } from '../lib/products.js'; // SEC1
 import { buildJourney } from '../lib/customerJourney.js';
 import { handleWebsiteStockCron } from '../lib/wooStockRetry.js';
 import { handleWebsiteStock, handleWebsiteStockDrift } from '../lib/websiteStockView.js';
@@ -67,7 +68,7 @@ export default async function handler(req, res) {
 
       case 'products':
       case 'product':
-        return handleProducts(req, res, sub);
+        return handleProducts(req, res, sub, { getClient: getClientWithTimezone });
 
       case 'waitlist':
       case 'waitlists':
@@ -247,67 +248,8 @@ async function handleCustomers(req, res, rest = []) {
   }
 }
 
-function isSuperadminFromReq(req) {
-  // Your auth currently returns "access" (not "role")
-  // We’ll treat access === 'superadmin' as the superadmin flag.
-  const access = (req.headers['x-user-access'] || '').toString().toLowerCase();
-  return access === 'superadmin';
-}
-
-
 /* ---------- PRODUCTS ---------- */
-async function handleProducts(req, res, subSku) {
-  const client = await getClientWithTimezone();
-  try {
-    const { method, query, body } = req;
-    const sku = subSku ?? query.sku;
-
-    if (method === 'GET') {
-      if (sku) {
-        const superadmin = isSuperadminFromReq(req);
-        const r = await client.query(
-          superadmin
-            ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product WHERE sku = $1'
-            : 'SELECT sku, brand, name, stock, price FROM product WHERE sku = $1',
-          [sku]
-        );
-
-        if (!r.rows.length) return res.status(404).json({ error: 'Product not found' });
-        return res.status(200).json(r.rows[0]);
-      }
-      const superadmin = isSuperadminFromReq(req);
-      const r = await client.query(
-        superadmin
-          ? 'SELECT sku, brand, name, stock, price, avg_cost FROM product'
-          : 'SELECT sku, brand, name, stock, price FROM product'
-      );
-      return res.status(200).json(r.rows);
-    }
-
-    if (method === 'POST') {
-      const { sku, brand, name, stock, price } = body;
-      await client.query(
-        'INSERT INTO product (sku, brand, name, stock, price) VALUES ($1,$2,$3,$4,$5)',
-        [sku, brand, name, stock, price]
-      );
-      return res.status(201).json({ message: 'Product created' });
-    }
-
-    if (method === 'PUT') {
-      if (!sku) return res.status(400).json({ error: 'SKU is required' });
-      const { name, brand, stock, price } = body;
-      await client.query(
-        'UPDATE product SET name=$1, brand=$2, stock=$3, price=$4 WHERE sku=$5',
-        [name, brand, stock, price, sku]
-      );
-      return res.status(200).json({ message: 'Product updated' });
-    }
-
-    return methodNotAllowed(res, ['GET', 'POST', 'PUT']);
-  } finally {
-    client.release();
-  }
-}
+// SEC1 (27 Nov 2026): moved to lib/products.js — cost now decided from the signed login.
 
 /* ---------- FREE WEIGHTS (G21) ---------- */
 async function handleFreeWeightsRoute(req, res) {

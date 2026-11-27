@@ -46,4 +46,51 @@ for (const [url, method] of [['/api/products', 'GET'], ['/api/products', 'PUT'],
   check('a claimed x-user-id is replaced by the signed one on collections', r.headers['x-user-id'] === 'GA');
 }
 
+console.log('SEC1 — products');
+const { handleProducts } = await import('../lib/products.js');
+function productDb() {
+  const db = {
+    sql: [], released: false,
+    release() { db.released = true; },
+    async query(text, params = []) {
+      const t = String(text).replace(/\s+/g, ' ').trim();
+      db.sql.push({ t, params });
+      const row = { sku: 'TREAD', stock: 2, price: 1795, ...(/avg_cost/.test(t) ? { avg_cost: 900 } : {}) };
+      if (/^SELECT .* FROM product/i.test(t)) return { rows: [row] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  return db;
+}
+const callProducts = async (method, auth, { sub, query = {}, body = {}, headers = {} } = {}) => {
+  const db = productDb();
+  const res = fakeRes();
+  await handleProducts(req({ method, query, body, headers: { ...(auth ? { authorization: bearer(...auth) } : {}), ...headers } }), res, sub, { getClient: async () => db });
+  return { res, db };
+};
+check('no login → 401', (await callProducts('GET', null)).res.statusCode === 401);
+{
+  const { res } = await callProducts('GET', ['GS', ['superadmin']]);
+  check('superadmin (signed) sees cost', res.statusCode === 200 && res.body[0].avg_cost === 900);
+}
+{
+  const { res } = await callProducts('GET', ['SF', ['staff']], { headers: { 'x-user-access': 'superadmin' } });
+  check('a staff login claiming "x-user-access: superadmin" gets NO cost', res.statusCode === 200 && !('avg_cost' in res.body[0]));
+}
+{
+  const { res } = await callProducts('GET', ['TE', ['technician']]);
+  check('a workshop login can read the list (dashboard counts) without cost', res.statusCode === 200 && !('avg_cost' in res.body[0]));
+}
+for (const [m, extra] of [['POST', { body: { sku: 'X1', name: 'x', brand: 'B', stock: 1, price: 1 } }], ['PUT', { sub: 'TREAD', body: { name: 'x', brand: 'B', stock: 99, price: 1 } }]]) {
+  const tech = await callProducts(m, ['TE', ['technician']], extra);
+  check(`workshop login ${m} → 403, nothing written`, tech.res.statusCode === 403 && !tech.db.sql.length);
+  const kiosk = await callProducts(m, ['WK', ['admin']], extra);
+  check(`WK kiosk ${m} → 403`, kiosk.res.statusCode === 403);
+  const staff = await callProducts(m, ['SF', ['staff']], extra);
+  check(`staff ${m} still works`, staff.res.statusCode === (m === 'POST' ? 201 : 200));
+}
+check('PUT without a SKU → 400', (await callProducts('PUT', ['SF', ['staff']], { body: {} })).res.statusCode === 400);
+check('DELETE → 405', (await callProducts('DELETE', ['GS', ['superadmin']])).res.statusCode === 405);
+check('connection given back', (await callProducts('GET', ['SF', ['staff']])).db.released === true);
+
 console.log(`\nsec1 smoke: ${passed} checks passed`);
