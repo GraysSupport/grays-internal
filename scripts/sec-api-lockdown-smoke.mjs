@@ -126,4 +126,33 @@ const { default: collectionsHandler } = await import('../lib/handlers/collection
   check('apply inventory with only a claimed id (no login) → 401', r2.statusCode === 401, JSON.stringify(r2.body));
 }
 
+console.log('SEC1 — hard deletes are superadmin only');
+const { default: workorderHandler } = await import('../lib/handlers/workorder.js');
+const { default: deliveryHandler } = await import('../lib/handlers/delivery.js');
+function recordingDb() {
+  const db = { sql: [], release() {}, async query(t) { db.sql.push(String(t).replace(/\s+/g, ' ').trim()); return { rows: [], rowCount: 0 }; } };
+  return db;
+}
+const deletes = [
+  ['workorder', (r, s, d) => workorderHandler(r, s, [], d), { id: '41' }],
+  ['delivery', (r, s, d) => deliveryHandler(r, s, [], d), { id: '7' }],
+  ['collection', (r, s, d) => collectionsHandler(r, s, [], d), { id: '3' }],
+];
+for (const [label, h, query] of deletes) {
+  const db = recordingDb();
+  const res = fakeRes();
+  await h(req({ method: 'DELETE', query, headers: { authorization: bearer('GA', ['admin']), 'x-user-id': 'GA' } }), res, { getClient: async () => db });
+  check(`admin cannot delete a ${label} (403), nothing deleted`, res.statusCode === 403 && !db.sql.some((q) => /^DELETE FROM/i.test(q)), `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+for (const [label, h, query, table] of [
+  ['workorder', deletes[0][1], { id: '41' }, 'workorder'],
+  ['delivery', deletes[1][1], { id: '7' }, 'delivery'],
+  ['collection', deletes[2][1], { id: '3' }, 'collections'],
+]) {
+  const db = recordingDb();
+  const res = fakeRes();
+  await h(req({ method: 'DELETE', query, headers: { authorization: bearer('GS', ['superadmin']), 'x-user-id': 'GS' } }), res, { getClient: async () => db });
+  check(`a superadmin can still delete a ${label}`, res.statusCode < 400 && db.sql.some((q) => new RegExp(`^DELETE FROM ${table}\\b`, 'i').test(q)), `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+
 console.log(`\nsec1 smoke: ${passed} checks passed`);
