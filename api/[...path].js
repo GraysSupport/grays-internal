@@ -19,6 +19,7 @@ import evidenceHandler from '../lib/handlers/evidence.js';
 import { handleDirector } from '../lib/director.js';
 import { handleFreeWeights } from '../lib/freeWeights.js';
 import { handleProducts } from '../lib/products.js'; // SEC1
+import { handleAccessLog } from '../lib/accessLog.js'; // SEC1
 import { buildJourney } from '../lib/customerJourney.js';
 import { handleWebsiteStockCron } from '../lib/wooStockRetry.js';
 import { handleWebsiteStock, handleWebsiteStockDrift } from '../lib/websiteStockView.js';
@@ -96,7 +97,7 @@ export default async function handler(req, res) {
         return handleUsers(req, res);
 
       case 'access-log':
-        return handleAccessLog(req, res);
+        return handleAccessLog(req, res, { getClient: getClientWithTimezone });
 
       // Relocated standalone functions (delegate to the moved handlers verbatim).
       // These read req.method/req.query/req.body only, so routing through the
@@ -603,19 +604,4 @@ async function handleUsers(req, res) {
 }
 
 /* ---------- ACCESS LOG ---------- */
-async function handleAccessLog(req, res) {
-  if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
-  const client = await getClientWithTimezone();
-  try {
-    const { userId, description } = req.body;
-    if (!userId || !description) return res.status(400).json({ error: 'Missing data' });
-
-    await client.query(
-      'INSERT INTO access_log (user_id, description) VALUES ($1,$2)',
-      [userId, description]
-    );
-    return res.status(200).json({ message: 'Log created' });
-  } finally {
-    client.release();
-  }
-}
+// SEC1 (27 Nov 2026): moved to lib/accessLog.js — recorded under the signed user id.

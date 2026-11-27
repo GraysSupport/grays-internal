@@ -93,4 +93,37 @@ check('PUT without a SKU → 400', (await callProducts('PUT', ['SF', ['staff']],
 check('DELETE → 405', (await callProducts('DELETE', ['GS', ['superadmin']])).res.statusCode === 405);
 check('connection given back', (await callProducts('GET', ['SF', ['staff']])).db.released === true);
 
+console.log('SEC1 — access log + collections identity');
+const { handleAccessLog } = await import('../lib/accessLog.js');
+{
+  const writes = [];
+  const db = { release() {}, async query(t, p) { writes.push(p); return { rows: [] }; } };
+  const res = fakeRes();
+  await handleAccessLog(req({ method: 'POST', headers: { authorization: bearer('GA', ['admin']) }, body: { userId: 'GS', description: 'User manually logged out' } }), res, { getClient: async () => db });
+  check('access log written under the SIGNED id, not the claimed userId', res.statusCode === 200 && writes[0][0] === 'GA' && writes[0][1] === 'User manually logged out');
+  const r2 = fakeRes();
+  await handleAccessLog(req({ method: 'POST', body: { userId: 'GS', description: 'x' } }), r2, { getClient: async () => db });
+  check('no login → 401', r2.statusCode === 401);
+  const r3 = fakeRes();
+  await handleAccessLog(req({ method: 'POST', headers: { authorization: bearer('GA', ['admin']) }, body: { description: '  ' } }), r3, { getClient: async () => db });
+  check('empty description → 400', r3.statusCode === 400);
+  const r4 = fakeRes();
+  await handleAccessLog(req({ method: 'GET', headers: { authorization: bearer('GA', ['admin']) } }), r4, { getClient: async () => db });
+  check('GET → 405', r4.statusCode === 405);
+}
+const { default: collectionsHandler } = await import('../lib/handlers/collections.js');
+{
+  const db = { release() {}, async query(t, p = []) {
+    const s = String(t).replace(/\s+/g, ' ');
+    if (/SELECT id, access FROM users WHERE id/i.test(s)) return { rows: [{ id: p[0], access: p[0] === 'GS' ? 'superadmin' : 'admin' }] };
+    return { rows: [], rowCount: 0 };
+  } };
+  const res = fakeRes();
+  await collectionsHandler(req({ method: 'POST', query: { resource: 'apply-inventory', id: '3' }, headers: { authorization: bearer('GA', ['admin']), 'x-user-id': 'GS' } }), res, [], { getClient: async () => db });
+  check('apply inventory: an admin claiming x-user-id GS is refused (403)', res.statusCode === 403, JSON.stringify(res.body));
+  const r2 = fakeRes();
+  await collectionsHandler(req({ method: 'POST', query: { resource: 'apply-inventory', id: '3' }, headers: { 'x-user-id': 'GS' } }), r2, [], { getClient: async () => db });
+  check('apply inventory with only a claimed id (no login) → 401', r2.statusCode === 401, JSON.stringify(r2.body));
+}
+
 console.log(`\nsec1 smoke: ${passed} checks passed`);
