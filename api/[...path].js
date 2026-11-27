@@ -51,7 +51,8 @@ export default async function handler(req, res) {
   const parts = segs(req);
   const [root, sub] = parts;
   try {
-    // P7: workorder / delivery / customers / waitlist / lots need a valid login (the public
+    // P7 + SEC1: workorder / delivery / customers / waitlist / lots, and since SEC1 (27 Nov 2026)
+    // products / collections / users / access-log, need a valid login (the public
     // /scan lot lookup excepted). Refused here, before any database work.
     const login = apiLoginGate(root, req);
     if (!login.ok) return res.status(login.status).json({ error: login.error });
@@ -516,7 +517,7 @@ async function handleUsers(req, res) {
       // F0b: return each user's full role set alongside the legacy columns.
       // Falls back to [access] if user_roles is absent (undefined_table).
       // F23: SELECT an explicit allow-list of columns (never a wildcard select) — the users
-      // list is fetched token-less by the workorder/technician dropdowns, so it must never
+      // list feeds the workorder/technician dropdowns (login required since SEC1), so it must never
       // carry the bcrypt password hash. (id is the PK, so the explicit columns stay valid
       // under GROUP BY u.id via functional dependency.)
       try {

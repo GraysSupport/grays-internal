@@ -188,6 +188,25 @@ const completeDelivery = async (db, body = { delivery_status: 'Delivery Complete
 check('paid in full → allowed', (await completeDelivery(deliveryDb({ balance: '0.00' }))).statusCode === 200);
 check('half a cent counts as paid', (await completeDelivery(deliveryDb({ balance: '0.004' }))).statusCode === 200);
 check('already completed + owing: editing notes is not blocked', (await completeDelivery(deliveryDb({ balance: '50', prev: 'Delivery Completed' }), { notes: 'x' })).statusCode === 200);
+check('already completed + owing: re-saving the status with a note is not blocked',
+  (await completeDelivery(deliveryDb({ balance: '50', prev: 'Delivery Completed' }), { delivery_status: 'Delivery Completed', notes: 'x' })).statusCode === 200);
+{
+  const db = deliveryDb({ balance: '120', workorderId: null });
+  const res = await completeDelivery(db, { delivery_status: 'Delivery Completed', workorder_id: 41 });
+  check('completing while attaching an owing workorder in the same save → 409', res.statusCode === 409 && res.body?.code === 'BALANCE_OWING', `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+{
+  const db = deliveryDb({ balance: '120', prev: 'Delivery Completed', workorderId: null });
+  const res = await completeDelivery(db, { workorder_id: 41 });
+  check('attaching an owing workorder to an already-completed delivery → 409', res.statusCode === 409, `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+{
+  const db = deliveryDb({ balance: '120' });
+  const res = await completeDelivery(db, { delivery_status: 'Delivery Completed', workorder_id: '' });
+  check('detaching the workorder in the same save is checked against the CURRENT workorder (no slip-through) → 409', res.statusCode === 409, `${res.statusCode} ${JSON.stringify(res.body)}`);
+}
+check('exactly half a cent counts as owing (matches the workshop Paid/Outstanding badge)',
+  (await completeDelivery(deliveryDb({ balance: '0.005' }))).statusCode === 409);
 check('a delivery with no workorder is not blocked', (await completeDelivery(deliveryDb({ balance: '50', workorderId: null }))).statusCode === 200);
 {
   const db = deliveryDb({ balance: '300' });

@@ -334,7 +334,7 @@ console.log('\ncollections (G24 — not for workshop logins):');
   const a = await col(reqAs({ id: 'GA', roles: ['admin'], query: { resource: 'carriers' } }));
   check('admin collections still answer', a.res.statusCode === 200);
   const anon = await col({ method: 'GET', query: { resource: 'carriers' }, headers: {} });
-  check('no identity at all is unchanged (P7) — the dashboard counts still load', anon.res.statusCode === 200);
+  check('handler alone: no identity is not a workshop login (at the router SEC1 now answers 401 first)', anon.res.statusCode === 200);
   check('the client is released after a refusal', t.client.released === true);
 }
 
